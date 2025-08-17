@@ -28,13 +28,16 @@ function normalizeTopic(t: string) {
   return VALID_TOPICS.has(topic) ? topic : "news";
 }
 
+// 👇 Next 15: params can be a Promise — await it
 export default async function TopicWeekPage({
   params,
 }: {
-  params: { week: string; topic: string };
+  params: Promise<{ week: string; topic: string }>;
 }) {
-  const weekNum = Number(params.week);
-  const topic = normalizeTopic(params.topic);
+  const { week, topic: rawTopic } = await params;
+
+  const weekNum = Number(week);
+  const topic = normalizeTopic(rawTopic);
 
   const { rows } = await query(
     `
@@ -62,8 +65,7 @@ export default async function TopicWeekPage({
 
       <header>
         <h1 className="text-2xl font-bold capitalize">
-          {topic.replace("-", " ")}{" "}
-          {Number.isFinite(weekNum) ? `– Week ${weekNum}` : ""}
+          {topic.replace("-", " ")} {Number.isFinite(weekNum) ? `– Week ${weekNum}` : ""}
         </h1>
         <p className="text-gray-600">
           Curated links for {topic.replace("-", " ")}{" "}
@@ -78,12 +80,7 @@ export default async function TopicWeekPage({
           {articles.map((r) => (
             <li key={r.id} className="flex flex-col">
               <div className="flex items-center gap-2">
-                <a
-                  className="text-blue-600 hover:underline"
-                  href={`/go/${r.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
+                <a className="text-blue-600 hover:underline" href={`/go/${r.id}`} target="_blank" rel="noreferrer">
                   {r.title}
                 </a>
                 <span className="text-sm text-gray-500">({r.source})</span>
