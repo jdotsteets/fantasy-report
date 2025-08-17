@@ -1,3 +1,4 @@
+// lib/db.ts
 import { Pool, QueryResult } from "pg";
 
 if (!process.env.DATABASE_URL) {
@@ -11,10 +12,12 @@ export const pool =
   globalForPg.pgPool ??
   new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // needed for hosted Postgres
+    ssl: { rejectUnauthorized: false },
   });
 
 if (!globalForPg.pgPool) globalForPg.pgPool = pool;
 
-export const query = (text: string, params?: any[]): Promise<QueryResult<any>> =>
-  pool.query(text, params);
+export type Row = Record<string, unknown>;
+
+export const query = (text: string, params?: unknown[]): Promise<QueryResult<Row>> =>
+  pool.query(text, params as any[]);

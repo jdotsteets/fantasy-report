@@ -1,11 +1,8 @@
+// app/api/ingest/route.ts
 import Parser from "rss-parser";
 import { query } from "@/lib/db";
 
-// Ensure Node runtime for 'pg'
 export const runtime = "nodejs";
-
-// Next.js supports this at runtime but TS doesn't have a type for it.
-// Keep requests alive long enough for slower feeds.
 
 export const maxDuration = 60;
 
@@ -17,7 +14,6 @@ type FeedSource = {
   priority?: number;
 };
 
-// STARTER SOURCE LIST — always respect each site's ToS/robots.txt
 const SOURCES: FeedSource[] = [
   { name: "CBS Fantasy", rss: "https://www.cbssports.com/fantasy/football/rss/", homepage: "https://www.cbssports.com/fantasy/football/" },
   { name: "NBC Sports Edge", rss: "https://www.nbcsports.com/rss/edge/football", homepage: "https://www.nbcsports.com/edge" },
@@ -36,11 +32,11 @@ const SOURCES: FeedSource[] = [
   { name: "The Athletic NFL (free articles only)", rss: "https://theathletic.com/league/nfl/feed/", homepage: "https://theathletic.com/nfl/" }
 ];
 
-function normalize(u: string) {
+function normalize(u: string): string {
   try {
     const url = new URL(u);
     url.hash = "";
-    url.search = ""; // drop tracking params
+    url.search = "";
     return url.toString().replace(/\/$/, "");
   } catch {
     return u;
@@ -63,21 +59,21 @@ function inferWeekFromTitle(title: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+type ErrorEntry = { source: string; error: string };
+
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const debug = url.searchParams.get("debug") === "1";
+  const debug = new URL(req.url).searchParams.get("debug") === "1";
 
   const parser = new Parser({
     headers: { "user-agent": "FantasyAggregatorBot/0.1 (contact: you@example.com)" }
   });
 
   let inserted = 0;
-  const errors: Array<{ source: string; error: string }> = [];
+  const errors: ErrorEntry[] = [];
 
   try {
     for (const src of SOURCES) {
       try {
-        // upsert source
         await query(
           `insert into sources(name, homepage_url, rss_url, favicon_url, priority)
            values($1,$2,$3,$4,$5)
@@ -87,7 +83,7 @@ export async function GET(req: Request) {
 
         const feed = await parser.parseURL(src.rss);
 
-        for (const item of feed.items) {
+        for (const item of feed.items as Array<{ link?: string; title?: string; isoDate?: string }>) {
           const articleUrl = normalize(item.link || "");
           if (!articleUrl) continue;
 
@@ -118,25 +114,24 @@ export async function GET(req: Request) {
             ]
           );
 
-          inserted += res.rows.length; // 0 or 1
+          inserted += res.rows.length;
         }
-      } catch (e: any) {
-        // Keep going even if one source fails
-        errors.push({ source: src.name, error: e?.message || String(e) });
-        console.warn(`[ingest] ${src.name} failed:`, e?.message || e);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push({ source: src.name, error: message });
+        console.warn(`[ingest] ${src.name} failed: ${message}`);
       }
     }
 
-    // Normal OK response (include errors if debug=1)
     return new Response(
       JSON.stringify({ ok: true, inserted, ...(debug ? { errors } : {}) }),
       { status: 200, headers: { "content-type": "application/json" } }
     );
-  } catch (e: any) {
-    // Unexpected top-level failure
-    return new Response(
-      JSON.stringify({ ok: false, error: e?.message || String(e) }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ ok: false, error: message }), {
+      status: 500,
+      headers: { "content-type": "application/json" }
+    });
   }
 }
