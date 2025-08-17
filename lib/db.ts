@@ -17,7 +17,17 @@ export const pool =
 
 if (!globalForPg.pgPool) globalForPg.pgPool = pool;
 
+// Acceptable SQL parameter types (recursive arrays allowed)
+type SQLPrimitive = string | number | boolean | Date | null | Buffer | Uint8Array;
+export type SQLParam = SQLPrimitive | readonly SQLPrimitive[] | readonly SQLParam[];
+export type SQLParams = readonly SQLParam[];
+
 export type Row = Record<string, unknown>;
 
-export const query = (text: string, params?: unknown[]): Promise<QueryResult<Row>> =>
-  pool.query(text, params as any[]);
+export const query = <T extends Row = Row>(
+  text: string,
+  params?: SQLParams
+): Promise<QueryResult<T>> => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return pool.query<T>(text, params as unknown as any[]);
+};
