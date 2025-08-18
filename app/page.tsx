@@ -1,10 +1,12 @@
 // app/page.tsx
 import { query } from "@/lib/db";
+import ArticleList from "@/components/ArticleList";
+import TopicNav from "@/components/TopicNav";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ArticleRow = {
+type Row = {
   id: number;
   title: string;
   url: string;
@@ -12,23 +14,47 @@ type ArticleRow = {
   topics: string[] | null;
   week: number | null;
   source: string;
+  clicks_7d: number;
+  score: number;
 };
 
 export default async function Home() {
-  let articles: ArticleRow[] = [];
+  let items: Row[] = [];
 
   try {
-    const { rows } = await query(`
-      select a.id, a.title, a.url, a.published_at, a.topics, a.week, s.name as source
+    const { rows } = await query<Row>(
+      `
+      with clicks_7d as (
+        select article_id, count(*)::int as clicks_7d
+        from clicks
+        where clicked_at >= now() - interval '7 days'
+        group by article_id
+      )
+      select
+        a.id,
+        coalesce(a.cleaned_title, a.title) as title,
+        a.url,
+        a.published_at,
+        a.topics,
+        a.week,
+        s.name as source,
+        coalesce(c.clicks_7d, 0) as clicks_7d,
+        (
+          (coalesce(c.clicks_7d, 0) * 10)::float
+          + (1000.0 / greatest(1.0, extract(epoch from (now() - coalesce(a.published_at, a.discovered_at))) / 3600.0))
+        ) as score
       from articles a
       join sources s on s.id = a.source_id
-      where a.sport='nfl'
-      order by a.published_at desc nulls last, a.discovered_at desc
+      left join clicks_7d c on c.article_id = a.id
+      where a.sport = 'nfl'
+      order by score desc, a.published_at desc nulls last, a.id desc
       limit 50
-    `);
-    articles = rows as ArticleRow[];
+      `
+    );
+
+    items = rows;
   } catch {
-    articles = [];
+    items = [];
   }
 
   return (
@@ -36,39 +62,10 @@ export default async function Home() {
       <h1 className="text-3xl font-bold">Fantasy Football Aggregator</h1>
       <p className="text-gray-600">Fresh links from around the web.</p>
 
-      {articles.length === 0 ? (
-        <div className="text-gray-500">
-          No articles yet. Visit <code>/api/ingest</code>.
-        </div>
-      ) : (
-        <ul className="space-y-3">
-          {articles.map((r) => (
-            <li key={r.id} className="flex flex-col">
-              <div className="flex items-center gap-2">
-                <a
-                  className="text-blue-600 hover:underline"
-                  href={`/go/${r.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {r.title}
-                </a>
-                <span className="text-sm text-gray-500">({r.source})</span>
-              </div>
-              <div className="text-xs text-gray-500">
-                {r.published_at ? new Date(r.published_at).toLocaleString() : "—"}
-                {Array.isArray(r.topics) && r.topics.length > 0 && (
-                  <>
-                    {" "}
-                    • {r.topics.join(", ")}
-                    {r.week ? ` • Week ${r.week}` : ""}
-                  </>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* Simple nav to common topics */}
+      <TopicNav />
+
+      <ArticleList items={items} />
     </main>
   );
 }

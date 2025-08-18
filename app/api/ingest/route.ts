@@ -1,9 +1,10 @@
 // app/api/ingest/route.ts
 import Parser from "rss-parser";
 import { query } from "@/lib/db";
+import { enrich } from "@/lib/enrich";
 
 export const runtime = "nodejs";
-
+// @ts-ignore: Next.js route option (not in TS types), extends serverless timeout
 export const maxDuration = 60;
 
 type FeedSource = {
@@ -32,37 +33,20 @@ const SOURCES: FeedSource[] = [
   { name: "The Athletic NFL (free articles only)", rss: "https://theathletic.com/league/nfl/feed/", homepage: "https://theathletic.com/nfl/" }
 ];
 
-function normalize(u: string): string {
-  try {
-    const url = new URL(u);
-    url.hash = "";
-    url.search = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return u;
-  }
-}
-
-function classify(title: string): string[] {
-  const t = (title || "").toLowerCase();
-  if (t.includes("waiver")) return ["waiver-wire"];
-  if (t.includes("ranking") || t.includes("tiers") || t.includes("ecr")) return ["rankings"];
-  if (t.includes("start") && t.includes("sit")) return ["start-sit"];
-  if (t.includes("trade") || t.includes("buy low") || t.includes("sell high")) return ["trade"];
-  if (t.includes("injury") || t.includes("inactives") || t.includes("questionable") || t.includes("practice report")) return ["injury"];
-  if (t.includes("draftkings") || t.includes("fanduel") || t.includes("dfs") || t.includes("gpp") || t.includes("cash")) return ["dfs"];
-  return ["news"];
-}
-
-function inferWeekFromTitle(title: string): number | null {
-  const m = (title || "").match(/week\s*(\d{1,2})/i);
-  return m ? parseInt(m[1], 10) : null;
-}
-
 type ErrorEntry = { source: string; error: string };
 
 export async function GET(req: Request) {
-  const debug = new URL(req.url).searchParams.get("debug") === "1";
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+
+  // ---- AUTH: require CRON_SECRET if set ----
+  const secret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization") || "";
+  const urlKey = url.searchParams.get("key") || "";
+  if (secret && authHeader !== `Bearer ${secret}` && urlKey !== secret) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  // -----------------------------------------
 
   const parser = new Parser({
     headers: { "user-agent": "FantasyAggregatorBot/0.1 (contact: you@example.com)" }
@@ -74,6 +58,7 @@ export async function GET(req: Request) {
   try {
     for (const src of SOURCES) {
       try {
+        // upsert source
         await query(
           `insert into sources(name, homepage_url, rss_url, favicon_url, priority)
            values($1,$2,$3,$4,$5)
@@ -84,33 +69,43 @@ export async function GET(req: Request) {
         const feed = await parser.parseURL(src.rss);
 
         for (const item of feed.items as Array<{ link?: string; title?: string; isoDate?: string }>) {
-          const articleUrl = normalize(item.link || "");
-          if (!articleUrl) continue;
+          if (!item?.link) continue;
 
-          const topics = classify(item.title || "");
-          const week = inferWeekFromTitle(item.title || "");
+          // Enrich one item
+          const e = enrich(src.name, item);
 
+          // Insert if new (dedupe on canonical_url)
           const res = await query(
-            `insert into articles(source_id, url, title, published_at, discovered_at, sport, season, week, topics)
-             values (
-               (select id from sources where name=$1),
-               $2, $3,
-               $4::timestamptz,
-               now(),
-               'nfl',
-               extract(year from now())::int,
-               $5,
-               $6
+            `insert into articles(
+                source_id, url, canonical_url, domain,
+                title, cleaned_title, slug, fingerprint,
+                published_at, discovered_at, sport, season, week, topics
              )
-             on conflict (url) do nothing
+             values (
+                (select id from sources where name=$1),
+                $2, $3, $4,
+                $5, $6, $7, $8,
+                $9::timestamptz,
+                now(),
+                'nfl',
+                extract(year from now())::int,
+                $10,
+                $11
+             )
+             on conflict (canonical_url) do nothing
              returning id`,
             [
               src.name,
-              articleUrl,
+              e.url,
+              e.canonical_url,
+              e.domain,
               (item.title || "").slice(0, 280),
-              item.isoDate ? new Date(item.isoDate).toISOString() : null,
-              week,
-              topics
+              e.cleaned_title.slice(0, 280),
+              e.slug.slice(0, 120),
+              e.fingerprint,
+              e.published_at,
+              e.week,
+              e.topics
             ]
           );
 
