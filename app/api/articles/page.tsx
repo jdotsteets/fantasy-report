@@ -1,57 +1,112 @@
-"use client";
+// app/page.tsx
+import { query } from "@/lib/db";
+import SiteHeader from "@/components/SiteHeader";
+import TopicSection from "@/components/TopicSection";
+import { Article } from "@/components/ArticleLink";
 
-import { useEffect, useState } from "react";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export default function ArticlesPage() {
-  const [articles, setArticles] = useState([]);
-  const [topic, setTopic] = useState("");
-  const [week, setWeek] = useState("");
+const TOPIC_ORDER: Array<{ key: string; label: string }> = [
+  { key: "news", label: "Headlines" },
+  { key: "waiver-wire", label: "Waiver Wire" },
+  { key: "rankings", label: "Rankings" },
+  { key: "start-sit", label: "Start/Sit" },
+  { key: "injury", label: "Injuries" },
+  { key: "dfs", label: "DFS" },
+];
 
-  useEffect(() => {
-    fetch(`/api/articles?topic=${topic}&week=${week}`)
-      .then(res => res.json())
-      .then(setArticles);
-  }, [topic, week]);
+export default async function Home({ searchParams }: { searchParams: { week?: string } }) {
+  const week = searchParams.week ? parseInt(searchParams.week, 10) : null;
+
+  // Pull recent articles once, then group in memory (fast + simple)
+  const { rows } = await query(
+    `
+    with base as (
+      select a.id,
+             coalesce(a.cleaned_title, a.title) as title,
+             a.url,
+             a.published_at,
+             a.topics,
+             a.week,
+             s.name as source,
+             a.popularity
+      from articles a
+      join sources s on s.id = a.source_id
+      where a.sport='nfl'
+        ${week ? "and a.week = $1" : ""}
+      order by coalesce(a.popularity,0) desc,
+               a.published_at desc nulls last,
+               a.discovered_at desc
+      limit 300
+    )
+    select * from base
+    `,
+    week ? [week] : []
+  );
+
+  const all = rows as Article[];
+
+  // Group by topic buckets
+  const grouped: Record<string, Article[]> = {
+    news: [],
+    "waiver-wire": [],
+    rankings: [],
+    "start-sit": [],
+    injury: [],
+    dfs: [],
+  };
+
+  for (const a of all) {
+    const topics = (a.topics || []) as string[];
+    // if “news”, we treat as default bucket
+    const target = topics.find((t) => grouped[t as keyof typeof grouped]) || "news";
+    grouped[target].push(a);
+  }
+
+  // Right sidebar: latest added (first 15 regardless of topic)
+  const latest = all.slice(0, 15);
 
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-bold mb-4">Articles</h1>
+    <>
+      <SiteHeader />
+      <main className="mx-auto grid max-w-6xl grid-cols-1 gap-6 py-6 md:grid-cols-3">
+        {/* Main columns (span 2) */}
+        <div className="md:col-span-2">
+          {TOPIC_ORDER.map(({ key, label }) => (
+            <TopicSection
+              key={key}
+              title={label}
+              href={`/nfl/${key}${week ? `?week=${week}` : ""}`}
+              items={grouped[key].slice(0, 10)}
+            />
+          ))}
+        </div>
 
-      {/* Filters */}
-      <div className="mb-4 flex gap-2">
-        <select onChange={e => setTopic(e.target.value)}>
-          <option value="">All Topics</option>
-          <option value="waiver-wire">Waiver Wire</option>
-          <option value="rankings">Rankings</option>
-          <option value="start-sit">Start/Sit</option>
-          <option value="trade">Trades</option>
-          <option value="injury">Injuries</option>
-          <option value="dfs">DFS</option>
-          <option value="news">News</option>
-        </select>
-
-        <input
-          type="number"
-          placeholder="Week"
-          value={week}
-          onChange={e => setWeek(e.target.value)}
-        />
-      </div>
-
-      {/* Articles List */}
-      <ul>
-        {articles.map((a: any) => (
-          <li key={a.id} className="mb-3">
-            <a href={a.url} target="_blank" rel="noreferrer" className="text-blue-600 font-medium">
-              {a.title}
-            </a>
-            <div className="text-sm text-gray-600">
-              {a.source} • {new Date(a.published_at).toLocaleDateString()}
-            </div>
-            <div className="text-xs text-gray-500">Topics: {a.topics.join(", ")}</div>
-          </li>
-        ))}
-      </ul>
-    </div>
+        {/* Sidebar */}
+        <aside className="md:col-span-1">
+          <section className="mb-8">
+            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+              Latest Added
+            </h3>
+            <ul className="divide-y divide-zinc-800 rounded border border-zinc-800 bg-zinc-900/50">
+              {latest.map((a) => (
+                <li key={a.id} className="py-2 px-3">
+                  <a
+                    href={`/go/${a.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="line-clamp-2 text-sm text-zinc-200 hover:text-white"
+                  >
+                    {a.title}
+                  </a>
+                  <div className="mt-1 text-xs text-zinc-400">{a.source}</div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </aside>
+      </main>
+    </>
   );
 }
