@@ -71,7 +71,7 @@ export async function GET(req: Request) {
           if (!item?.link) continue;
 
           // Enrich one item
-          const e = enrich(src.name, item);
+          const e = await enrich(src.name, item);
 
           // Insert if new (dedupe on canonical_url)
           const res = await query(

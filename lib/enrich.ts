@@ -2,7 +2,56 @@
 import crypto from "crypto";
 import slugify from "slugify";
 
+/** Minimal feed item we get from rss-parser (etc.) */
 export type RawItem = { link?: string; title?: string; isoDate?: string };
+
+/** Shape of the enriched article we return to callers */
+export type Enriched = {
+  url: string;
+  canonical_url: string;
+  domain: string;
+  title: string;
+  cleaned_title: string;
+  topics: string[];
+  week: number | null;
+  published_at: string | null;
+  slug: string;
+  fingerprint: string;
+  image_url: string | null;          // 👈 new
+};
+
+/* -----------------------
+   image capture
+------------------------ */
+
+/** Try to fetch <meta property="og:image" content="..."> from the page. */
+async function fetchOgImage(url: string, timeoutMs = 2000): Promise<string | null> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+
+    const html = await res.text();
+
+    // super light OG <meta> scrape (covers common attribute orders)
+    const m =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i);
+
+    return m?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback to a high‑res site favicon when no og:image exists. */
+function faviconFor(domain: string): string | null {
+  return domain
+    ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`
+    : null;
+}
 
 /* -----------------------
    URL normalization
@@ -10,7 +59,7 @@ export type RawItem = { link?: string; title?: string; isoDate?: string };
 
 const BAD_PARAMS = [
   /^utm_/i, /^fbclid$/i, /^gclid$/i, /^mc_cid$/i, /^mc_eid$/i,
-  /^ref$/i, /^cn$/i, /^cmp$/i, /^igshid$/i
+  /^ref$/i, /^cn$/i, /^cmp$/i, /^igshid$/i,
 ];
 
 export function normalizeUrl(raw: string): {
@@ -20,19 +69,21 @@ export function normalizeUrl(raw: string): {
 } {
   try {
     const u = new URL(raw.trim());
+
     // Drop junk query params
     BAD_PARAMS.forEach((re) => {
       for (const key of Array.from(u.searchParams.keys())) {
         if (re.test(key)) u.searchParams.delete(key);
       }
     });
+
     // No hash fragments
     u.hash = "";
+
     // Trim trailing slash (not root)
     let canonical = u.toString();
-    if (canonical.endsWith("/") && u.pathname !== "/") {
-      canonical = canonical.slice(0, -1);
-    }
+    if (canonical.endsWith("/") && u.pathname !== "/") canonical = canonical.slice(0, -1);
+
     const domain = u.hostname.replace(/^www\./, "");
     return { url: raw.trim(), canonical, domain };
   } catch {
@@ -44,7 +95,6 @@ export function normalizeUrl(raw: string): {
    Title cleaning
 ------------------------ */
 
-// Generic publisher suffix patterns we strip from titles
 const PUBLISHER_SUFFIXES = [
   /\s*[-–—]\s*fantasypros.*$/i,
   /\s*[-–—]\s*cbs sports.*$/i,
@@ -55,18 +105,15 @@ const PUBLISHER_SUFFIXES = [
   /\s*\|\s*.*$/i, // trailing pipes like " | Fantasy Football"
 ];
 
-// Base cleaner
 export function cleanTitle(t: string): string {
   let s = (t || "").replace(/\s+/g, " ").trim();
   for (const re of PUBLISHER_SUFFIXES) s = s.replace(re, "");
   return s.trim();
 }
 
-// Optional per‑source rules
 const bySourceCleaners: Record<string, (t: string) => string> = {
   "Yahoo Sports NFL": (t) => t.replace(/\s*-\s*Yahoo Sports.*$/i, ""),
   "Rotowire NFL": (t) => t.replace(/\s*-\s*RotoWire.*$/i, ""),
-  // add more as needed…
 };
 
 export function cleanTitleForSource(source: string, title: string) {
@@ -108,38 +155,14 @@ export function inferWeek(title: string, now = new Date()): number | null {
 export function classify(title: string): string[] {
   const t = (title || "").toLowerCase();
 
-  // Waivers
-  if (/\bwaivers?|streamers?|adds?|pickups?\b/.test(t)) {
-    return ["waiver-wire"];
-  }
-
-  // Rankings / tiers
-  if (/\brankings?\b|\btiers?\b|\becr\b/.test(t)) {
-    return ["rankings"];
-  }
-
-  // Start/Sit & Sleepers (group sleepers here so it appears in the left column)
-  if (
-    /\bstart(?:\/| and | & )?sit|sit\/start|start-sit\b/.test(t) ||
-    /\bsleepers?\b/.test(t)
-  ) {
+  if (/\bwaivers?|streamers?|adds?|pickups?\b/.test(t)) return ["waiver-wire"];
+  if (/\brankings?\b|\btiers?\b|\becr\b/.test(t)) return ["rankings"];
+  if (/\bstart(?:\/| and | & )?sit|sit\/start|start-sit\b/.test(t) || /\bsleepers?\b/.test(t)) {
     return ["start-sit"];
   }
-
-  // Trades / ROS (rest-of-season) chatter often belongs here
-  if (/\btrade|buy\s+low|sell\s+high|rest[-\s]?of[-\s]?season\b/.test(t)) {
-    return ["trade"];
-  }
-
-  // Injuries
-  if (/\binjur(?:y|ies)|inactives?|questionable|practice report\b/.test(t)) {
-    return ["injury"];
-  }
-
-  // DFS
-  if (/\bdfs|draftkings|fanduel|cash game|gpp\b/.test(t)) {
-    return ["dfs"];
-  }
+  if (/\btrade|buy\s+low|sell\s+high|rest[-\s]?of[-\s]?season\b/.test(t)) return ["trade"];
+  if (/\binjur(?:y|ies)|inactives?|questionable|practice report\b/.test(t)) return ["injury"];
+  if (/\bdfs|draftkings|fanduel|cash game|gpp\b/.test(t)) return ["dfs"];
 
   return ["news"];
 }
@@ -171,7 +194,7 @@ export function fingerprint(canonical: string, title: string): string {
    Main enrichment
 ------------------------ */
 
-export function enrich(sourceName: string, item: RawItem) {
+export async function enrich(sourceName: string, item: RawItem): Promise<Enriched> {
   const rawUrl = item.link || "";
   const { url, canonical, domain } = normalizeUrl(rawUrl);
 
@@ -181,6 +204,10 @@ export function enrich(sourceName: string, item: RawItem) {
   const published_at = parseDate(item.isoDate, true);
   const slug = makeSlug(sourceName, cleaned, canonical);
   const fp = fingerprint(canonical, cleaned);
+
+  // Try to fetch og:image (non-fatal). Fallback to favicon.
+  let image_url = await fetchOgImage(canonical);
+  if (!image_url) image_url = faviconFor(domain);
 
   return {
     url,
@@ -193,5 +220,6 @@ export function enrich(sourceName: string, item: RawItem) {
     published_at,
     slug,
     fingerprint: fp,
+    image_url,
   };
 }
