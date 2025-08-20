@@ -1,9 +1,8 @@
 {
-  "version": 2,
   "crons": [
     {
-      "path": "/api/ingest",
-      "schedule": "*/20 * * * *"
+      "path": "/api/something",   
+      "schedule": "0 0 * * *"     
     }
   ]
 }
