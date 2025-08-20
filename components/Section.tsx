@@ -7,9 +7,11 @@ export default function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl bg-zinc-900/40 ring-1 ring-zinc-800 p-4">
-      <h2 className="mb-3 text-lg font-semibold tracking-tight">{title}</h2>
-      {children}
+    <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+      <h2 className="px-4 py-3 border-b border-zinc-200 text-lg font-semibold text-zinc-900">
+        {title}
+      </h2>
+      <div className="p-4">{children}</div>
     </section>
   );
 }

@@ -12,6 +12,35 @@ function currentNFLWeek(d = new Date()) {
 }
 
 export default function TopicNav() {
+
+  const items = [
+    { href: "/nfl/rankings", label: "rankings" },
+    { href: "/nfl/waiver-wire", label: "waiver wire" },
+    { href: "/nfl/start-sit", label: "start sit" },
+    { href: "/nfl/injury", label: "injury" },
+    { href: "/nfl/trade", label: "trade" },
+    { href: "/nfl/dfs", label: "dfs" },
+    { href: "/nfl/news", label: "news" },
+  ];
+
+  return (
+    <nav className="my-4">
+      <ul className="flex flex-wrap justify-center gap-2">
+        {items.map((it) => (
+          <li key={it.href}>
+            <a
+              href={it.href}
+              className="inline-flex items-center rounded-full border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50"
+            >
+              {it.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+
+
   const week = useMemo(() => currentNFLWeek(), []);
   return (
     <nav className="flex flex-wrap gap-2 my-4">
