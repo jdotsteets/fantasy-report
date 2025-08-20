@@ -1,8 +1,7 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind v4 (loads all layers) */
+@import "tailwindcss";
 
-:root { color-scheme: dark; }
+:root { color-scheme: light; }
 
 /* Optional readability tweaks */
 @layer base {

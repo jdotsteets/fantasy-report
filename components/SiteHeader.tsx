@@ -1,7 +1,7 @@
 // components/SiteHeader.tsx
 "use client";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 const TOPIC_LABELS: Record<string, string> = {
@@ -14,7 +14,6 @@ const TOPIC_LABELS: Record<string, string> = {
 };
 
 export default function SiteHeader() {
-  const pathname = usePathname();
   const sp = useSearchParams();
   const [open, setOpen] = useState(false);
 

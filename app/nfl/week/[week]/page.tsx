@@ -6,29 +6,39 @@ import SiteHeader from "@/components/SiteHeader";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function WeekPage({ params }: { params: { week: string } }) {
-  const w = parseInt(params.week, 10);
+type Params = { week: string };
+
+export default async function WeekPage(
+  { params }: { params: Promise<Params> }
+) {
+  // In Next 15, params is a Promise → await it
+  const { week } = await params;
+
+  const w = Number(week);
   const { rows } = await query(
     `
-    select a.id,
-           coalesce(a.cleaned_title, a.title) as title,
-           a.url,
-           a.published_at,
-           a.topics,
-           a.week,
-           s.name as source,
-           a.popularity
-    from articles a
-    join sources s on s.id = a.source_id
-    where a.sport='nfl'
-      and a.week = $1
-    order by coalesce(a.popularity,0) desc,
-             a.published_at desc nulls last,
-             a.discovered_at desc
-    limit 300
+      select
+        a.id,
+        coalesce(a.cleaned_title, a.title) as title,
+        a.url,
+        a.published_at,
+        a.topics,
+        a.week,
+        s.name as source,
+        coalesce(a.popularity_score, a.popularity, 0) as popularity
+      from articles a
+      join sources s on s.id = a.source_id
+      where a.sport = 'nfl'
+        and a.week = $1
+      order by
+        coalesce(a.popularity_score, a.popularity, 0) desc,
+        a.published_at desc nulls last,
+        a.discovered_at desc
+      limit 300
     `,
     [w]
   );
+
   const items = rows as Article[];
 
   return (

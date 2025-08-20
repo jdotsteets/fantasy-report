@@ -1,5 +1,4 @@
 // components/ArticleLink.tsx
-import Link from "next/link";
 
 export type Article = {
   id: number;

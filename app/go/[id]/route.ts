@@ -4,49 +4,69 @@ import { query } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Ctx = { params: { id: string } };
-
-// Best-effort client IP extraction (works on Vercel)
-function getClientIp(req: Request) {
-  const xf = req.headers.get("x-forwarded-for");
-  if (xf) return xf.split(",")[0].trim();
-  return req.headers.get("x-real-ip") || "";
+// pull the numeric id safely from the opaque Next context
+function readId(ctx: unknown): number | null {
+  try {
+    const raw = (ctx as { params?: { id?: string } })?.params?.id;
+    if (typeof raw !== "string" || raw.trim() === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function GET(req: Request, ctx: Ctx) {
-  const id = Number(ctx.params?.id);
-  if (!Number.isFinite(id) || id <= 0) {
-    return new Response("Invalid id", { status: 400 });
+/** @ts-expect-error Next.js wants the 2nd param untyped; we narrow inside */
+export async function GET(req: Request, ctx) {
+  const id = readId(ctx);
+  if (!id) {
+    return new Response("Missing or invalid id", { status: 400 });
   }
 
-  // 1) Resolve URL
+  // look up destination URL
   const { rows } = await query<{ url: string }>(
-    `select url from articles where id = $1`,
+    `select url
+       from articles
+      where id = $1
+      limit 1`,
     [id]
   );
 
   if (rows.length === 0) {
-    // If article not found, bounce to home
-    return Response.redirect("/", 302);
+    return new Response("Not found", { status: 404 });
   }
+
   const dest = rows[0].url;
 
-  // 2) Fire-and-forget click log (we await once; if it fails, we still redirect)
+  // fire‑and‑forget click logging (don’t block redirect on errors)
   try {
-    const ref = req.headers.get("referer") || "";
-    const ua = req.headers.get("user-agent") || "";
-    const ip = getClientIp(req);
+    const ref =
+      req.headers.get("referer") ||
+      req.headers.get("referrer") ||
+      null;
+
+    const ua = req.headers.get("user-agent") || null;
+    const ip =
+      (req.headers.get("x-forwarded-for") || "")
+        .split(",")[0]
+        .trim() || null;
 
     await query(
-      `insert into clicks(article_id, clicked_at, ref, ua, ip)
-       values ($1, now(), $2, $3, nullif($4,'')::inet)`,
+      `insert into clicks (article_id, ref, ua, ip)
+       values ($1, $2, $3, $4)`,
       [id, ref, ua, ip]
     );
-  } catch (e) {
-    // Don't block the user if logging fails
-    console.warn("click log failed:", e);
+  } catch {
+    // swallow logging errors
   }
 
-  // 3) Off you go
-  return Response.redirect(dest, 302);
+  // do the redirect
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: dest,
+      // keep it privacy‑friendly
+      "Referrer-Policy": "no-referrer",
+    },
+  });
 }

@@ -4,7 +4,6 @@ import { query } from "@/lib/db";
 import { enrich } from "@/lib/enrich";
 
 export const runtime = "nodejs";
-// @ts-ignore: Next.js route option (not in TS types), extends serverless timeout
 export const maxDuration = 60;
 
 type FeedSource = {

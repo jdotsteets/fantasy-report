@@ -7,6 +7,8 @@ import TopicNav from "@/components/TopicNav";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type SQLParam = string | number | boolean | null | Date;
+
 /** Compute the NFL "current week":
  *  - Week 0 = preseason (before kickoff Thursday)
  *  - Week 1 starts on the first Thursday after Labor Day
@@ -36,7 +38,7 @@ function weekLabel(week: number) {
 }
 
 /** Generic fetcher. Use $1, $2, ... in `whereSql` and pass params[] */
-async function fetchArticles(whereSql: string, params: any[] = [], limit = 15) {
+async function fetchArticles(whereSql: string, params: ReadonlyArray<SQLParam> = [], limit = 15) {
   const orderSql = `
     order by coalesce(a.popularity_score, 0) desc,
              a.published_at desc nulls last,
@@ -74,13 +76,12 @@ async function fetchArticles(whereSql: string, params: any[] = [], limit = 15) {
   }>;
 }
 
-type PageProps = {
-  searchParams?: { week?: string };
-};
-
-export default async function Home({ searchParams }: PageProps) {
-  // Allow ?week= override for testing; fallback to computed current week
-  const urlWeek = Number(searchParams?.week);
+export default async function Home(
+  { searchParams }: { searchParams?: Promise<{ week?: string }> } // ✅ Next 15: Promise
+) {
+  // Await promised props (Next 15)
+  const sp = searchParams ? await searchParams : {};
+  const urlWeek = Number(sp.week);
   const CURRENT_WEEK = Number.isFinite(urlWeek) ? urlWeek : getCurrentNFLWeek();
 
   // Middle: Latest
@@ -101,7 +102,7 @@ export default async function Home({ searchParams }: PageProps) {
       and a.topics @> ARRAY['waiver-wire']::text[]
       -- and coalesce(a.week, 0) = $1
     `,
-    [] // or [CURRENT_WEEK] if you want the same filter
+    [] // or [CURRENT_WEEK] to filter by week too
   );
 
   return (
