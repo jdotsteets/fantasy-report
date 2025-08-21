@@ -43,7 +43,12 @@ function safeSlice(s: string | null | undefined, n: number) {
   return (s ?? "").slice(0, n);
 }
 
-// B) Sanitize XML: escape bare '&' and strip control chars
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return typeof err === "string" ? err : "Unknown error";
+}
+
+// Sanitize XML: escape bare '&' and strip control chars
 function sanitizeXml(xml: string) {
   const ampFixed = xml.replace(
     /&(?!amp;|lt;|gt;|quot;|apos;|#[0-9]+;|#x[0-9A-Fa-f]+;)/g,
@@ -58,11 +63,10 @@ function normalizeCandidates(url: string | null | undefined): string[] {
   const variants = new Set<string>();
   const trimmed = url.trim();
 
-  variants.add(trimmed);                                   // original
-  variants.add(trimmed.replace(/\/+$/, ""));               // strip trailing slash
-  if (trimmed.startsWith("http://"))                       // upgrade http→https
-    variants.add("https://" + trimmed.slice(7));
-  if (!/\/(feed|rss)(\.xml)?$/i.test(trimmed)) {           // common WordPress variants
+  variants.add(trimmed); // original
+  variants.add(trimmed.replace(/\/+$/, "")); // strip trailing slash
+  if (trimmed.startsWith("http://")) variants.add("https://" + trimmed.slice(7)); // upgrade http→https
+  if (!/\/(feed|rss)(\.xml)?$/i.test(trimmed)) {
     const base = trimmed.replace(/\/+$/, "");
     variants.add(base + "/feed");
     variants.add(base + "/rss");
@@ -70,7 +74,7 @@ function normalizeCandidates(url: string | null | undefined): string[] {
   return [...variants];
 }
 
-// A) Include strong Accept header for picky servers (e.g., 406)
+// Include strong Accept header for picky servers (e.g., 406)
 async function fetchWithTimeout(
   url: string,
   init: RequestInit = {},
@@ -85,7 +89,7 @@ async function fetchWithTimeout(
       redirect: "follow",
       headers: {
         "user-agent": USER_AGENT,
-        "accept":
+        accept:
           "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1",
         ...(init.headers || {}),
       },
@@ -98,7 +102,7 @@ async function fetchWithTimeout(
 
 async function robustGet(url: string, retries = RETRIES): Promise<Response> {
   let attempt = 0;
-  let lastErr: any = null;
+  let lastErr: unknown = null;
 
   while (attempt <= retries) {
     try {
@@ -108,13 +112,13 @@ async function robustGet(url: string, retries = RETRIES): Promise<Response> {
       } else {
         return res;
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       lastErr = e;
     }
     attempt++;
     if (attempt <= retries) await sleep(400 * attempt);
   }
-  throw lastErr ?? new Error("Fetch failed");
+  throw lastErr instanceof Error ? lastErr : new Error(getErrorMessage(lastErr));
 }
 
 /** Discover <link rel="alternate" type="application/rss+xml" ...> on a page */
@@ -205,7 +209,7 @@ export async function GET(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // NOTE: add parentheses so 'allowed' applies to both rss_url OR homepage_url
+  // Add parentheses so 'allowed' applies to both rss_url OR homepage_url
   const { rows: sources } = await query<DBSource>(
     `
     SELECT name, rss_url, homepage_url, favicon_url, COALESCE(priority,0) AS priority
@@ -249,7 +253,7 @@ export async function GET(req: Request) {
         }
       }
 
-      // B) sanitize before parsing
+      // Sanitize before parsing
       const cleaned = sanitizeXml(xml);
       const feed = await parser.parseString(cleaned);
 
@@ -260,8 +264,8 @@ export async function GET(req: Request) {
 
         const e = await enrich(srcName, item);
 
-        const url = e?.url ?? item.link;
-        const canonical_url = e?.canonical_url ?? url;
+        const urlStr = e?.url ?? item.link;
+        const canonical_url = e?.canonical_url ?? urlStr;
         const domain = e?.domain ?? null;
 
         const titleFromItem = safeSlice(item.title, 280);
@@ -299,7 +303,7 @@ export async function GET(req: Request) {
           `,
           [
             srcName,
-            url,
+            urlStr,
             canonical_url,
             domain,
             titleFromItem,
@@ -318,8 +322,8 @@ export async function GET(req: Request) {
       }
 
       stats.push({ source: srcName, added: addedForSource, finalUrl, tried, discovered });
-    } catch (err: any) {
-      const message = String(err?.message ?? err);
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
       errors.push({ source: srcName, error: message });
       stats.push({
         source: srcName,

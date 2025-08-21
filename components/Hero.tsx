@@ -2,12 +2,10 @@
 import Image from "next/image";
 import Link from "next/link";
 
-
-
 export type HeroProps = {
   title: string;
-  href: string;     // ✅ include href
-  src: string;      // image URL (og:image or favicon fallback)
+  href: string;     // link to article
+  src?: string;     // image URL (og:image or fallback)
   source: string;   // publisher label
 };
 
@@ -15,7 +13,7 @@ const FALLBACK = "https://picsum.photos/1600/900";
 
 export default function Hero({ title, href, src, source }: HeroProps) {
   const img = src || FALLBACK;
-  
+
   return (
     <Link
       href={href}
@@ -25,8 +23,8 @@ export default function Hero({ title, href, src, source }: HeroProps) {
     >
       <div className="relative aspect-[16/9] w-full">
         <Image
-          src={src}
-          alt=""
+          src={img}
+          alt={title}
           fill
           sizes="(max-width: 768px) 100vw, 768px"
           className="object-cover"
