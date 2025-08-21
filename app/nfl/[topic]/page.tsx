@@ -72,9 +72,10 @@ export default async function TopicPage(
       join sources s on s.id = a.source_id
       where ${whereParts.join(" and ")}
       order by
-        coalesce(a.popularity_score, a.popularity, 0) desc,
         a.published_at desc nulls last,
-        a.discovered_at desc
+        a.discovered_at desc,
+        coalesce(a.popularity_score, a.popularity, 0) desc
+
       limit 200
     `,
     paramsArr

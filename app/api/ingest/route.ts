@@ -1,7 +1,9 @@
 // app/api/ingest/route.ts
 import Parser from "rss-parser";
 import { query } from "@/lib/db";
+import type { Enriched } from "@/types/sources";
 import { enrich } from "@/lib/enrich";
+import { classifyArticle } from "@/lib/classify";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -28,6 +30,9 @@ type Itemish = {
   link?: string;
   title?: string;
   isoDate?: string;
+  contentSnippet?: string;
+  content?: string;
+  summary?: string;
 };
 
 /** ---------- Tunables ---------- */
@@ -51,6 +56,7 @@ function getErrorMessage(err: unknown): string {
 // Sanitize XML: escape bare '&' and strip control chars
 function sanitizeXml(xml: string) {
   const ampFixed = xml.replace(
+    // allow encoded entities; escape bare '&'
     /&(?!amp;|lt;|gt;|quot;|apos;|#[0-9]+;|#x[0-9A-Fa-f]+;)/g,
     "&amp;"
   );
@@ -197,6 +203,13 @@ async function loadFeedXmlWithFallbacks(
   };
 }
 
+/** Pick a usable summary without using `any` */
+type EnrichedWithSummary = Partial<Enriched> & { summary?: string | null };
+function pickSummary(e: Partial<Enriched>, item: Itemish): string | null {
+  const s = (e as EnrichedWithSummary).summary;
+  return s ?? item.summary ?? item.contentSnippet ?? item.content ?? null;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
@@ -262,21 +275,32 @@ export async function GET(req: Request) {
       for (const item of items) {
         if (!item?.link) continue;
 
-        const e = await enrich(srcName, item);
+        const e = (await enrich(srcName, item)) as Partial<Enriched>;
 
-        const urlStr = e?.url ?? item.link;
+        const urlStr        = e?.url ?? item.link;
         const canonical_url = e?.canonical_url ?? urlStr;
-        const domain = e?.domain ?? null;
+        const domain        = e?.domain ?? null;
 
         const titleFromItem = safeSlice(item.title, 280);
         const cleaned_title = safeSlice(e?.cleaned_title, 280);
-        const slug = safeSlice(e?.slug, 120);
+        const slug          = safeSlice(e?.slug, 120);
 
-        const fingerprint = e?.fingerprint ?? null;
+        // TS-safe summary selection (no `any`)
+        const summaryText: string | null = pickSummary(e, item);
+
+        // Only take topics; don't bind `category` to avoid unused-var
+        const { topics: clsTopics } = classifyArticle({
+          title: cleaned_title || titleFromItem,
+          summary: summaryText,
+          sourceName: srcName,
+          week: e?.week ?? null,
+        });
+
+        const fingerprint  = e?.fingerprint ?? null;
         const published_at = e?.published_at ?? null;
-        const week = e?.week ?? null;
-        const topics = e?.topics ?? null;
-        const image_url = e?.image_url ?? null;
+        const week         = e?.week ?? null;
+        const topics       = Array.from(new Set([...(e?.topics ?? []), ...clsTopics]));
+        const image_url    = e?.image_url ?? null;
 
         // Accept either unique constraint (url or canonical_url) without crashing
         const res = await query(

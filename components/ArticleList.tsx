@@ -29,7 +29,7 @@ export default function ArticleList({ items }: { items: Item[] }) {
         href={`/go/${r.id}`}
         target="_blank"
         rel="noreferrer"
-        className="mt-1 flex text-[12px] leading-snug text-black no-underline hover:text-green-900"
+        className="mt-1 flex text-[12px] font-bold leading-snug text-black no-underline hover:text-green-900"
         title={r.title}
       >
         {r.title}

@@ -42,9 +42,10 @@ export default async function TopicWeekPage(
           or ($2 = 'news' and (a.topics is null or array_length(a.topics, 1) = 0))
         )
       order by
-        coalesce(a.popularity_score, a.popularity, 0) desc,
         a.published_at desc nulls last,
-        a.discovered_at desc
+        a.discovered_at desc,      
+        coalesce(a.popularity_score, a.popularity, 0) desc
+
       limit 200
     `,
     [weekNum, t] as const

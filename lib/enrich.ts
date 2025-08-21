@@ -210,18 +210,72 @@ export function inferWeek(title: string, now = new Date()): number | null {
 ------------------------ */
 
 export function classify(title: string): string[] {
-  const t = (title || "").toLowerCase();
+  const t = (title || "").toLowerCase().trim();
+  const tags: string[] = [];
 
-  if (/\bwaivers?|streamers?|adds?|pickups?\b/.test(t)) return ["waiver-wire"];
-  if (/\brankings?\b|\btiers?\b|\becr\b/.test(t)) return ["rankings"];
-  if (/\bstart(?:\/| and | & )?sit|sit\/start|start-sit\b/.test(t) || /\bsleepers?\b/.test(t)) {
-    return ["start-sit"];
+  // Waivers
+  if (/\bwaivers?|streamers?|adds?|pickups?\b/.test(t)) {
+    tags.push("waiver-wire");
   }
-  if (/\btrade|buy\s+low|sell\s+high|rest[-\s]?of[-\s]?season\b/.test(t)) return ["trade"];
-  if (/\binjur(?:y|ies)|inactives?|questionable|practice report\b/.test(t)) return ["injury"];
-  if (/\bdfs|draftkings|fanduel|cash game|gpp\b/.test(t)) return ["dfs"];
 
-  return ["news"];
+  // Start/Sit & Sleepers
+  if (
+    /\bstart(?:\/| and | & )?sit|sit\/start|start-?sit\b/.test(t) ||
+    /\bsleepers?\b/.test(t)
+  ) {
+    tags.push("start-sit");
+  }
+
+  // Injuries
+  if (/\binjur(?:y|ies)|inactives?|questionable|practice report\b/.test(t)) {
+    tags.push("injury");
+  }
+
+  // DFS
+  if (/\bdfs|draftkings|fan(?:duel| duel)|cash game|gpp\b/.test(t)) {
+    tags.push("dfs");
+  }
+
+  // Trades
+  if (/\btrade|ros\b|rest[-\s]?of[-\s]?season\b/.test(t)) {
+    tags.push("trade");
+  }
+
+  // Rankings
+  if (/\brankings?\b|\btiers?\b|\becr\b/.test(t)) {
+    tags.push("rankings");
+  }
+
+  // Draft Prep
+  if (
+    /\bmock drafts?\b|\bmock draft\b/.test(t) ||
+    /\badp\b/.test(t) ||
+    /\bdraft (?:kit|guide|strategy|plan|tips|targets|values)\b/.test(t) ||
+    /\bcheat ?sheets?\b/.test(t) ||
+    /\bdraft board\b/.test(t)
+  ) {
+    if (!tags.includes("rankings") && /\badp|tiers?\b/.test(t)) {
+      tags.push("rankings");
+    }
+    tags.push("draft-prep");
+  }
+
+  // --- Advice: buy/sell, risers/fallers, targets ---
+  if (
+    /\bbuy(?:\/sell| & sell| or sell)?\b/.test(t) ||
+    /\bsell candidates?\b/.test(t) ||
+    /\btrade targets?\b/.test(t) ||
+    /\brisers?\b/.test(t) ||
+    /\bfallers?\b/.test(t) ||
+    /\bplayers? to (watch|avoid|target)\b/.test(t)
+  ) {
+    tags.push("advice");
+  }
+
+  // Fallback
+  if (tags.length === 0) tags.push("news");
+
+  return tags;
 }
 
 /* -----------------------

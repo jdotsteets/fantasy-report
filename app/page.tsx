@@ -66,9 +66,9 @@ async function fetchArticles(
       where a.sport = 'nfl'
         ${whereSql}
       order by
-        coalesce(a.popularity_score, 0) desc,
         a.published_at desc nulls last,
-        a.discovered_at desc
+        a.discovered_at desc,
+        coalesce(a.popularity_score, 0) desc
       limit ${limit}
     `,
     params
@@ -119,14 +119,8 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
   // Sections
   const latest = await fetchArticles("", [], 25);
   const rankings = await fetchArticles(`and a.topics @> ARRAY['rankings']::text[]`, [], 10);
-  const startSit = await fetchArticles(
-    `
-      and a.topics @> ARRAY['start-sit']::text[]
-      and coalesce(a.week, 0) = $1
-    `,
-    [CURRENT_WEEK],
-    12
-  );
+  const startSit = await fetchArticles(`and a.topics @> ARRAY['start-sit']::text[] and coalesce(a.week, 0) = $1`,[CURRENT_WEEK],12);
+  const advice = await fetchArticles(`and a.topics @> ARRAY['advice']::text[]`,[],10);
   const dfs = await fetchArticles(`and a.topics @> ARRAY['dfs']::text[]`, [], 10);
   const waivers = await fetchArticles(`and a.topics @> ARRAY['waiver-wire']::text[]`, [], 10);
   const injuries = await fetchArticles(`and a.topics @> ARRAY['injury']::text[]`, [], 10);
@@ -156,7 +150,7 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_1.2fr_1fr]">
         {/* LEFT: Rankings + Start/Sit + Waiver Wire (waivers last in this column) */}
         <div className="order-2 md:order-1 space-y-4">
-          <Section title="Rankings (Latest)">
+          <Section title="Rankings">
             <ArticleList items={rankings} />
           </Section>
 
@@ -167,17 +161,24 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
           <Section title="Waiver Wire">
             <ArticleList items={waivers} />
           </Section>
+
+          
         </div>
 
         {/* MIDDLE: Latest */}
         <div className="order-1 md:order-2 space-y-4">
-          <Section title="Latest Updates">
+          <Section title="News & Updates">
             <ArticleList items={latest} />
           </Section>
         </div>
 
         {/* RIGHT: DFS, Injuries, Sites (sites last) */}
         <div className="order-3 space-y-4">
+
+          <Section title="Advice">
+            <ArticleList items={advice} />
+          </Section>  
+                    
           <Section title="DFS">
             <ArticleList items={dfs} />
           </Section>

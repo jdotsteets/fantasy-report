@@ -14,7 +14,7 @@ html, body { background: #fff; }
 
   body { @apply bg-zinc-950 text-zinc-100 antialiased; }
   a {
-    @apply text-black hover:text-black no-underline;
+    @apply text-red-400 hover:text-black no-underline font-bold;
   }
   a:hover { @apply text-green-900 no-underline}
   
