@@ -11,7 +11,7 @@ export default function Section({
       <h2 className="px-4 py-3 border-b border-zinc-200 text-lg font-semibold text-zinc-900">
         {title}
       </h2>
-      <div className="p-4">{children}</div>
+      <div className="p-2">{children}</div>
     </section>
   );
 }

@@ -2,6 +2,8 @@
 import Image from "next/image";
 import Link from "next/link";
 
+
+
 export type HeroProps = {
   title: string;
   href: string;     // ✅ include href
@@ -9,7 +11,11 @@ export type HeroProps = {
   source: string;   // publisher label
 };
 
+const FALLBACK = "https://picsum.photos/1600/900";
+
 export default function Hero({ title, href, src, source }: HeroProps) {
+  const img = src || FALLBACK;
+  
   return (
     <Link
       href={href}

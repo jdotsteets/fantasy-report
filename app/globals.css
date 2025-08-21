@@ -9,10 +9,15 @@ html, body { background: #fff; }
 
 /* Optional readability tweaks */
 @layer base {
+  a { @apply text-black no-underline; }
+  a:hover { @apply text-green-900 no-underline; }
+
   body { @apply bg-zinc-950 text-zinc-100 antialiased; }
   a {
-    @apply text-blue-400 hover:text-blue-300 underline decoration-blue-400/40 underline-offset-2;
+    @apply text-black hover:text-black no-underline;
   }
+  a:hover { @apply text-green-900 no-underline}
+  
   h2 {
     @apply text-xl font-semibold tracking-tight;
   }

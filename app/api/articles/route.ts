@@ -4,10 +4,8 @@ import { query } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Parameters we allow to pass to pg. Adjust if your db layer exports a type. */
 type SQLParam = string | number | boolean | Date | null;
 
-/** Row shape we return (matches the SELECT below). */
 type ArticleRow = {
   id: number;
   title: string;
@@ -15,29 +13,22 @@ type ArticleRow = {
   canonical_url: string | null;
   domain: string | null;
   published_at: string | null;
+  created_at: string | null;      // include if you have it
   week: number | null;
   topics: string[] | null;
   source: string;
+  order_ts: string | null;        // derived for ordering/pagination
 };
 
-/** Parse "2025-08-17T10:00:00.000Z|12345" into parts. */
-function parseCursor(
-  cursor: string | null
-): { ts: string; id: number } | null {
+function parseCursor(cursor: string | null): { ts: string; id: number } | null {
   if (!cursor) return null;
   const [ts, idStr] = cursor.split("|");
-  if (!ts || !idStr) return null;
-
   const d = new Date(ts);
   const id = Number(idStr);
-
-  if (!Number.isFinite(id) || id < 0) return null;
-  if (Number.isNaN(d.getTime())) return null;
-
+  if (!Number.isFinite(id) || Number.isNaN(d.getTime())) return null;
   return { ts: d.toISOString(), id };
 }
 
-/** Clamp helper */
 function clamp(n: number, min: number, max: number) {
   if (Number.isNaN(n)) return min;
   return Math.max(min, Math.min(max, n));
@@ -46,23 +37,21 @@ function clamp(n: number, min: number, max: number) {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
-  const topic   = searchParams.get("topic");     // e.g. "waiver-wire"
-  const weekRaw = searchParams.get("week");      // e.g. "3"
-  const domain  = searchParams.get("domain");    // e.g. "fantasypros.com"
-  const source  = searchParams.get("source");    // e.g. "FantasyPros NFL News"
+  const topic   = searchParams.get("topic");
+  const weekRaw = searchParams.get("week");
+  const domain  = searchParams.get("domain");
+  const source  = searchParams.get("source");
   const limit   = clamp(Number(searchParams.get("limit") ?? "20"), 1, 100);
 
-  const cursorRaw = searchParams.get("cursor");  // e.g. "2025-08-17T10:00:00.000Z|12345"
-  const cursor = parseCursor(cursorRaw);
+  const cursor = parseCursor(searchParams.get("cursor"));
 
-  // Build WHERE and params safely
   const where: string[] = [];
   const params: SQLParam[] = [];
   let p = 1;
 
+  // topics is text[]; guard for NULL
   if (topic) {
-    // topics is text[]; '$p = any(a.topics)' matches if topic exists in array
-    where.push(`$${p} = any(a.topics)`);
+    where.push(`a.topics IS NOT NULL AND $${p} = ANY(a.topics)`);
     params.push(topic);
     p++;
   }
@@ -77,7 +66,8 @@ export async function GET(req: Request) {
   }
 
   if (domain) {
-    where.push(`a.domain = $${p}`);
+    // case-insensitive match; switch to '=' if you prefer exact
+    where.push(`a.domain ILIKE $${p}`);
     params.push(domain);
     p++;
   }
@@ -88,49 +78,49 @@ export async function GET(req: Request) {
     p++;
   }
 
+  // We order by order_ts := COALESCE(published_at, created_at) DESC, id DESC
+  // For correct keyset pagination with DESC, use tuple < (cursor_ts, cursor_id)
   if (cursor) {
-    // Keyset: (published_at, id) < (cursor.ts, cursor.id)
-    // Use explicit casts to match types.
-    where.push(`(a.published_at, a.id) < ($${p}::timestamptz, $${p + 1}::int)`);
+    where.push(`(COALESCE(a.published_at, a.created_at), a.id) < ($${p}::timestamptz, $${p + 1}::int)`);
     params.push(cursor.ts, cursor.id);
     p += 2;
   }
 
-  const whereSql = where.length ? `where ${where.join(" and ")}` : "";
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const sql = `
-    select
+    SELECT
       a.id,
-      coalesce(a.cleaned_title, a.title) as title,
+      COALESCE(a.cleaned_title, a.title) AS title,
       a.url,
       a.canonical_url,
       a.domain,
       a.published_at,
+      a.created_at,
       a.week,
       a.topics,
-      s.name as source
-    from articles a
-    join sources s on s.id = a.source_id
+      s.name AS source,
+      COALESCE(a.published_at, a.created_at) AS order_ts
+    FROM articles a
+    JOIN sources s ON s.id = a.source_id
     ${whereSql}
-    order by a.published_at desc nulls last, a.id desc
-    limit $${p}
+    ORDER BY COALESCE(a.published_at, a.created_at) DESC NULLS LAST, a.id DESC
+    LIMIT $${p}
   `;
   params.push(limit);
 
   const { rows } = await query(sql, params);
   const items = rows as ArticleRow[];
 
-  // Prepare next cursor (keyset) if we returned a full page.
   let nextCursor: string | null = null;
   if (items.length === limit) {
     const last = items[items.length - 1];
-    if (last?.published_at && Number.isFinite(last.id)) {
-      nextCursor = `${new Date(last.published_at).toISOString()}|${last.id}`;
+    if (last?.order_ts && Number.isFinite(last.id)) {
+      nextCursor = `${new Date(last.order_ts).toISOString()}|${last.id}`;
     }
   }
 
-  return new Response(
-    JSON.stringify({ items, nextCursor }),
-    { headers: { "content-type": "application/json" } }
-  );
+  return new Response(JSON.stringify({ items, nextCursor }), {
+    headers: { "content-type": "application/json" },
+  });
 }

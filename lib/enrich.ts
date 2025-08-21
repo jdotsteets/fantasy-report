@@ -5,6 +5,63 @@ import slugify from "slugify";
 /** Minimal feed item we get from rss-parser (etc.) */
 export type RawItem = { link?: string; title?: string; isoDate?: string };
 
+// Minimal HTML entity decoder for common cases
+export function decodeEntities(raw: string): string {
+  if (!raw) return raw;
+  let s = raw;
+
+  // Minimal named entities we care about in titles
+  const named: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+  };
+
+  // Decode once: named (&quot;), decimal (&#39;), hex (&#x27;)
+  const decodeOnce = (str: string) =>
+    str.replace(/&(#x?[0-9a-f]+|[a-z]+);?/gi, (m, ent) => {
+      const t = ent.toLowerCase();
+
+      // Named entities
+      if (t in named) return named[t];
+
+      // Hex numeric
+      if (t.startsWith("#x")) {
+        const code = parseInt(t.slice(2), 16);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+      }
+
+      // Decimal numeric
+      if (t.startsWith("#")) {
+        const code = parseInt(t.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+      }
+
+      return m; // leave unknown entities as-is
+    });
+
+  // Handle cases like "&amp;#39;" by decoding up to two passes
+  for (let i = 0; i < 2; i++) {
+    const next = decodeOnce(s);
+    if (next === s) break;
+    s = next;
+  }
+
+  // Normalize punctuation/spacing commonly seen in feeds
+  s = s
+    .replace(/\u00A0/g, " ")                 // nbsp -> space
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")   // zero‑width chars
+    .replace(/[“”„‟]/g, '"')                 // smart double quotes -> "
+    .replace(/[’‘‚‛]/g, "'")                 // smart single quotes -> '
+    .replace(/[–—]/g, "-")                   // en/em dash -> hyphen
+    .replace(/\s+/g, " ")                    // collapse whitespace
+    .trim();
+
+  return s;
+}
+
 /** Shape of the enriched article we return to callers */
 export type Enriched = {
   url: string;
@@ -106,7 +163,7 @@ const PUBLISHER_SUFFIXES = [
 ];
 
 export function cleanTitle(t: string): string {
-  let s = (t || "").replace(/\s+/g, " ").trim();
+  let s = decodeEntities((t || "").replace(/\s+/g, " ").trim());
   for (const re of PUBLISHER_SUFFIXES) s = s.replace(re, "");
   return s.trim();
 }

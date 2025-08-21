@@ -4,6 +4,7 @@ import ArticleList from "@/components/ArticleList";
 import Section from "@/components/Section";
 import TopicNav from "@/components/TopicNav";
 import Hero from "@/components/Hero";
+import FantasyLinks from "@/components/FantasyLinks";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ function getCurrentNFLWeek(now = new Date()): number {
 }
 
 function weekLabel(week: number) {
-  return week === 0 ? "Preseason (Week 0)" : `Week ${week}`;
+  return week === 0 ? "Preseason" : `Week ${week}`;
 }
 
 async function fetchArticles(
@@ -104,30 +105,20 @@ async function fetchHero(): Promise<HeroData | null> {
     ? {
         title: r.title,
         href: `/go/${r.id}`,
-        src:
-          r.image_url ||
-          "https://images.unsplash.com/photo-1521417531039-75e91486cc95?q=80&w=1600&auto=format&fit=crop",
+        src: r.image_url || "",
         source: r.source,
       }
     : null;
 }
 
-export default async function Home(props: {
-  searchParams?: Promise<Search>;
-}) {
+export default async function Home(props: { searchParams?: Promise<Search> }) {
   const sp = props.searchParams ? await props.searchParams : {};
   const urlWeek = Number(sp.week);
   const CURRENT_WEEK = Number.isFinite(urlWeek) ? urlWeek : getCurrentNFLWeek();
 
   // Sections
   const latest = await fetchArticles("", [], 25);
-
-  const rankings = await fetchArticles(
-    `and a.topics @> ARRAY['rankings']::text[]`,
-    [],
-    10
-  );
-
+  const rankings = await fetchArticles(`and a.topics @> ARRAY['rankings']::text[]`, [], 10);
   const startSit = await fetchArticles(
     `
       and a.topics @> ARRAY['start-sit']::text[]
@@ -136,50 +127,35 @@ export default async function Home(props: {
     [CURRENT_WEEK],
     12
   );
-
-  const dfs = await fetchArticles(
-    `and a.topics @> ARRAY['dfs']::text[]`,
-    [],
-    10
-  );
-
-  const waivers = await fetchArticles(
-    `and a.topics @> ARRAY['waiver-wire']::text[]`,
-    [],
-    10
-  );
-
-  const injuries = await fetchArticles(
-    `and a.topics @> ARRAY['injury']::text[]`,
-    [],
-    10
-  );
+  const dfs = await fetchArticles(`and a.topics @> ARRAY['dfs']::text[]`, [], 10);
+  const waivers = await fetchArticles(`and a.topics @> ARRAY['waiver-wire']::text[]`, [], 10);
+  const injuries = await fetchArticles(`and a.topics @> ARRAY['injury']::text[]`, [], 10);
 
   const hero = await fetchHero();
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6">
+    <main className="mx-auto w-full px-4 py-6">
       <header className="mb-6">
         <h1 className="text-3xl font-extrabold tracking-tight text-black">
-          Fantasy Football Aggregator
+          The Fantasy Report
         </h1>
-        <p className="mt-1 text-zinc-600">Fresh links from around the web.</p>
+        <p className="mt-1 text-zinc-600">News, Updates, Rankings, and Advice from the experts.</p>
         <div className="mt-4">
           <TopicNav />
         </div>
       </header>
 
       {/* Optional hero under pills */}
-      {hero && (
+      {hero?.src ? (
         <div className="mb-8">
           <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
         </div>
-      )}
+      ) : null}
 
       {/* 3-column layout */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        {/* LEFT: Rankings + Start/Sit */}
-        <div className="order-2 md:order-1 space-y-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_1.2fr_1fr]">
+        {/* LEFT: Rankings + Start/Sit + Waiver Wire (waivers last in this column) */}
+        <div className="order-2 md:order-1 space-y-4">
           <Section title="Rankings (Latest)">
             <ArticleList items={rankings} />
           </Section>
@@ -187,27 +163,32 @@ export default async function Home(props: {
           <Section title={`${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`}>
             <ArticleList items={startSit} />
           </Section>
+
+          <Section title="Waiver Wire">
+            <ArticleList items={waivers} />
+          </Section>
         </div>
 
         {/* MIDDLE: Latest */}
-        <div className="order-1 md:order-2 space-y-6">
+        <div className="order-1 md:order-2 space-y-4">
           <Section title="Latest Updates">
             <ArticleList items={latest} />
           </Section>
         </div>
 
-        {/* RIGHT: DFS, Waiver, Injuries */}
-        <div className="order-3 space-y-6">
+        {/* RIGHT: DFS, Injuries, Sites (sites last) */}
+        <div className="order-3 space-y-4">
           <Section title="DFS">
             <ArticleList items={dfs} />
           </Section>
 
-          <Section title="Waiver Wire">
-            <ArticleList items={waivers} />
-          </Section>
-
           <Section title="Injuries">
             <ArticleList items={injuries} />
+          </Section>
+
+          <Section title="Sites">
+            {/* pulls from the sources table, excludes team sites, news first */}
+            <FantasyLinks />
           </Section>
         </div>
       </div>

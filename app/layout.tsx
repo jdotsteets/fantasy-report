@@ -25,15 +25,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* Top bar / header */}
         <header className="border-b border-zinc-200">
-          <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-4">
+          <div className="mx-auto max-w-[95%] px-4 sm:px-6 lg:px-8 py-4">
             <h1 className="text-xl font-semibold tracking-tight">
               Fantasy Football Aggregator
             </h1>
           </div>
+          
         </header>
 
         {/* Page content */}
-        <main id="main" className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-6">
+        <main id="main" className="mx-auto max-w-[95%] px-4 sm:px-6 lg:px-8 py-6">
           {children}
         </main>
 
