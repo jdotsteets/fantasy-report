@@ -1,5 +1,6 @@
 // components/TopicSection.tsx
-import ArticleLink, { Article } from "./ArticleLink";
+import ArticleLink from "@/components/ArticleLink";
+import type { Article } from "@/types/sources";
 import Link from "next/link";
 
 export default function TopicSection({
@@ -22,7 +23,7 @@ export default function TopicSection({
       </div>
       <ul className="divide-y divide-zinc-800 rounded border border-zinc-800 bg-zinc-900/50">
         {items.map((a) => (
-          <ArticleLink key={a.id} a={a} />
+          <ArticleLink key={a.id} article={a} />
         ))}
       </ul>
     </section>

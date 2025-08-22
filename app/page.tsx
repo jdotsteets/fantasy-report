@@ -5,6 +5,8 @@ import Section from "@/components/Section";
 import TopicNav from "@/components/TopicNav";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
+import ArticleLink from "@/components/ArticleLink";
+import type { Article } from "@/types/sources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,15 +14,7 @@ export const dynamic = "force-dynamic";
 type SQLParam = string | number | boolean | null | Date;
 type Search = { week?: string };
 
-type ArticleRow = {
-  id: number;
-  title: string;
-  url: string;
-  published_at: string | null;
-  topics: string[] | null;
-  week: number | null;
-  source: string;
-};
+type ArticleRow = Article;
 
 type HeroData = {
   title: string;
@@ -51,12 +45,18 @@ async function fetchArticles(
   params: ReadonlyArray<SQLParam> = [],
   limit = 15
 ): Promise<ArticleRow[]> {
-  const { rows } = await query(
+  // put limit at the end; compute its placeholder index
+  const limitParamIndex = params.length + 1;
+  const allParams: ReadonlyArray<SQLParam> = [...params, limit];
+
+  const { rows } = await query<ArticleRow>(
     `
       select
         a.id,
         coalesce(a.cleaned_title, a.title) as title,
         a.url,
+        a.canonical_url,
+        a.domain,
         a.published_at,
         a.topics,
         a.week,
@@ -69,12 +69,14 @@ async function fetchArticles(
         a.published_at desc nulls last,
         a.discovered_at desc,
         coalesce(a.popularity_score, 0) desc
-      limit ${limit}
+      limit $${limitParamIndex}
     `,
-    params
+    allParams
   );
+
   return rows as ArticleRow[];
 }
+
 
 // For the hero we need image/source/url/title; pull one promising item
 async function fetchHero(): Promise<HeroData | null> {

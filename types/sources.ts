@@ -14,7 +14,7 @@ export type SourceRow = {
 
 
 
-// types.ts
+// 
 export type SearchResult = {
   id: number;
   title: string;
@@ -39,5 +39,20 @@ export type Enriched = {
   published_at?: string | null;
   week?: number | null;
   topics?: string[] | null;
+  image_url?: string | null;
+};
+
+
+
+
+// /types.sources.ts
+export type Article = {
+  id: number;
+  title: string;
+  url: string;
+  canonical_url: string | null;
+  domain: string | null;
+  published_at: string | null;
+  source: string;
   image_url?: string | null;
 };

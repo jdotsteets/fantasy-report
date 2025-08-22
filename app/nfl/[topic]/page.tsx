@@ -1,7 +1,9 @@
-// app/nfl/[topic]/page.tsx
+// app/nfl/week/[week]/[topic]/page.tsx
 import { query } from "@/lib/db";
-import ArticleLink, { Article } from "@/components/ArticleLink";
+import ArticleLink from "@/components/ArticleLink";
+import type { Article } from "@/types/sources"; // <-- use shared type (or remove if unused)
 import SiteHeader from "@/components/SiteHeader";
+import { notFound } from "next/navigation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,7 +95,7 @@ export default async function TopicPage(
         </h1>
         <ul className="divide-y divide-zinc-800 rounded border border-zinc-800 bg-zinc-900/50">
           {items.map((a) => (
-            <ArticleLink key={a.id} a={a} />
+            <ArticleLink key={a.id} article={a} />
           ))}
         </ul>
       </main>

@@ -7,9 +7,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "clean": "rm -rf .next .turbo node_modules/.cache"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.56.0",
     "@tailwindcss/postcss": "^4.1.12",
     "autoprefixer": "^10.4.21",
     "next": "15.4.6",

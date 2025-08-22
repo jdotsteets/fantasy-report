@@ -2,15 +2,21 @@
 import crypto from "crypto";
 import slugify from "slugify";
 
-/** Minimal feed item we get from rss-parser (etc.) */
-export type RawItem = { link?: string; title?: string; isoDate?: string };
+/** Minimal feed item we get from rss-parser (etc.), extended with media fields */
+export type RawItem = {
+  link?: string;
+  title?: string;
+  isoDate?: string;
+  // common RSS media fields (rss-parser may map these differently by feed)
+  enclosure?: { url?: string | null } | null;
+  ["media:content"]?: { url?: string | null } | { url?: string | null }[] | null;
+};
 
 // Minimal HTML entity decoder for common cases
 export function decodeEntities(raw: string): string {
   if (!raw) return raw;
   let s = raw;
 
-  // Minimal named entities we care about in titles
   const named: Record<string, string> = {
     amp: "&",
     lt: "<",
@@ -19,44 +25,34 @@ export function decodeEntities(raw: string): string {
     apos: "'",
   };
 
-  // Decode once: named (&quot;), decimal (&#39;), hex (&#x27;)
   const decodeOnce = (str: string) =>
     str.replace(/&(#x?[0-9a-f]+|[a-z]+);?/gi, (m, ent) => {
       const t = ent.toLowerCase();
-
-      // Named entities
       if (t in named) return named[t];
-
-      // Hex numeric
       if (t.startsWith("#x")) {
         const code = parseInt(t.slice(2), 16);
         return Number.isFinite(code) ? String.fromCodePoint(code) : m;
       }
-
-      // Decimal numeric
       if (t.startsWith("#")) {
         const code = parseInt(t.slice(1), 10);
         return Number.isFinite(code) ? String.fromCodePoint(code) : m;
       }
-
-      return m; // leave unknown entities as-is
+      return m;
     });
 
-  // Handle cases like "&amp;#39;" by decoding up to two passes
   for (let i = 0; i < 2; i++) {
     const next = decodeOnce(s);
     if (next === s) break;
     s = next;
   }
 
-  // Normalize punctuation/spacing commonly seen in feeds
   s = s
-    .replace(/\u00A0/g, " ")                 // nbsp -> space
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")   // zero‑width chars
-    .replace(/[“”„‟]/g, '"')                 // smart double quotes -> "
-    .replace(/[’‘‚‛]/g, "'")                 // smart single quotes -> '
-    .replace(/[–—]/g, "-")                   // en/em dash -> hyphen
-    .replace(/\s+/g, " ")                    // collapse whitespace
+    .replace(/\u00A0/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[’‘‚‛]/g, "'")
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, " ")
     .trim();
 
   return s;
@@ -74,40 +70,73 @@ export type Enriched = {
   published_at: string | null;
   slug: string;
   fingerprint: string;
-  image_url: string | null;          // 👈 new
+  image_url: string | null;
 };
 
 /* -----------------------
-   image capture
+   image capture (improved)
 ------------------------ */
 
-/** Try to fetch <meta property="og:image" content="..."> from the page. */
-async function fetchOgImage(url: string, timeoutMs = 2000): Promise<string | null> {
+function resolveImageUrl(raw: string, pageUrl: string): string | null {
+  if (!raw) return null;
+  let u = raw.trim();
+  if (u.startsWith("//")) u = "https:" + u; // protocol-relative -> https
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!res.ok) return null;
-
-    const html = await res.text();
-
-    // super light OG <meta> scrape (covers common attribute orders)
-    const m =
-      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i) ||
-      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i);
-
-    return m?.[1] ?? null;
+    return new URL(u, pageUrl).toString();
   } catch {
     return null;
   }
 }
 
-/** Fallback to a high‑res site favicon when no og:image exists. */
+/** Try to fetch an article's lead image via common meta/link tags. */
+export async function fetchOgImage(pageUrl: string, timeoutMs = 4000): Promise<string | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(pageUrl, {
+      signal: ctrl.signal,
+      redirect: "follow",
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      },
+    });
+    if (!res.ok) return null;
+
+    const ctype = res.headers.get("content-type") || "";
+    if (!/text\/html|application\/xhtml\+xml/i.test(ctype)) return null;
+
+    const html = await res.text();
+    const doc = html.slice(0, 400_000);
+
+    const pick = (re: RegExp) => {
+      const m = doc.match(re);
+      return m?.[1] ? resolveImageUrl(m[1], pageUrl) : null;
+    };
+
+    return (
+      pick(/<meta[^>]+property=["']og:image:secure_url["'][^>]+content=["']([^"']+)["']/i) ||
+      pick(/<meta[^>]+property=["']og:image:url["'][^>]+content=["']([^"']+)["']/i) ||
+      pick(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      pick(/<meta[^>]+name=["']twitter:image:src["'][^>]+content=["']([^"']+)["']/i) ||
+      pick(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i) ||
+      pick(/<meta[^>]+itemprop=["']image["'][^>]+content=["']([^"']+)["']/i) ||
+      pick(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["']/i) ||
+      null
+    );
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function faviconFor(domain: string): string | null {
-  return domain
-    ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`
-    : null;
+  if (!domain) return null;
+  return `https://${domain}/favicon.ico`;
 }
 
 /* -----------------------
@@ -127,17 +156,14 @@ export function normalizeUrl(raw: string): {
   try {
     const u = new URL(raw.trim());
 
-    // Drop junk query params
     BAD_PARAMS.forEach((re) => {
       for (const key of Array.from(u.searchParams.keys())) {
         if (re.test(key)) u.searchParams.delete(key);
       }
     });
 
-    // No hash fragments
     u.hash = "";
 
-    // Trim trailing slash (not root)
     let canonical = u.toString();
     if (canonical.endsWith("/") && u.pathname !== "/") canonical = canonical.slice(0, -1);
 
@@ -159,7 +185,7 @@ const PUBLISHER_SUFFIXES = [
   /\s*[-–—]\s*rotowire.*$/i,
   /\s*[-–—]\s*numberfire.*$/i,
   /\s*[-–—]\s*nbc sports edge.*$/i,
-  /\s*\|\s*.*$/i, // trailing pipes like " | Fantasy Football"
+  /\s*\|\s*.*$/i,
 ];
 
 export function cleanTitle(t: string): string {
@@ -183,25 +209,16 @@ export function cleanTitleForSource(source: string, title: string) {
    Week inference
 ------------------------ */
 
-// Matches: Week 3, week-3, Wk 3, wk3, etc.
 const WEEK_RE = /\b(?:week|wk)\s*[-.]?\s*(\d{1,2})\b/i;
 
-/**
- * Infer week number from the title. If none is found and we’re in
- * July or August (UTC), treat it as preseason week 0 so those items
- * still show up when you filter by "current week".
- */
 export function inferWeek(title: string, now = new Date()): number | null {
   const m = (title || "").match(WEEK_RE);
   if (m) {
     const n = parseInt(m[1], 10);
-    return Math.min(18, Math.max(1, n)); // clamp 1..18
+    return Math.min(18, Math.max(1, n));
   }
-
-  // Preseason fallback: July (6) or August (7) in UTC
   const month = now.getUTCMonth();
   if (month === 6 || month === 7) return 0;
-
   return null;
 }
 
@@ -213,12 +230,10 @@ export function classify(title: string): string[] {
   const t = (title || "").toLowerCase().trim();
   const tags: string[] = [];
 
-  // Waivers
-  if (/\bwaivers?|streamers?|adds?|pickups?\b/.test(t)) {
+  if (/\b(waiver\s*wire|pick\s*ups?|adds?|streamers?|deep\s*adds?|stash(?:es)?|faab|sleepers?|targets?|spec\s*adds?|roster\s*moves?)\b/.test(t)) {
     tags.push("waiver-wire");
   }
 
-  // Start/Sit & Sleepers
   if (
     /\bstart(?:\/| and | & )?sit|sit\/start|start-?sit\b/.test(t) ||
     /\bsleepers?\b/.test(t)
@@ -226,27 +241,22 @@ export function classify(title: string): string[] {
     tags.push("start-sit");
   }
 
-  // Injuries
   if (/\binjur(?:y|ies)|inactives?|questionable|practice report\b/.test(t)) {
     tags.push("injury");
   }
 
-  // DFS
   if (/\bdfs|draftkings|fan(?:duel| duel)|cash game|gpp\b/.test(t)) {
     tags.push("dfs");
   }
 
-  // Trades
   if (/\btrade|ros\b|rest[-\s]?of[-\s]?season\b/.test(t)) {
     tags.push("trade");
   }
 
-  // Rankings
   if (/\brankings?\b|\btiers?\b|\becr\b/.test(t)) {
     tags.push("rankings");
   }
 
-  // Draft Prep
   if (
     /\bmock drafts?\b|\bmock draft\b/.test(t) ||
     /\badp\b/.test(t) ||
@@ -260,7 +270,6 @@ export function classify(title: string): string[] {
     tags.push("draft-prep");
   }
 
-  // --- Advice: buy/sell, risers/fallers, targets ---
   if (
     /\bbuy(?:\/sell| & sell| or sell)?\b/.test(t) ||
     /\bsell candidates?\b/.test(t) ||
@@ -272,9 +281,7 @@ export function classify(title: string): string[] {
     tags.push("advice");
   }
 
-  // Fallback
   if (tags.length === 0) tags.push("news");
-
   return tags;
 }
 
@@ -302,22 +309,38 @@ export function fingerprint(canonical: string, title: string): string {
 }
 
 /* -----------------------
-   Main enrichment
+   Main enrichment (improved image selection)
 ------------------------ */
 
 export async function enrich(sourceName: string, item: RawItem): Promise<Enriched> {
   const rawUrl = item.link || "";
   const { url, canonical, domain } = normalizeUrl(rawUrl);
 
-  const cleaned = cleanTitleForSource(sourceName, item.title || canonical);
-  const topics = classify(cleaned);
-  const week = inferWeek(cleaned);
+  const cleaned      = cleanTitleForSource(sourceName, item.title || canonical);
+  const topics       = classify(cleaned);
+  const week         = inferWeek(cleaned);
   const published_at = parseDate(item.isoDate, true);
-  const slug = makeSlug(sourceName, cleaned, canonical);
-  const fp = fingerprint(canonical, cleaned);
+  const slug         = makeSlug(sourceName, cleaned, canonical);
+  const fp           = fingerprint(canonical, cleaned);
 
-  // Try to fetch og:image (non-fatal). Fallback to favicon.
-  let image_url = await fetchOgImage(canonical);
+  // 1) Try direct media from the feed
+  const directFromEnclosure = item.enclosure?.url ?? null;
+  const mc = item["media:content"];
+  const directFromMedia =
+    Array.isArray(mc) ? (mc.find((m) => m?.url)?.url ?? null) : (mc?.url ?? null);
+
+  let image_url = directFromEnclosure || directFromMedia || null;
+
+  // 2) Fall back to og:image (and friends)
+  if (!image_url) {
+    try {
+      image_url = await fetchOgImage(canonical);
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // 3) Favicon fallback
   if (!image_url) image_url = faviconFor(domain);
 
   return {

@@ -1,33 +1,56 @@
 // lib/db.ts
-import { Pool, QueryResult } from "pg";
+import { Pool, QueryResultRow } from "pg";
+import dns from "node:dns/promises";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not set. Create .env.local with your Supabase connection string.");
+const raw = process.env.DATABASE_URL_POOLER || process.env.DATABASE_URL;
+if (!raw) throw new Error("No DATABASE_URL(_POOLER) set");
+
+// Sanitize the URL: remove ssl / sslmode query flags so they don't override our options
+function sanitizeConn(urlStr: string): string {
+  const u = new URL(urlStr);
+  u.searchParams.delete("ssl");
+  u.searchParams.delete("sslmode");   // require, verify-full, etc.
+  return u.toString();                // no ssl flags in the URL
 }
 
-// Reuse a single Pool across hot reloads in dev
-const globalForPg = global as unknown as { pgPool?: Pool };
+const connectionString = sanitizeConn(raw);
 
-export const pool =
-  globalForPg.pgPool ??
-  new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+// --- debug: which URL & host are actually used ---
+(function debugConnection() {
+  try {
+    const u = new URL(connectionString);
+    const masked = `${u.protocol}//${u.username}:${u.password ? "****" : ""}@${u.host}${u.pathname}${u.search}`;
+    console.log("[DB] Using connection:", masked);
+    console.log("[DB] Host:", u.hostname, "Port:", u.port || "(default)");
+    dns.lookup(u.hostname)
+      .then((ip) => console.log("[DB] DNS OK:", ip))
+      .catch((e) => console.error("[DB] DNS ERROR:", e.message));
+  } catch (e) {
+    console.error("[DB] Bad connection string:", e);
+  }
+})();
 
-if (!globalForPg.pgPool) globalForPg.pgPool = pool;
+export const pool = new Pool({
+  connectionString,
+  // Force TLS but skip CA verification to avoid “self-signed certificate” from Supabase pooler
+  ssl: { rejectUnauthorized: false },
+  max: Number(process.env.PGPOOL_MAX ?? 5),
+  idleTimeoutMillis: Number(process.env.PG_IDLE_MS ?? 10_000),
+  connectionTimeoutMillis: Number(process.env.PG_CONN_MS ?? 5_000),
+});
 
-// Acceptable SQL parameter types (recursive arrays allowed)
-type SQLPrimitive = string | number | boolean | Date | null | Buffer | Uint8Array;
-export type SQLParam = SQLPrimitive | readonly SQLPrimitive[] | readonly SQLParam[];
-export type SQLParams = readonly SQLParam[];
-
-export type Row = Record<string, unknown>;
-
-export const query = <T extends Row = Row>(
+export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
-  params?: SQLParams
-): Promise<QueryResult<T>> => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return pool.query<T>(text, params as unknown as any[]);
-};
+  params: ReadonlyArray<unknown> = []
+): Promise<{ rows: T[] }> {
+  try {
+    const res = await pool.query<T>(text, params as unknown[]);
+    return { rows: res.rows };
+  } catch (err) {
+    console.error("[DB ERROR]");
+    console.error("Query:", text.trim());
+    console.error("Params:", JSON.stringify(params));
+    console.error("Error:", err instanceof Error ? err.message : err);
+    throw err;
+  }
+}

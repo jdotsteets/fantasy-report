@@ -1,6 +1,7 @@
 // app/nfl/week/[week]/page.tsx
 import { query } from "@/lib/db";
-import ArticleLink, { Article } from "@/components/ArticleLink";
+import ArticleLink from "@/components/ArticleLink";
+import type { Article } from "@/types/sources";
 import SiteHeader from "@/components/SiteHeader";
 
 export const runtime = "nodejs";
@@ -48,7 +49,7 @@ export default async function WeekPage(
         <h1 className="mb-4 text-2xl font-bold">All Topics — Week {w}</h1>
         <ul className="divide-y divide-zinc-800 rounded border border-zinc-800 bg-zinc-900/50">
           {items.map((a) => (
-            <ArticleLink key={a.id} a={a} />
+            <ArticleLink key={a.id} article={a} />
           ))}
         </ul>
       </main>
