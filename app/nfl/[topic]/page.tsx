@@ -3,7 +3,7 @@ import { query } from "@/lib/db";
 import ArticleLink from "@/components/ArticleLink";
 import type { Article } from "@/types/sources"; // <-- use shared type (or remove if unused)
 import SiteHeader from "@/components/SiteHeader";
-import { notFound } from "next/navigation";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

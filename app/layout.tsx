@@ -27,7 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* Top bar / header */}
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-zinc-200">
-          <div className="mx-auto max-w-[95%] px-4 sm:px-6 lg:px-8 py-3">
+          <div className="mx-auto max-w-[100%] px-4 sm:px-6 lg:px-8 py-3">
             <div className="flex items-center justify-between gap-3">
               <h1 className="text-xl font-semibold tracking-tight">
                 Fantasy Football Aggregator
@@ -42,7 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
 
         {/* Page content */}
-        <main id="main" className="mx-auto max-w-[97%] px-4 sm:px-6 lg:px-8 py-6">
+        <main id="main" className="mx-auto max-w-[100%] px-4 sm:px-6 lg:px-8 py-6">
           {children}
         </main>
 

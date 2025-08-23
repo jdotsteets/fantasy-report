@@ -1,18 +1,18 @@
-// components/Hero.tsx
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
+import { getSafeImageUrl, FALLBACK } from "@/lib/images";
 
 export type HeroProps = {
   title: string;
-  href: string;     // link to article
-  src?: string;     // image URL (og:image or fallback)
-  source: string;   // publisher label
+  href: string;
+  src?: string;
+  source: string;
 };
 
-const FALLBACK = "https://picsum.photos/1600/900";
-
 export default function Hero({ title, href, src, source }: HeroProps) {
-  const img = src || FALLBACK;
+  const img = getSafeImageUrl(src);
 
   return (
     <Link
@@ -28,7 +28,12 @@ export default function Hero({ title, href, src, source }: HeroProps) {
           fill
           sizes="(max-width: 768px) 100vw, 768px"
           className="object-cover"
-          priority
+          unoptimized
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            const el = e.currentTarget as HTMLImageElement;
+            if (el.src !== FALLBACK) el.src = FALLBACK;
+          }}
         />
       </div>
 

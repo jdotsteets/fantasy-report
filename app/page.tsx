@@ -5,7 +5,6 @@ import Section from "@/components/Section";
 import TopicNav from "@/components/TopicNav";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
-import ArticleLink from "@/components/ArticleLink";
 import type { Article } from "@/types/sources";
 
 export const runtime = "nodejs";
@@ -149,7 +148,7 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
       ) : null}
 
       {/* 3-column layout */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_1.2fr_1fr]">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
         {/* LEFT: Rankings + Start/Sit + Waiver Wire (waivers last in this column) */}
         <div className="order-2 md:order-1 space-y-4">
           <Section title="Rankings">

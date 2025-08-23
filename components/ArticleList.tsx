@@ -1,9 +1,10 @@
+// components/ArticleList.tsx
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
-import ArticleLink from "@/components/ArticleLink";
 import type { Article } from "@/types/sources";
+import { getSafeImageUrl, FALLBACK } from "@/lib/images";
 
 type Props = {
   items: Article[];
@@ -17,9 +18,7 @@ export default function ArticleList({ items, title, className }: Props) {
       className={[
         "rounded-2xl border border-zinc-200 bg-white",
         className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
+      ].filter(Boolean).join(" ")}
     >
       {title ? (
         <header className="border-b border-zinc-200 px-4 py-3 sm:px-5">
@@ -30,16 +29,23 @@ export default function ArticleList({ items, title, className }: Props) {
       <ul className="divide-y divide-zinc-200">
         {items.map((r) => {
           const href = r.canonical_url ?? r.url;
+          const img = getSafeImageUrl(r.image_url);
           return (
             <li key={r.id} className="px-4 py-3 sm:px-5">
-              {r.image_url ? (
+              {img ? (
                 <div className="relative mb-2 aspect-[16/9] w-full overflow-hidden rounded-md bg-zinc-100">
                   <Image
-                    src={r.image_url}
+                    src={img}
                     alt=""
                     fill
                     sizes="(max-width: 768px) 100vw, 50vw"
                     className="object-cover"
+                    unoptimized
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const el = e.currentTarget as HTMLImageElement;
+                      if (el.src !== FALLBACK) el.src = FALLBACK;
+                    }}
                   />
                 </div>
               ) : null}
