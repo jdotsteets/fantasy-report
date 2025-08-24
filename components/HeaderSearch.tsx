@@ -47,7 +47,7 @@ export default function HeaderSearch() {
         className={[
           "inline-flex items-center justify-center",
           "h-9 rounded-md px-3 text-sm font-medium",
-          "bg-emerald-700 text-white hover:bg-emerald-800",
+          "bg-emerald-800 text-white hover:bg-emerald-900",
           "shadow-sm"
         ].join(" ")}
         aria-label={open ? "Search" : "Open search"}

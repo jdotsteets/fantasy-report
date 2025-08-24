@@ -2,38 +2,56 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "**" },
-      { protocol: "https", hostname: "a.espncdn.com" },
-      { protocol: "https", hostname: "a1.espncdn.com" },
-      { protocol: "https", hostname: "a2.espncdn.com" },
-      { protocol: "https", hostname: "a3.espncdn.com" },
-      { protocol: "https", hostname: "a4.espncdn.com" },
-      { protocol: "https", hostname: "cdn.profootballrumors.com" },
-      { protocol: "https", hostname: "cdn.yourdomain.com" },
-      { protocol: "https", hostname: "dynastyleaguefootball.com" },
-      { protocol: "https", hostname: "football.razzball.com" },
-      { protocol: "https", hostname: "ichef.bbci.co.uk" },
-      { protocol: "https", hostname: "images.contentstack.io" },
-      { protocol: "https", hostname: "images.unsplash.com" },
-      { protocol: "https", hostname: "media.nbcsportsbayarea.com" },
-      { protocol: "https", hostname: "media.nbcsportsboston.com" },
-      { protocol: "https", hostname: "media.nbcsportsphiladelphia.com" },
-      { protocol: "https", hostname: "media.pff.com" },
-      { protocol: "https", hostname: "media.zenfs.com" },
-      { protocol: "https", hostname: "nbcsports.brightspotcdn.com" },
-      { protocol: "https", hostname: "s.yimg.com" },
-      { protocol: "https", hostname: "s26212.pcdn.co" },
-      { protocol: "https", hostname: "sportshub.cbsistatic.com" },
-      { protocol: "https", hostname: "www.4for4.com" },
-      { protocol: "https", hostname: "www.facebook.com" },
-      { protocol: "https", hostname: "www.google.com" },
-      { protocol: "https", hostname: "www.rotoballer.com" },
-      { protocol: "https", hostname: "www.sharpfootballanalysis.com" },
-      { protocol: "https", hostname: "www.sportico.com" },
-      { protocol: "https", hostname: "www.telegraph.co.uk" },
-    ],
-  },
+  formats: ["image/avif", "image/webp"],
+  minimumCacheTTL: 60 * 60 * 24, // 1 day
+  dangerouslyAllowSVG: false,
+
+  // If you set a strict CSP elsewhere, keep img-src wide enough to fetch from these
+  contentSecurityPolicy:
+    "default-src 'self'; script-src 'none'; style-src 'unsafe-inline'; img-src * data: blob: https: http:; media-src 'none'; connect-src 'self'",
+
+  remotePatterns: [
+    { protocol: "https", hostname: "**" }, // broad, or lock down later
+    { protocol: "http", hostname: "**" },  // if you truly have http sources
+    // WordPress / Jetpack CDN (often used as redirect targets)
+    { protocol: "https", hostname: "i0.wp.com", pathname: "/**" },
+    { protocol: "https", hostname: "i1.wp.com", pathname: "/**" },
+    { protocol: "https", hostname: "i2.wp.com", pathname: "/**" },
+    { protocol: "http",  hostname: "i0.wp.com", pathname: "/**" },
+    { protocol: "http",  hostname: "i1.wp.com", pathname: "/**" },
+    { protocol: "http",  hostname: "i2.wp.com", pathname: "/**" },
+
+    // Rotoballer (both apex and www, both protocols)
+    { protocol: "https", hostname: "rotoballer.com", pathname: "/wp-content/**" },
+    { protocol: "https", hostname: "www.rotoballer.com", pathname: "/wp-content/**" },
+    { protocol: "http",  hostname: "rotoballer.com", pathname: "/wp-content/**" },
+    { protocol: "http",  hostname: "www.rotoballer.com", pathname: "/wp-content/**" },
+
+    // Yahoo / ESPN / CBS / NBC / PFF (common in your feed)
+    { protocol: "https", hostname: "s.yimg.com", pathname: "/**" },
+    { protocol: "https", hostname: "media.zenfs.com", pathname: "/**" },
+    { protocol: "https", hostname: "a.espncdn.com", pathname: "/**" },
+    { protocol: "https", hostname: "a1.espncdn.com", pathname: "/**" },
+    { protocol: "https", hostname: "a2.espncdn.com", pathname: "/**" },
+    { protocol: "https", hostname: "a3.espncdn.com", pathname: "/**" },
+    { protocol: "https", hostname: "a4.espncdn.com", pathname: "/**" },
+    { protocol: "https", hostname: "sportshub.cbsistatic.com", pathname: "/**" },
+    { protocol: "https", hostname: "nbcsports.brightspotcdn.com", pathname: "/**" },
+    { protocol: "https", hostname: "media.nbcsportsbayarea.com", pathname: "/**" },
+    { protocol: "https", hostname: "media.nbcsportsboston.com", pathname: "/**" },
+    { protocol: "https", hostname: "media.nbcsportsphiladelphia.com", pathname: "/**" },
+    { protocol: "https", hostname: "media.pff.com", pathname: "/**" },
+
+    // Other CDNs you already had
+    { protocol: "https", hostname: "images.contentstack.io", pathname: "/**" },
+    { protocol: "https", hostname: "s26212.pcdn.co", pathname: "/**" },
+    { protocol: "https", hostname: "cdn.profootballrumors.com", pathname: "/**" },
+
+    // Your fallback
+    { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
+  ],
+},
+
 };
 
 export default nextConfig;

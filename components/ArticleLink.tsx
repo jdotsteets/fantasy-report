@@ -13,7 +13,8 @@ type ArticleLinkProps = {
 
 export default function ArticleLink({ article: a, className }: ArticleLinkProps) {
   const href = a.canonical_url ?? a.url;
-  const img = getSafeImageUrl(a.image_url);
+  
+  const img = getSafeImageUrl(a.image_url) || FALLBACK;
 
   return (
     <li

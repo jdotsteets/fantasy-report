@@ -3,14 +3,14 @@
 import Link from "next/link";
 
 const TOPIC_ITEMS = [
-  { href: "/nfl/rankings", label: "rankings" },
-  { href: "/nfl/waiver-wire", label: "waiver wire" },
-  { href: "/nfl/start-sit", label: "start sit" },
-  { href: "/nfl/injury", label: "injury" },
-  { href: "/nfl/trade", label: "trade" },
-  { href: "/nfl/dfs", label: "dfs" },
-  { href: "/nfl/news", label: "news" },
-  { href: "/nfl/advice", label: "advice" },
+  { href: "/nfl/rankings", label: "Rankings" },
+  { href: "/nfl/waiver-wire", label: "Waiver Wire" },
+  { href: "/nfl/start-sit", label: "Start Sit" },
+  { href: "/nfl/injury", label: "Injury" },
+  { href: "/nfl/trade", label: "Trade" },
+  { href: "/nfl/dfs", label: "DFS" },
+  { href: "/nfl/news", label: "News" },
+  { href: "/nfl/advice", label: "Advice" },
 ];
 
 export default function TopicNav() {
@@ -21,7 +21,7 @@ export default function TopicNav() {
           <li key={it.href}>
             <Link
               href={it.href}
-              className="inline-flex items-center rounded-full border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-700 hover:border-green-300 hover:bg-green-50 hover:text-green-800"
+              className="inline-flex items-center rounded-full border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-700 hover:border-green-800 hover:bg-green-50 hover:text-green-800"
             >
               {it.label}
             </Link>

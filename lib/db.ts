@@ -2,6 +2,12 @@
 import { Pool, QueryResultRow } from "pg";
 import dns from "node:dns/promises";
 
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __pgPool__: Pool | undefined;
+}
+
 const raw = process.env.DATABASE_URL_POOLER || process.env.DATABASE_URL;
 if (!raw) throw new Error("No DATABASE_URL(_POOLER) set");
 
@@ -39,10 +45,13 @@ export const pool = new Pool({
   connectionTimeoutMillis: Number(process.env.PG_CONN_MS ?? 5_000),
 });
 
+if (!global.__pgPool__) global.__pgPool__ = pool;
+
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown> = []
 ): Promise<{ rows: T[] }> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
   try {
     const res = await pool.query<T>(text, params as unknown[]);
     return { rows: res.rows };
@@ -53,4 +62,7 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
     console.error("Error:", err instanceof Error ? err.message : err);
     throw err;
   }
+} 
+throw new Error("unreachable");
 }
+

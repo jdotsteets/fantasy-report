@@ -10,8 +10,10 @@ type Row = {
   url: string;
   canonical_url: string | null;
   domain: string | null;
+  image_url: string | null;          // 👈 ADD
   published_at: string | null;
   source: string;
+
 };
 
 export async function GET(req: Request) {
@@ -35,6 +37,7 @@ export async function GET(req: Request) {
       a.canonical_url,
       a.domain,
       a.published_at,
+      a.image_url,
       s.name AS source,
       ts_rank(a.tsv, (SELECT tsq FROM needle)) AS rank
     FROM articles a

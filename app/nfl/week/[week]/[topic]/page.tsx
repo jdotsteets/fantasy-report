@@ -31,6 +31,7 @@ export default async function TopicWeekPage(
         a.published_at,
         a.topics,
         a.week,
+        a.image_url,
         s.name as source,
         coalesce(a.popularity_score, a.popularity, 0) as popularity
       from articles a

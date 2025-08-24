@@ -1,7 +1,9 @@
+// components/Hero.tsx
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
+import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK } from "@/lib/images";
 
 export type HeroProps = {
@@ -11,8 +13,19 @@ export type HeroProps = {
   source: string;
 };
 
+function fmtDate(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString();
+}
+
+
 export default function Hero({ title, href, src, source }: HeroProps) {
-  const img = getSafeImageUrl(src);
+  const resolved = getSafeImageUrl(src);
+  const img = getSafeImageUrl(src) || FALLBACK;
+
+
+    console.log("Hero image check:", { src, safeValue: img });
 
   return (
     <Link
@@ -24,11 +37,12 @@ export default function Hero({ title, href, src, source }: HeroProps) {
       <div className="relative aspect-[16/9] w-full">
         <Image
           src={img}
-          alt={title}
+          alt={title || ""}
           fill
+          priority
+          quality={85}
           sizes="(max-width: 768px) 100vw, 768px"
           className="object-cover"
-          unoptimized
           referrerPolicy="no-referrer"
           onError={(e) => {
             const el = e.currentTarget as HTMLImageElement;
@@ -37,12 +51,18 @@ export default function Hero({ title, href, src, source }: HeroProps) {
         />
       </div>
 
-      <div className="p-3">
-        <div className="text-xs text-zinc-500">{source}</div>
-        <h3 className="mt-1 line-clamp-2 text-base font-medium text-zinc-900 group-hover:underline">
-          {title}
-        </h3>
-      </div>
+                {/* Headline */}
+                <h3
+                className="mt-2 ml-2 line-clamp-2 text-[20px] leading-snug text-black hover:text-green-900"
+                title={title}
+                >
+                {title}
+                </h3>
+
+                {/* Meta row */}
+                <div className="mt-1 mb-2 ml-2.5 flex flex-wrap items-center gap-x-6 text-[10px] leading-tight text-zinc-700" >
+                  <span>{source}</span>
+                </div>
     </Link>
   );
 }

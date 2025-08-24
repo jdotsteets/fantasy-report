@@ -1,19 +1,16 @@
 // app/page.tsx
-import { query } from "@/lib/db";
 import ArticleList from "@/components/ArticleList";
 import Section from "@/components/Section";
 import TopicNav from "@/components/TopicNav";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
 import type { Article } from "@/types/sources";
+import { isLikelyFavicon } from "@/lib/images"; // ⬅️ reuse the same detector
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type SQLParam = string | number | boolean | null | Date;
 type Search = { week?: string };
-
-type ArticleRow = Article;
 
 type HeroData = {
   title: string;
@@ -22,7 +19,12 @@ type HeroData = {
   source: string;
 };
 
-/** Compute the NFL "current week" */
+// Build absolute URLs for server-side fetches
+function absUrl(path: string) {
+  const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  return `${base.replace(/\/$/, "")}${path}`;
+}
+
 function getCurrentNFLWeek(now = new Date()): number {
   const year = now.getUTCFullYear();
   const sept1 = new Date(Date.UTC(year, 8, 1));
@@ -39,77 +41,49 @@ function weekLabel(week: number) {
   return week === 0 ? "Preseason" : `Week ${week}`;
 }
 
+// --- API types / fetcher ---
+type ApiArticle = {
+  id: number;
+  title: string;
+  url: string;
+  canonical_url: string | null;
+  domain: string | null;
+  image_url: string | null;
+  published_at: string | null;
+  week: number | null;
+  topics: string[] | null;
+  source: string;
+};
+type ApiResp = { items: ApiArticle[]; nextCursor?: string | null };
+
 async function fetchArticles(
-  whereSql: string,
-  params: ReadonlyArray<SQLParam> = [],
-  limit = 15
-): Promise<ArticleRow[]> {
-  // put limit at the end; compute its placeholder index
-  const limitParamIndex = params.length + 1;
-  const allParams: ReadonlyArray<SQLParam> = [...params, limit];
+  params: Record<string, string | number | null | undefined>
+): Promise<Article[]> {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && `${v}`.trim() !== "") usp.set(k, String(v));
+  }
 
-  const { rows } = await query<ArticleRow>(
-    `
-      select
-        a.id,
-        coalesce(a.cleaned_title, a.title) as title,
-        a.url,
-        a.canonical_url,
-        a.domain,
-        a.published_at,
-        a.topics,
-        a.week,
-        s.name as source
-      from articles a
-      join sources s on s.id = a.source_id
-      where a.sport = 'nfl'
-        ${whereSql}
-      order by
-        a.published_at desc nulls last,
-        a.discovered_at desc,
-        coalesce(a.popularity_score, 0) desc
-      limit $${limitParamIndex}
-    `,
-    allParams
-  );
+  const url = absUrl(`/api/articles?${usp.toString()}`);
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    console.error("API error", res.status, await res.text());
+    return [];
+  }
+  const data = (await res.json()) as ApiResp;
 
-  return rows as ArticleRow[];
-}
-
-
-// For the hero we need image/source/url/title; pull one promising item
-async function fetchHero(): Promise<HeroData | null> {
-  const { rows } = await query(
-    `
-      select
-        a.id,
-        coalesce(a.cleaned_title, a.title) as title,
-        a.url,
-        s.name as source,
-        a.image_url
-      from articles a
-      join sources s on s.id = a.source_id
-      where a.sport='nfl'
-      order by
-        coalesce(a.popularity_score, 0) desc,
-        a.published_at desc nulls last,
-        a.discovered_at desc
-      limit 1
-    `
-  );
-
-  const r = rows?.[0] as
-    | { id: number; title: string; url: string; source: string; image_url: string | null }
-    | undefined;
-
-  return r
-    ? {
-        title: r.title,
-        href: `/go/${r.id}`,
-        src: r.image_url || "",
-        source: r.source,
-      }
-    : null;
+  return (data.items ?? []).map((a) => ({
+    id: a.id,
+    title: a.title,
+    url: a.url,
+    canonical_url: a.canonical_url,
+    domain: a.domain,
+    image_url: a.image_url ?? null,
+    published_at: a.published_at ?? null,
+    week: a.week ?? null,
+    topics: a.topics ?? [],
+    source: a.source,
+  }));
 }
 
 export default async function Home(props: { searchParams?: Promise<Search> }) {
@@ -117,79 +91,99 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
   const urlWeek = Number(sp.week);
   const CURRENT_WEEK = Number.isFinite(urlWeek) ? urlWeek : getCurrentNFLWeek();
 
-  // Sections
-  const latest = await fetchArticles("", [], 25);
-  const rankings = await fetchArticles(`and a.topics @> ARRAY['rankings']::text[]`, [], 10);
-  const startSit = await fetchArticles(`and a.topics @> ARRAY['start-sit']::text[] and coalesce(a.week, 0) = $1`,[CURRENT_WEEK],12);
-  const advice = await fetchArticles(`and a.topics @> ARRAY['advice']::text[]`,[],10);
-  const dfs = await fetchArticles(`and a.topics @> ARRAY['dfs']::text[]`, [], 10);
-  const waivers = await fetchArticles(`and a.topics @> ARRAY['waiver-wire']::text[]`, [], 10);
-  const injuries = await fetchArticles(`and a.topics @> ARRAY['injury']::text[]`, [], 10);
+  const [
+    latest,
+    rankings,
+    startSit,
+    advice,
+    dfs,
+    waivers,
+    injuries,
+    heroCandidates,
+  ] = await Promise.all([
+    fetchArticles({ sport: "nfl", limit: 25 }),
+    fetchArticles({ sport: "nfl", topic: "rankings", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "start-sit", week: CURRENT_WEEK, limit: 12 }),
+    fetchArticles({ sport: "nfl", topic: "advice", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "dfs", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "waiver-wire", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "injury", limit: 10 }),
+    // fetch several so we can skip favicon/stock images for the hero
+    fetchArticles({ sport: "nfl", limit: 12 }),
+  ]);
 
-  const hero = await fetchHero();
+  // Pick the first hero with a non-favicon/non-stock image
+  const heroRow = heroCandidates.find(
+    (a) => a.image_url && !isLikelyFavicon(a.image_url)
+  );
+
+  const hero: HeroData | null = heroRow
+    ? {
+        title: heroRow.title,
+        href: `/go/${heroRow.id}`,
+        src: heroRow.image_url!,
+        source: heroRow.source,
+      }
+    : null;
+
+  // Filter the hero out of all other sections
+  const heroId = heroRow?.id ?? null;
+  const dropHero = <T extends { id: number }>(arr: T[]) =>
+    heroId ? arr.filter((a) => a.id !== heroId) : arr;
+
+  const latestFiltered   = dropHero(latest);
+  const rankingsFiltered = dropHero(rankings);
+  const startSitFiltered = dropHero(startSit);
+  const adviceFiltered   = dropHero(advice);
+  const dfsFiltered      = dropHero(dfs);
+  const waiversFiltered  = dropHero(waivers);
+  const injuriesFiltered = dropHero(injuries);
 
   return (
     <main className="mx-auto w-full px-4 py-6">
-      <header className="mb-6">
-        <h1 className="text-3xl font-extrabold tracking-tight text-black">
-          The Fantasy Report
-        </h1>
-        <p className="mt-1 text-zinc-600">News, Updates, Rankings, and Advice from the experts.</p>
+      <header className="mb-6 text-center">
+        <h1 className="text-8xl font-extrabold tracking-tight text-black">The Fantasy Report</h1>
         <div className="mt-4">
           <TopicNav />
         </div>
       </header>
 
-      {/* Optional hero under pills */}
-      {hero?.src ? (
-        <div className="mb-8">
+      {hero ? (
+        <div className="mb-8 mx-auto max-w-2xl">
           <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
         </div>
       ) : null}
 
-      {/* 3-column layout */}
       <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
-        {/* LEFT: Rankings + Start/Sit + Waiver Wire (waivers last in this column) */}
         <div className="order-2 md:order-1 space-y-4">
           <Section title="Rankings">
-            <ArticleList items={rankings} />
+            <ArticleList items={rankingsFiltered} />
           </Section>
-
           <Section title={`${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`}>
-            <ArticleList items={startSit} />
+            <ArticleList items={startSitFiltered} />
           </Section>
-
           <Section title="Waiver Wire">
-            <ArticleList items={waivers} />
+            <ArticleList items={waiversFiltered} />
           </Section>
-
-          
         </div>
 
-        {/* MIDDLE: Latest */}
         <div className="order-1 md:order-2 space-y-4">
           <Section title="News & Updates">
-            <ArticleList items={latest} />
+            <ArticleList items={latestFiltered} />
           </Section>
         </div>
 
-        {/* RIGHT: DFS, Injuries, Sites (sites last) */}
         <div className="order-3 space-y-4">
-
           <Section title="Advice">
-            <ArticleList items={advice} />
-          </Section>  
-                    
+            <ArticleList items={adviceFiltered} />
+          </Section>
           <Section title="DFS">
-            <ArticleList items={dfs} />
+            <ArticleList items={dfsFiltered} />
           </Section>
-
           <Section title="Injuries">
-            <ArticleList items={injuries} />
+            <ArticleList items={injuriesFiltered} />
           </Section>
-
           <Section title="Sites">
-            {/* pulls from the sources table, excludes team sites, news first */}
             <FantasyLinks />
           </Section>
         </div>

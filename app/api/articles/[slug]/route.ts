@@ -10,55 +10,44 @@ type ArticleRow = {
   url: string;
   canonical_url: string | null;
   domain: string | null;
+  image_url: string | null;
   published_at: string | null;
   week: number | null;
   topics: string[] | null;
   source: string;
 };
 
-function readSlug(ctx: unknown): string | null {
-  try {
-    const slug = (ctx as { params?: { slug?: string } })?.params?.slug;
-    return typeof slug === "string" && slug.length > 0 ? slug : null;
-  } catch {
-    return null;
-  }
-}
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ slug: string }> } // 👈 params is a Promise
+) {
+  const { slug } = await ctx.params;        // 👈 await it
+  if (!slug) return new Response("Missing slug", { status: 400 });
 
-/** @ts-expect-error Next.js wants the 2nd param untyped; we narrow inside */
-export async function GET(_req: Request, ctx) {
-  const slug = readSlug(ctx);
-  if (!slug) {
-    return new Response("Missing slug", { status: 400 });
-  }
-
-  const { rows } = await query(
+  const { rows } = await query<ArticleRow>(
     `
-      select
+      SELECT
         a.id,
-        coalesce(a.cleaned_title, a.title) as title,
+        COALESCE(a.cleaned_title, a.title) AS title,
         a.url,
         a.canonical_url,
         a.domain,
+        a.image_url,                    -- ✅ keep image_url
         a.published_at,
         a.week,
         a.topics,
-        s.name as source
-      from articles a
-      join sources s on s.id = a.source_id
-      where a.slug = $1
-      limit 1
+        s.name AS source
+      FROM articles a
+      JOIN sources s ON s.id = a.source_id
+      WHERE a.slug = $1
+      LIMIT 1
     `,
     [slug]
   );
 
-  if (rows.length === 0) {
-    return new Response("Not found", { status: 404 });
-  }
+  if (rows.length === 0) return new Response("Not found", { status: 404 });
 
-  const item = rows[0] as ArticleRow;
-
-  return new Response(JSON.stringify(item), {
+  return new Response(JSON.stringify(rows[0]), {
     headers: { "content-type": "application/json" },
   });
 }
