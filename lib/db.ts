@@ -36,12 +36,13 @@ const connectionString = sanitizeConn(raw);
 })();
 
 export const pool = new Pool({
-  connectionString,
+  connectionString: process.env.DATABASE_URL,
   // Force TLS but skip CA verification to avoid “self-signed certificate” from Supabase pooler
   ssl: { rejectUnauthorized: false },
   max: Number(process.env.PGPOOL_MAX ?? 5),
-  idleTimeoutMillis: Number(process.env.PG_IDLE_MS ?? 10_000),
-  connectionTimeoutMillis: Number(process.env.PG_CONN_MS ?? 5_000),
+  idleTimeoutMillis: Number(process.env.PG_IDLE_MS ?? 30_000),
+  connectionTimeoutMillis: Number(process.env.PG_CONN_MS ?? 10_000),
+  keepAlive: true,
 });
 
 if (!global.__pgPool__) global.__pgPool__ = pool;

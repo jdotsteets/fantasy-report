@@ -4,8 +4,7 @@ import { query } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// allow arrays for domain lists
-type SQLParam = string | number | boolean | Date | null | string[];
+type SQLParam = string | number | boolean | Date | null;
 
 type ArticleRow = {
   id: number;
@@ -22,6 +21,11 @@ type ArticleRow = {
   order_ts: string | null;
 };
 
+function clamp(n: number, min: number, max: number) {
+  if (Number.isNaN(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
+
 function parseCursor(cursor: string | null): { ts: string; id: number } | null {
   if (!cursor) return null;
   const [ts, idStr] = cursor.split("|");
@@ -31,82 +35,66 @@ function parseCursor(cursor: string | null): { ts: string; id: number } | null {
   return { ts: d.toISOString(), id };
 }
 
-function clamp(n: number, min: number, max: number) {
-  if (Number.isNaN(n)) return min;
-  return Math.max(min, Math.min(max, n));
+/** Brand/promo filters done in app layer (cheap) */
+const BAD_DOMAINS = new Set([
+  "caesars.com","betmgm.com","draftkings.com","fanduel.com","bet365.com","pointsbet.com","betrivers.com",
+  "espnbet.com","barstoolsportsbook.com","wynnbet.com","hardrock.bet","unibet.com","betway.com",
+]);
+
+const BRAND_RE = /(sportsbook|caesars|betmgm|draftkings|fanduel|bet365|pointsbet|betrivers|espn\s*bet|barstool|wynnbet|hard\s*rock|unibet|betway)/i;
+const PROMO_RE = /(promo\s*code|bonus\s*code|no\s*deposit|sign[- ]?up bonus|profit boost|odds boost|bonus bets?|free bets?|bet\s*credits?)/i;
+
+function looksLikeGambling(r: Pick<ArticleRow,"title"|"domain"|"url">) {
+  const title = r.title ?? "";
+  const url = r.url ?? "";
+  const domain = (r.domain ?? "").toLowerCase();
+  if (BAD_DOMAINS.has(domain)) return true;
+  if (BRAND_RE.test(url)) return true;
+  // “brand + promo” in headline is very likely an ad:
+  if (BRAND_RE.test(title) && PROMO_RE.test(title)) return true;
+  return false;
 }
-
-// --- add these brand/domain patterns ---
-const ADS_TITLE_RE =
-  "(promo\\s*code|bonus\\s*code|no\\s*deposit|sign[- ]?up bonus|profit boost|odds boost|bonus bets?|free bets?|bet\\s*credits?)";
-
-const SPORTSBOOK_BRANDS_RE =
-  "(sportsbook|caesars|betmgm|draftkings|fanduel|bet365|pointsbet|betrivers|espn\\s*bet|barstool|wynnbet|betway|hard\\s*rock|unibet)";
-
-const BOOK_DOMAINS = [
-  "caesars.com",
-  "betmgm.com",
-  "draftkings.com",
-  "fanduel.com",
-  "bet365.com",
-  "pointsbet.com",
-  "betrivers.com",
-  "espnbet.com",
-  "barstoolsportsbook.com",
-  "wynnbet.com",
-  "hardrock.bet",
-  "unibet.com",
-  "betway.com",
-];
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
-  const sport    = (searchParams.get("sport") || "nfl").toLowerCase();
-  const topic    = searchParams.get("topic");
-  const weekRaw  = searchParams.get("week");
-  const domain   = searchParams.get("domain");
-  const source   = searchParams.get("source");
-  const limit    = clamp(Number(searchParams.get("limit") ?? "20"), 1, 100);
-  const sort     = (searchParams.get("sort") || "recent").toLowerCase(); // "recent" | "popular"
-  const hasImage = ["1","true","yes"].includes((searchParams.get("hasImage") || "").toLowerCase());
-  const allowAds = ["1","true","yes"].includes((searchParams.get("allowAds") || "").toLowerCase());
-  const cursor   = parseCursor(searchParams.get("cursor"));
+  const sport  = searchParams.get("sport") || "nfl";
+  const topic  = searchParams.get("topic");           // optional
+  const week   = searchParams.get("week");            // optional
+  const limit  = clamp(Number(searchParams.get("limit") ?? "20"), 1, 100);
+  const cursor = parseCursor(searchParams.get("cursor"));
+  const days   = clamp(Number(searchParams.get("days") ?? "60"), 7, 365); // limit time window
 
-  const where: string[] = [`a.sport = $1`];
+  // Build WHERE using index-friendly predicates
+  const where: string[] = ["a.sport = $1"];
   const params: SQLParam[] = [sport];
   let p = 2;
 
-  if (topic) { where.push(`a.topics IS NOT NULL AND $${p} = ANY(a.topics)`); params.push(topic); p++; }
-  if (weekRaw) { const w = Number(weekRaw); if (Number.isFinite(w)) { where.push(`a.week = $${p}`); params.push(w); p++; } }
-  if (domain) { where.push(`a.domain ILIKE $${p}`); params.push(domain); p++; }
-  if (source) { where.push(`s.name = $${p}`); params.push(source); p++; }
-  if (hasImage) { where.push(`a.image_url IS NOT NULL AND a.image_url <> ''`); }
+  // time window (helps the ORDER BY)
+  where.push(`(a.published_at >= NOW() - INTERVAL '${days} days' OR a.discovered_at >= NOW() - INTERVAL '${days} days')`);
 
-  // 🔒 Exclude obvious sportsbook promos unless allowAds=1
-  if (!allowAds) {
-    where.push(`
-      NOT (
-        (
-          (a.title ~* $${p} OR a.cleaned_title ~* $${p})
-          AND (a.title ~* $${p + 1} OR a.cleaned_title ~* $${p + 1})
-        )
-        OR a.domain = ANY($${p + 2}::text[])
-        OR a.url ~* $${p + 1} -- brand in the URL + promo terms above
-      )
-    `);
-    params.push(ADS_TITLE_RE, SPORTSBOOK_BRANDS_RE, BOOK_DOMAINS);
-    p += 3;
+  if (topic) {
+    // Use @> so a GIN(array) index can be used
+    where.push(`a.topics @> ARRAY[$${p}]::text[]`);
+    params.push(topic);
+    p++;
+  }
+  if (week) {
+    where.push(`a.week = $${p}`);
+    params.push(Number(week));
+    p++;
   }
 
   if (cursor) {
     where.push(`(COALESCE(a.published_at, a.discovered_at), a.id) < ($${p}::timestamptz, $${p + 1}::int)`);
-    params.push(cursor.ts, cursor.id); p += 2;
+    params.push(cursor.ts, cursor.id);
+    p += 2;
   }
 
-  const orderRecent  = `COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC`;
-  const orderPopular = `COALESCE(a.popularity_score, 0) DESC, ${orderRecent}`;
-  const orderBy      = sort === "popular" ? orderPopular : orderRecent;
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  // Over-fetch a bit so we can filter promos client-side and still return `limit`
+  const fetchCount = Math.max(limit * 3, 60);
 
   const sql = `
     SELECT
@@ -124,23 +112,28 @@ export async function GET(req: Request) {
       COALESCE(a.published_at, a.discovered_at) AS order_ts
     FROM articles a
     JOIN sources s ON s.id = a.source_id
-    WHERE ${where.join(" AND ")}
-    ORDER BY ${orderBy}
+    ${whereSql}
+    ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
     LIMIT $${p}
   `;
-  params.push(limit);
+  params.push(fetchCount);
 
   const { rows } = await query<ArticleRow>(sql, params);
 
+  // Filter out gambling/promotional posts here (cheap)
+  const filtered = rows.filter((r) => !looksLikeGambling(r)).slice(0, limit);
+
+  // Build next cursor from the underlying (unfiltered) rows if you want strict keyset pagination.
+  // Simple approach: if we fetched == fetchCount, expose cursor from the last raw row.
   let nextCursor: string | null = null;
-  if (rows.length === limit) {
+  if (rows.length === fetchCount) {
     const last = rows[rows.length - 1];
     if (last?.order_ts && Number.isFinite(last.id)) {
       nextCursor = `${new Date(last.order_ts).toISOString()}|${last.id}`;
     }
   }
 
-  return new Response(JSON.stringify({ items: rows, nextCursor }), {
+  return new Response(JSON.stringify({ items: filtered, nextCursor }), {
     headers: { "content-type": "application/json" },
   });
 }
