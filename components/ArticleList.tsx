@@ -10,22 +10,17 @@ import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 type ImagesMode = "all" | "first" | "hero";
 const MODE_KEY = "ffa_images_mode";
 
+type SectionKey = "waivers" | "rankings" | "start-sit" | "injury" | "dfs" | "news";
 type Filter = {
-  section?:
-    | "waivers"
-    | "rankings"
-    | "start-sit"
-    | "injury"
-    | "dfs"
-    | "news";
-  source?: string; // optional publisher clamp
+  section?: SectionKey;
+  source?: string;
 };
 
 type Props = {
   items: Article[];
   title?: string;
   className?: string;
-  filter?: Filter; // ✅ NEW
+  filter?: Filter;
 };
 
 function fmtDate(iso?: string | null) {
@@ -34,13 +29,12 @@ function fmtDate(iso?: string | null) {
   return d.toLocaleString();
 }
 
-/** Heuristic matcher in case articles don't have a dedicated section field yet. */
-function matchesSection(a: Article, section: NonNullable<Filter>["section"]): boolean { // ✅ return type
+/** Keyword matcher in case your Article model doesn't have a dedicated section field yet. */
+function matchesSection(a: Article, section?: SectionKey): boolean {
   if (!section) return true;
 
-  const t = (a.title || "").toLowerCase();
-  const u = (a.url || (a as any).canonical_url || "").toLowerCase();
-
+  const t = (a.title ?? "").toLowerCase();
+  const u = (a.canonical_url ?? a.url ?? "").toLowerCase();
   const contains = (arr: string[]) => arr.some((k) => t.includes(k) || u.includes(k));
 
   switch (section) {
@@ -55,7 +49,7 @@ function matchesSection(a: Article, section: NonNullable<Filter>["section"]): bo
     case "dfs":
       return contains(["dfs", "draftkings", "fanduel", "gpp", "cash games", "lineup", "stack"]);
     case "news":
-      // If none of the above matched, treat as general news
+      // Treat items that don't match any of the above as general news
       return !(
         matchesSection(a, "waivers") ||
         matchesSection(a, "rankings") ||
@@ -63,8 +57,6 @@ function matchesSection(a: Article, section: NonNullable<Filter>["section"]): bo
         matchesSection(a, "injury") ||
         matchesSection(a, "dfs")
       );
-    default:
-      return true;
   }
 }
 
@@ -74,21 +66,21 @@ export default function ArticleList({ items, title, className, filter }: Props) 
   useEffect(() => {
     try {
       setMode((localStorage.getItem(MODE_KEY) as ImagesMode | null) ?? "all");
-    } catch {}
-    const onChange = (e: Event) =>
-      setMode((e as CustomEvent<ImagesMode>).detail);
+    } catch {
+      // no-op
+    }
+    const onChange = (e: Event) => setMode((e as CustomEvent<ImagesMode>).detail);
     window.addEventListener("ffa:imagesMode", onChange as EventListener);
-    return () =>
-      window.removeEventListener("ffa:imagesMode", onChange as EventListener);
+    return () => window.removeEventListener("ffa:imagesMode", onChange as EventListener);
   }, []);
 
-  // ✅ apply optional filter
+  // Apply optional filters, fully typed
   const filtered = useMemo(() => {
     let out = items;
     if (filter?.section) out = out.filter((a) => matchesSection(a, filter.section));
     if (filter?.source) {
       const s = filter.source.toLowerCase();
-      out = out.filter((a: any) => (a.source || "").toLowerCase() === s);
+      out = out.filter((a) => (a.source ?? "").toLowerCase() === s);
     }
     return out;
   }, [items, filter?.section, filter?.source]);
@@ -103,9 +95,9 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
       <ul className="divide-y divide-zinc-100">
         {filtered.map((r, idx) => {
-          const href = (r as any).canonical_url ?? r.url;
+          const href = r.canonical_url ?? r.url;
 
-          let candidate = getSafeImageUrl((r as any).image_url);
+          let candidate = getSafeImageUrl(r.image_url);
           if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate)) {
             candidate = null;
           }
@@ -114,7 +106,7 @@ export default function ArticleList({ items, title, className, filter }: Props) 
           const displaySrc = candidate && wantImage ? candidate : "";
 
           return (
-            <li key={(r as any).id ?? href + idx} className="px-3 py-1.5 sm:px-5 sm:py-2">
+            <li key={r.id} className="px-3 py-1.5 sm:px-5 sm:py-2">
               {displaySrc ? (
                 <div className="relative mb-1 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:mb-1.5 sm:aspect-[16/9]">
                   <Image
@@ -124,19 +116,24 @@ export default function ArticleList({ items, title, className, filter }: Props) 
                     sizes="(max-width: 640px) 100vw, 50vw"
                     className="object-cover"
                     referrerPolicy="no-referrer"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
                   />
                 </div>
               ) : null}
 
               <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-                <h3 className="mt-0 text-[13px] leading-tight tracking-tight text-black hover:text-green-900 sm:text-[14px]" title={r.title}>
+                <h3
+                  className="mt-0 text-[13px] leading-tight tracking-tight text-black hover:text-green-900 sm:text-[14px]"
+                  title={r.title}
+                >
                   {r.title}
                 </h3>
 
                 <div className="mt-0 flex flex-wrap items-center gap-x-2 text-[10px] leading-tight text-zinc-700">
-                  <span>{fmtDate((r as any).published_at)}</span>
-                  <span>• {(r as any).source}</span>
+                  <span>{fmtDate(r.published_at)}</span>
+                  <span>• {r.source}</span>
                 </div>
               </Link>
             </li>

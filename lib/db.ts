@@ -4,7 +4,7 @@ import dns from "node:dns/promises";
 
 declare global {
   // Keep a singleton pool during dev hot reloads
-  // eslint-disable-next-line no-var
+
   var __pgPool__: Pool | undefined;
 }
 

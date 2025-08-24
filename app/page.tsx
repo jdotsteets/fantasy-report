@@ -1,16 +1,23 @@
 // app/page.tsx
+import { Suspense } from "react"; // 👈 add
 import ArticleList from "@/components/ArticleList";
 import Section from "@/components/Section";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
 import type { Article } from "@/types/sources";
 import { isLikelyFavicon } from "@/lib/images";
-import { Newspaper, TrendingUp, Stethoscope, HandHeart, Swords, ShoppingCart, Lightbulb } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type SectionKey =
+  | "news"
+  | "rankings"
+  | "start-sit"
+  | "injury"
+  | "dfs"
+  | "waivers"
+  | "advice";
 
 type Search = { week?: string; section?: SectionKey | string };
 
@@ -136,9 +143,6 @@ async function fetchArticles(
   return [];
 }
 
-// ---- pills/filters handled on the homepage ----
-type SectionKey = "news" | "rankings" | "start-sit" | "injury" | "dfs" | "waivers" | "advice";
-
 export default async function Home(props: { searchParams?: Promise<Search> }) {
   const sp = props.searchParams ? await props.searchParams : {};
   const urlWeek = Number(sp.week);
@@ -154,13 +158,13 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
     injuries,
     heroCandidates,
   ] = await Promise.all([
-    fetchArticles({ sport: "nfl", limit: 25 }),                          // news
-    fetchArticles({ sport: "nfl", topic: "rankings", limit: 10 }),       // rankings
-    fetchArticles({ sport: "nfl", topic: "start-sit", week: CURRENT_WEEK, limit: 12 }), // start-sit
-    fetchArticles({ sport: "nfl", topic: "advice", limit: 10 }),         // advice
-    fetchArticles({ sport: "nfl", topic: "dfs", limit: 10 }),            // dfs
-    fetchArticles({ sport: "nfl", topic: "waiver-wire", limit: 10 }),    // waivers
-    fetchArticles({ sport: "nfl", topic: "injury", limit: 10 }),         // injury
+    fetchArticles({ sport: "nfl", limit: 25 }), // news
+    fetchArticles({ sport: "nfl", topic: "rankings", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "start-sit", week: CURRENT_WEEK, limit: 12 }),
+    fetchArticles({ sport: "nfl", topic: "advice", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "dfs", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "waiver-wire", limit: 10 }),
+    fetchArticles({ sport: "nfl", topic: "injury", limit: 10 }),
     fetchArticles({ sport: "nfl", limit: 12 }),
   ]);
 
@@ -177,91 +181,102 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
   const dropHero = <T extends { id: number }>(arr: T[]) =>
     heroId ? arr.filter((a) => a.id !== heroId) : arr;
 
-  const latestFiltered   = dropHero(latest);
+  const latestFiltered = dropHero(latest);
   const rankingsFiltered = dropHero(rankings);
   const startSitFiltered = dropHero(startSit);
-  const adviceFiltered   = dropHero(advice);
-  const dfsFiltered      = dropHero(dfs);
-  const waiversFiltered  = dropHero(waivers);
+  const adviceFiltered = dropHero(advice);
+  const dfsFiltered = dropHero(dfs);
+  const waiversFiltered = dropHero(waivers);
   const injuriesFiltered = dropHero(injuries);
 
   // --- section toggle via ?section= ---
-  const sectionParam = (typeof sp.section === "string" ? sp.section : undefined) as SectionKey | undefined;
+  const sectionParam = (typeof sp.section === "string" ? sp.section : undefined) as
+    | SectionKey
+    | undefined;
 
   const sectionMap: Record<SectionKey, { title: string; items: Article[] }> = {
-    news:     { title: "News & Updates",                items: latestFiltered },
-    rankings: { title: "Rankings",                      items: rankingsFiltered },
+    news: { title: "News & Updates", items: latestFiltered },
+    rankings: { title: "Rankings", items: rankingsFiltered },
     "start-sit": { title: `${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`, items: startSitFiltered },
-    injury:   { title: "Injuries",                      items: injuriesFiltered },
-    dfs:      { title: "DFS",                           items: dfsFiltered },
-    waivers:  { title: "Waiver Wire",                   items: waiversFiltered },
-    advice:     { title: "Advice",                        items: adviceFiltered }, // 👈 NEW
+    injury: { title: "Injuries", items: injuriesFiltered },
+    dfs: { title: "DFS", items: dfsFiltered },
+    waivers: { title: "Waiver Wire", items: waiversFiltered },
+    advice: { title: "Advice", items: adviceFiltered },
   };
 
   const isFiltered = !!sectionParam && sectionMap[sectionParam as SectionKey];
 
   return (
-    <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
-      {/* Header block – removed TopicNav (pills live in TopToolbar) */}
-      <header className="mb-6 text-center">
-        <h1 className="font-extrabold tracking-tight text-black
+    <Suspense fallback={null}>
+      <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
+        {/* Header block – pills live in TopToolbar; keep the H1 */}
+        <header className="mb-6 text-center">
+          <h1
+            className="font-extrabold tracking-tight text-black
                       text-5xl sm:text-6xl md:text-7xl lg:text-8xl
-                      leading-[0.9]">
-          The Fantasy Report
-        </h1>
-      </header>
+                      leading-[0.9]"
+          >
+            The Fantasy Report
+          </h1>
+        </header>
 
-      {/* When a pill is active, show only that section; hide hero + grid */}
-      {isFiltered ? (
-        <div className="mx-auto max-w-2xl">
-          <Section title={sectionMap[sectionParam as SectionKey].title}>
-            <ArticleList items={sectionMap[sectionParam as SectionKey].items} />
-          </Section>
-        </div>
-      ) : (
-        <>
-          {hero ? (
-            <div className="mb-8 mx-auto max-w-2xl">
-              <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
-            </div>
-          ) : null}
-
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
-            <div className="order-2 md:order-1 space-y-4">
-              <Section title="Rankings">
-                <ArticleList items={rankingsFiltered} />
-              </Section>
-              <Section title={`${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`}>
-                <ArticleList items={startSitFiltered} />
-              </Section>
-              <Section title="Waiver Wire">
-                <ArticleList items={waiversFiltered} />
-              </Section>
-            </div>
-
-            <div className="order-1 md:order-2 space-y-4">
-              <Section title="News & Updates">
-                <ArticleList items={latestFiltered} />
-              </Section>
-            </div>
-
-            <div className="order-3 space-y-4">
-              <Section title="Advice">
-                <ArticleList items={adviceFiltered} />
-              </Section>
-              <Section title="DFS">
-                <ArticleList items={dfsFiltered} />
-              </Section>
-              <Section title="Injuries">
-                <ArticleList items={injuriesFiltered} />
-              </Section>
-              <Section title="Sites">
-                <FantasyLinks />
-              </Section>
-            </div>
+        {/* When a pill is active, show only that section; hide hero + grid */}
+        {isFiltered ? (
+          <div className="mx-auto max-w-2xl">
+            <Section title={sectionMap[sectionParam as SectionKey].title}>
+              <ArticleList items={sectionMap[sectionParam as SectionKey].items} />
+            </Section>
           </div>
-        </>
-      )}
-    </main>
+        ) : (
+          <>
+            {hero ? (
+              <div className="mb-8 mx-auto max-w-2xl">
+                <Hero
+                  title={hero.title}
+                  href={hero.href}
+                  src={hero.src}
+                  source={hero.source}
+                />
+              </div>
+            ) : null}
+
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
+              <div className="order-2 md:order-1 space-y-4">
+                <Section title="Rankings">
+                  <ArticleList items={rankingsFiltered} />
+                </Section>
+                <Section title={`${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`}>
+                  <ArticleList items={startSitFiltered} />
+                </Section>
+                <Section title="Waiver Wire">
+                  <ArticleList items={waiversFiltered} />
+                </Section>
+              </div>
+
+              <div className="order-1 md:order-2 space-y-4">
+                <Section title="News & Updates">
+                  <ArticleList items={latestFiltered} />
+                </Section>
+              </div>
+
+              <div className="order-3 space-y-4">
+                <Section title="Advice">
+                  <ArticleList items={adviceFiltered} />
+                </Section>
+                <Section title="DFS">
+                  <ArticleList items={dfsFiltered} />
+                </Section>
+                <Section title="Injuries">
+                  <ArticleList items={injuriesFiltered} />
+                </Section>
+                <Section title="Sites">
+                  <FantasyLinks />
+                </Section>
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+    </Suspense>
   );
 }

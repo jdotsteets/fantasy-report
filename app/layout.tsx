@@ -35,8 +35,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* subtle emerald wash like Section headers */}
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 rounded-b-xl
-                         bg-gradient-to-b from-emerald-900/15 to-emerald-800/0
+              className="pointer-events-none absolute inset-0 
+                         bg-gradient-to-b from-black/30 to-black/5
                          shadow-[inset_0_-1px_0_rgba(6,95,70,0.06)]"
             />
 
@@ -68,9 +68,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* 👈 new toolbar */}
         <TopToolbar />  
-        
+
         {/* Page content */}
-        <main id="main" className="mx-auto max-w-[100%] px-4 sm:px-6 lg:px-8 py-6">
+        <main id="main" className="mx-auto max-w-[100%] px-4 sm:px-6 lg:px-8 pt-2 pb-6">
           {children}
         </main>
 
