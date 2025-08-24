@@ -5,6 +5,7 @@ import HeaderSearch from "@/components/HeaderSearch";
 import ImageToggle from "@/components/ImageToggle";
 import Image from "next/image";      // ← add
 import Link from "next/link";        // ← add
+import TopToolbar from "@/components/TopToolbar";
 
 export const metadata: Metadata = {
   title: "The Fantasy Report",
@@ -18,8 +19,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full w-full-[100%] bg-white">
+    <html lang="en" className="h-full bg-white">
       <body className="min-h-full text-zinc-900 antialiased">
+        
         <a
           href="#main"
           className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-zinc-100 focus:px-3 focus:py-2"
@@ -34,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 rounded-b-xl
-                         bg-gradient-to-b from-emerald-900/0 to-emerald-800/0
+                         bg-gradient-to-b from-emerald-900/15 to-emerald-800/0
                          shadow-[inset_0_-1px_0_rgba(6,95,70,0.06)]"
             />
 
@@ -64,6 +66,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
 
+        {/* 👈 new toolbar */}
+        <TopToolbar />  
+        
         {/* Page content */}
         <main id="main" className="mx-auto max-w-[100%] px-4 sm:px-6 lg:px-8 py-6">
           {children}

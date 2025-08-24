@@ -26,3 +26,7 @@ html, body { background: #fff; }
   }
 
 }
+
+/* hide horizontal scrollbar where we horizontally scroll the toolbar (mobile) */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
