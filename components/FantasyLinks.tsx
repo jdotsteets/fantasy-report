@@ -1,5 +1,5 @@
 // components/FantasyLinks.tsx
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 
 type SourceRow = {
   id: number;
@@ -22,7 +22,7 @@ function catPriority(raw: string | null) {
 }
 
 export default async function FantasyLinks() {
-  const { rows } = await query<SourceRow>(
+  const { rows } = await dbQuery<SourceRow>(
     `
       select id, name, homepage_url, category, allowed
       from sources

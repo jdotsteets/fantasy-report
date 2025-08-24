@@ -2,7 +2,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import HeaderSearch from "@/components/HeaderSearch";
-import ImageToggle from "@/components/ImageToggle";
+
 import Image from "next/image";      // ← add
 import Link from "next/link";        // ← add
 import TopToolbar from "@/components/TopToolbar";
@@ -60,7 +60,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {/* Right-side actions */}
               <div className="flex items-center gap-2 sm:gap-3">
                 <HeaderSearch />
-                <ImageToggle />
+                
               </div>
             </div>
           </div>
