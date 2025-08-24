@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 
-                         bg-gradient-to-b from-black/30 to-black/5
+                         bg-black
                          shadow-[inset_0_-1px_0_rgba(6,95,70,0.06)]"
             />
 
@@ -49,9 +49,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   width={45}
                   height={45}
                   priority
-                  className=""
+                  className="text-white"
                 />
-                <p className="hidden md:block font-sans text-[12px] sm:text-sm leading-tight text-black">
+                <p className="hidden md:block font-sans text-[12px] sm:text-sm leading-tight text-white">
                   News, Updates, Rankings, and Advice from the experts.
                 </p>
                 <span className="sr-only">The Fantasy Report</span>

@@ -6,6 +6,7 @@ import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
 import type { Article } from "@/types/sources";
 import { isLikelyFavicon } from "@/lib/images";
+import ImageToggle from "@/components/ImageToggle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -239,6 +240,10 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
                 />
               </div>
             ) : null}
+            
+ <div className="flex justify-end px-3 py-2">
+      <ImageToggle />
+    </div>
 
             <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
               <div className="order-2 md:order-1 space-y-4">
@@ -260,6 +265,7 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
               </div>
 
               <div className="order-3 space-y-4">
+                
                 <Section title="Advice">
                   <ArticleList items={adviceFiltered} />
                 </Section>
