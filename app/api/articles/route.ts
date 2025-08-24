@@ -1,4 +1,3 @@
-// app/api/articles/route.ts
 import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -35,12 +34,10 @@ function parseCursor(cursor: string | null): { ts: string; id: number } | null {
   return { ts: d.toISOString(), id };
 }
 
-/** Brand/promo filters done in app layer (cheap) */
 const BAD_DOMAINS = new Set([
   "caesars.com","betmgm.com","draftkings.com","fanduel.com","bet365.com","pointsbet.com","betrivers.com",
   "espnbet.com","barstoolsportsbook.com","wynnbet.com","hardrock.bet","unibet.com","betway.com",
 ]);
-
 const BRAND_RE = /(sportsbook|caesars|betmgm|draftkings|fanduel|bet365|pointsbet|betrivers|espn\s*bet|barstool|wynnbet|hard\s*rock|unibet|betway)/i;
 const PROMO_RE = /(promo\s*code|bonus\s*code|no\s*deposit|sign[- ]?up bonus|profit boost|odds boost|bonus bets?|free bets?|bet\s*credits?)/i;
 
@@ -50,90 +47,92 @@ function looksLikeGambling(r: Pick<ArticleRow,"title"|"domain"|"url">) {
   const domain = (r.domain ?? "").toLowerCase();
   if (BAD_DOMAINS.has(domain)) return true;
   if (BRAND_RE.test(url)) return true;
-  // “brand + promo” in headline is very likely an ad:
   if (BRAND_RE.test(title) && PROMO_RE.test(title)) return true;
   return false;
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
+  try {
+    const { searchParams } = new URL(req.url);
 
-  const sport  = searchParams.get("sport") || "nfl";
-  const topic  = searchParams.get("topic");           // optional
-  const week   = searchParams.get("week");            // optional
-  const limit  = clamp(Number(searchParams.get("limit") ?? "20"), 1, 100);
-  const cursor = parseCursor(searchParams.get("cursor"));
-  const days   = clamp(Number(searchParams.get("days") ?? "60"), 7, 365); // limit time window
+    const sport  = searchParams.get("sport") || "nfl";
+    const topic  = searchParams.get("topic");
+    const week   = searchParams.get("week");
+    const limit  = clamp(Number(searchParams.get("limit") ?? "20"), 1, 100);
+    const cursor = parseCursor(searchParams.get("cursor"));
+    const days   = clamp(Number(searchParams.get("days") ?? "45"), 7, 365);
 
-  // Build WHERE using index-friendly predicates
-  const where: string[] = ["a.sport = $1"];
-  const params: SQLParam[] = [sport];
-  let p = 2;
+    const where: string[] = ["a.sport = $1"];
+    const params: SQLParam[] = [sport];
+    let p = 2;
 
-  // time window (helps the ORDER BY)
-  where.push(`(a.published_at >= NOW() - INTERVAL '${days} days' OR a.discovered_at >= NOW() - INTERVAL '${days} days')`);
+    // time window (helps ordering)
+    where.push(`(a.published_at >= NOW() - INTERVAL '${days} days'
+              OR a.discovered_at >= NOW() - INTERVAL '${days} days')`);
 
-  if (topic) {
-    // Use @> so a GIN(array) index can be used
-    where.push(`a.topics @> ARRAY[$${p}]::text[]`);
-    params.push(topic);
-    p++;
-  }
-  if (week) {
-    where.push(`a.week = $${p}`);
-    params.push(Number(week));
-    p++;
-  }
-
-  if (cursor) {
-    where.push(`(COALESCE(a.published_at, a.discovered_at), a.id) < ($${p}::timestamptz, $${p + 1}::int)`);
-    params.push(cursor.ts, cursor.id);
-    p += 2;
-  }
-
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-  // Over-fetch a bit so we can filter promos client-side and still return `limit`
-  const fetchCount = Math.max(limit * 3, 60);
-
-  const sql = `
-    SELECT
-      a.id,
-      COALESCE(a.cleaned_title, a.title) AS title,
-      a.url,
-      a.canonical_url,
-      a.domain,
-      a.image_url,
-      a.published_at,
-      a.discovered_at,
-      a.week,
-      a.topics,
-      s.name AS source,
-      COALESCE(a.published_at, a.discovered_at) AS order_ts
-    FROM articles a
-    JOIN sources s ON s.id = a.source_id
-    ${whereSql}
-    ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
-    LIMIT $${p}
-  `;
-  params.push(fetchCount);
-
-  const { rows } = await query<ArticleRow>(sql, params);
-
-  // Filter out gambling/promotional posts here (cheap)
-  const filtered = rows.filter((r) => !looksLikeGambling(r)).slice(0, limit);
-
-  // Build next cursor from the underlying (unfiltered) rows if you want strict keyset pagination.
-  // Simple approach: if we fetched == fetchCount, expose cursor from the last raw row.
-  let nextCursor: string | null = null;
-  if (rows.length === fetchCount) {
-    const last = rows[rows.length - 1];
-    if (last?.order_ts && Number.isFinite(last.id)) {
-      nextCursor = `${new Date(last.order_ts).toISOString()}|${last.id}`;
+    if (topic) {
+      where.push(`a.topics @> ARRAY[$${p}]::text[]`);
+      params.push(topic);
+      p++;
     }
-  }
+    if (week) {
+      where.push(`a.week = $${p}`);
+      params.push(Number(week));
+      p++;
+    }
+    if (cursor) {
+      where.push(`(COALESCE(a.published_at, a.discovered_at), a.id) < ($${p}::timestamptz, $${p + 1}::int)`);
+      params.push(cursor.ts, cursor.id);
+      p += 2;
+    }
 
-  return new Response(JSON.stringify({ items: filtered, nextCursor }), {
-    headers: { "content-type": "application/json" },
-  });
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const fetchCount = Math.max(limit * 3, 60);
+
+    const sql = `
+      SELECT
+        a.id,
+        COALESCE(a.cleaned_title, a.title) AS title,
+        a.url,
+        a.canonical_url,
+        a.domain,
+        a.image_url,
+        a.published_at,
+        a.discovered_at,
+        a.week,
+        a.topics,
+        s.name AS source,
+        COALESCE(a.published_at, a.discovered_at) AS order_ts
+      FROM articles a
+      JOIN sources s ON s.id = a.source_id
+      ${whereSql}
+      ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
+      LIMIT $${p}
+    `;
+    params.push(fetchCount);
+
+    const { rows } = await query<ArticleRow>(sql, params);
+
+    const filtered = rows.filter((r) => !looksLikeGambling(r)).slice(0, limit);
+
+    let nextCursor: string | null = null;
+    if (rows.length === fetchCount) {
+      const last = rows[rows.length - 1];
+      if (last?.order_ts && Number.isFinite(last.id)) {
+        nextCursor = `${new Date(last.order_ts).toISOString()}|${last.id}`;
+      }
+    }
+
+    return new Response(JSON.stringify({ items: filtered, nextCursor }), {
+      headers: { "content-type": "application/json" },
+    });
+  } catch (err) {
+    // Always return JSON so your console shows the message
+    console.error("[/api/articles] error:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }
 }

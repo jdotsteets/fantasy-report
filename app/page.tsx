@@ -63,28 +63,82 @@ async function fetchArticles(
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && `${v}`.trim() !== "") usp.set(k, String(v));
   }
+  // default window to keep queries light (server also supports this)
+  if (!usp.has("days")) usp.set("days", "45");
 
   const url = absUrl(`/api/articles?${usp.toString()}`);
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) {
-    console.error("API error", res.status, await res.text());
-    return [];
-  }
-  const data = (await res.json()) as ApiResp;
 
-  return (data.items ?? []).map((a) => ({
-    id: a.id,
-    title: a.title,
-    url: a.url,
-    canonical_url: a.canonical_url,
-    domain: a.domain,
-    image_url: a.image_url ?? null,
-    published_at: a.published_at ?? null,
-    week: a.week ?? null,
-    topics: a.topics ?? [],
-    source: a.source,
-  }));
+  const ATTEMPTS = 3;
+  const timeoutMs = 8000;
+
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        // Retry on transient statuses
+        if ((res.status >= 500 || res.status === 429) && attempt < ATTEMPTS) {
+          await wait(300 * attempt * attempt);
+          continue;
+        }
+        console.error("API error", res.status, body);
+        return [];
+      }
+
+      const data = (await res.json().catch(() => null)) as (ApiResp & { error?: string }) | null;
+      if (!data) {
+        console.error("API error: invalid JSON");
+        return [];
+      }
+      if (data.error) {
+        // server now returns { error: "..."} on failures
+        if (attempt < ATTEMPTS) {
+          await wait(300 * attempt * attempt);
+          continue;
+        }
+        console.error("API error body:", data.error);
+        return [];
+      }
+
+      const items = data.items ?? [];
+      return items.map((a) => ({
+        id: a.id,
+        title: a.title,
+        url: a.url,
+        canonical_url: a.canonical_url,
+        domain: a.domain,
+        image_url: a.image_url ?? null,
+        published_at: a.published_at ?? null,
+        week: a.week ?? null,
+        topics: a.topics ?? [],
+        source: a.source,
+      }));
+    } catch (err) {
+      clearTimeout(timer);
+      // Retry aborted / network failures
+      if (attempt < ATTEMPTS) {
+        await wait(300 * attempt * attempt);
+        continue;
+      }
+      console.error("API fetch failed:", err);
+      return [];
+    }
+  }
+
+  return [];
 }
+
 
 export default async function Home(props: { searchParams?: Promise<Search> }) {
   const sp = props.searchParams ? await props.searchParams : {};
