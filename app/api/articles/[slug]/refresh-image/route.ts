@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 import { isWeakArticleImage, extractLikelyNameFromTitle } from "@/lib/images";
 import { findWikipediaHeadshot } from "@/lib/wiki";
 import { cacheRemoteImageToSupabase } from "@/lib/upload";
@@ -40,7 +40,7 @@ export async function POST(req: Request, ctx: unknown) {
   const idForQuery = Number.isFinite(idNum) ? idNum : -1;
 
   // 1) load article by slug OR id
-  const { rows } = await query<{
+  const { rows } = await dbQuery<{
     id: number;
     title: string;
     image_url: string | null;
@@ -71,7 +71,7 @@ export async function POST(req: Request, ctx: unknown) {
 
   // 4) cache to your bucket/CDN and update DB
   const publicUrl = await cacheRemoteImageToSupabase(hit.src, `articles/${a.id}.jpg`);
-  await query(`update articles set image_url = $1 where id = $2`, [publicUrl, a.id]);
+  await dbQuery(`update articles set image_url = $1 where id = $2`, [publicUrl, a.id]);
 
   return json({ updated: true, id: a.id, name, image_url: publicUrl });
 }

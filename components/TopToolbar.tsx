@@ -24,14 +24,12 @@ export default function TopToolbar() {
   const router = useRouter();
 
   // track current path & section without useSearchParams/usePathname
-  const [pathname, setPathname] = useState<string>("/");
   const [active, setActive] = useState<string>(""); // section slug or ""
 
   useEffect(() => {
     // safe on client only
     const p = window.location.pathname || "/";
     const sp = new URLSearchParams(window.location.search);
-    setPathname(p);
     setActive(sp.get("section") ?? "");
   }, []);
 

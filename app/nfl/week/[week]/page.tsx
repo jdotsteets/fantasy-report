@@ -1,5 +1,5 @@
 // app/nfl/week/[week]/page.tsx
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 import ArticleLink from "@/components/ArticleLink";
 import type { Article } from "@/types/sources";
 import SiteHeader from "@/components/SiteHeader";
@@ -16,7 +16,7 @@ export default async function WeekPage(
   const { week } = await params;
 
   const w = Number(week);
-  const { rows } = await query(
+  const { rows } = await dbQuery(
     `
       select
         a.id,

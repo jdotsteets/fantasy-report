@@ -1,5 +1,5 @@
 // app/api/articles/[slug]/route.ts
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export async function GET(
   const { slug } = await ctx.params;        // 👈 await it
   if (!slug) return new Response("Missing slug", { status: 400 });
 
-  const { rows } = await query<ArticleRow>(
+  const { rows } = await dbQuery<ArticleRow>(
     `
       SELECT
         a.id,

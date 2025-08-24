@@ -2,8 +2,6 @@
 import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
-// Map friendly “topic” query values to what your DB stores.
-// Your earlier queries used: rankings, start-sit, advice, dfs, waiver-wire, injury
 const TOPIC_MAP = new Set([
   "rankings",
   "start-sit",
@@ -13,7 +11,6 @@ const TOPIC_MAP = new Set([
   "injury",
 ]);
 
-// Basic retry wrapper (network hiccups / pool timeouts)
 async function withRetries<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
   let lastErr: unknown;
   for (let i = 1; i <= attempts; i++) {
@@ -21,12 +18,14 @@ async function withRetries<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
       return await fn();
     } catch (e) {
       lastErr = e;
-      // simple backoff
       await new Promise((r) => setTimeout(r, 300 * i * i));
     }
   }
   throw lastErr;
 }
+
+// acceptable SQL param types we use here
+type SqlParam = string | number | boolean | null | readonly string[];
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -40,29 +39,29 @@ export async function GET(req: Request) {
   const days = Number(url.searchParams.get("days") ?? "45");
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? "25"), 1), 100);
 
-  // Build SQL safely
   const where: string[] = [];
-  const params: any[] = [];
+  const params: SqlParam[] = [];
 
   // sport
   params.push(sport);
   where.push(`a.sport = $${params.length}`);
 
-  // time window (published or discovered within N days)
-  params.push(days);
+  // window in days
+  params.push(String(days));
   where.push(
-    `(a.published_at >= NOW() - ($${params.length} || ' days')::interval OR a.discovered_at >= NOW() - ($${params.length} || ' days')::interval)`
+    `(a.published_at >= NOW() - ($${params.length} || ' days')::interval
+      OR a.discovered_at >= NOW() - ($${params.length} || ' days')::interval)`
   );
 
-  // topic via array overlap on a.topics text[] (if present)
+  // topic (text[] overlap)
   if (topic) {
-    params.push([topic]);
+    params.push([topic] as const); // readonly string[]
     where.push(`a.topics && $${params.length}::text[]`);
   }
 
-  // optional week clamp
+  // week
   if (Number.isFinite(week)) {
-    params.push(week);
+    params.push(Number(week!));
     where.push(`a.week = $${params.length}`);
   }
 
@@ -91,7 +90,6 @@ export async function GET(req: Request) {
 
   try {
     const result = await withRetries(() => dbQuery(sql, params), 3);
-    // Shape the payload like your page expects
     return NextResponse.json({ items: result.rows, nextCursor: null }, { status: 200 });
   } catch (e) {
     console.error("[/api/articles] error:", e);

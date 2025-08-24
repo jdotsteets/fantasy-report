@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 import { classifyArticle } from "@/lib/classify";
 
 export const runtime = "nodejs";
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 
   while (true) {
     // Keyset-pagination by id
-    const { rows } = await query<Row>(
+    const { rows } = await dbQuery<Row>(
       `
       SELECT
         a.id,
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
         existing.every((t) => merged.includes(t));
 
       if (!unchanged && !dryRun) {
-        await query(`UPDATE articles SET topics = $1 WHERE id = $2`, [merged, r.id]);
+        await dbQuery(`UPDATE articles SET topics = $1 WHERE id = $2`, [merged, r.id]);
         updated++;
       } else if (!unchanged && dryRun) {
         updated++; // report how many *would* update

@@ -1,5 +1,5 @@
 // app/api/admin/sources/route.ts
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 import { z } from "zod";
 
 // Validation for create/upsert
@@ -49,7 +49,7 @@ function getErrorMessage(err: unknown): string {
 // GET: list latest sources
 export async function GET() {
   try {
-    const r = await query(
+    const r = await dbQuery(
       `select id, name, homepage_url, rss_url, favicon_url, sitemap_url, category, allowed, priority
        from sources
        order by created_at desc
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const v = upsertSchema.parse(body);
 
-    const res = await query(
+    const res = await dbQuery(
       `
       insert into sources (name, homepage_url, rss_url, favicon_url, sitemap_url, category, allowed, priority)
       values ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -105,7 +105,7 @@ export async function PATCH(req: Request) {
   try {
     const body = await req.json();
     const v = toggleSchema.parse(body);
-    await query(`update sources set allowed=$2 where id=$1`, [v.id, v.allowed]);
+    await dbQuery(`update sources set allowed=$2 where id=$1`, [v.id, v.allowed]);
     return Response.json({ ok: true });
   } catch (err: unknown) {
     return Response.json({ ok: false, error: getErrorMessage(err) }, { status: 400 });

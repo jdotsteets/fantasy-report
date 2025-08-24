@@ -1,5 +1,5 @@
 // app/go/[id]/route.ts
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export async function GET(
   if (!id) return new Response("Missing or invalid id", { status: 400 });
 
   // look up destination URL
-  const { rows } = await query<{ url: string }>(
+  const { rows } = await dbQuery<{ url: string }>(
     `select url
        from articles
       where id = $1
@@ -43,7 +43,7 @@ export async function GET(
         .split(",")[0]
         .trim() || null;
 
-    await query(
+    await dbQuery(
       `insert into clicks (article_id, ref, ua, ip)
        values ($1, $2, $3, $4)`,
       [id, ref, ua, ip]

@@ -1,5 +1,5 @@
 // app/api/search/route.ts
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ export async function GET(req: Request) {
   // turn on ILIKE fallback if query < 3 chars (e.g., "AJ")
   const useIlike = q.length < 3;
 
-  const { rows } = await query<Row>(sql, [q, useIlike, limit]);
+  const { rows } = await dbQuery<Row>(sql, [q, useIlike, limit]);
 
   return new Response(JSON.stringify({ items: rows }), {
     headers: { "content-type": "application/json" },

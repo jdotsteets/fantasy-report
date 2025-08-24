@@ -1,6 +1,6 @@
 // app/api/ingest/route.ts
 import Parser from "rss-parser";
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 import type { Enriched } from "@/types/sources";
 import { enrich } from "@/lib/enrich";
 import { classifyArticle } from "@/lib/classify";
@@ -223,7 +223,7 @@ export async function GET(req: Request) {
   }
 
   // Add parentheses so 'allowed' applies to both rss_url OR homepage_url
-  const { rows: sources } = await query<DBSource>(
+  const { rows: sources } = await dbQuery<DBSource>(
     `
     SELECT name, rss_url, homepage_url, favicon_url, COALESCE(priority,0) AS priority
       FROM sources
@@ -257,7 +257,7 @@ export async function GET(req: Request) {
       // Persist discovered RSS (self-heal)
       if (discovered && discovered !== src.rss_url) {
         try {
-          await query(`UPDATE sources SET rss_url = $1 WHERE name = $2`, [
+          await dbQuery(`UPDATE sources SET rss_url = $1 WHERE name = $2`, [
             discovered,
             srcName,
           ]);
@@ -303,7 +303,7 @@ export async function GET(req: Request) {
         const image_url    = e?.image_url ?? null;
 
         // Accept either unique constraint (url or canonical_url) without crashing
-        const res = await query(
+        const res = await dbQuery(
           `
           INSERT INTO articles(
             source_id, url, canonical_url, domain,

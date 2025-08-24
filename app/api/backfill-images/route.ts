@@ -1,5 +1,5 @@
 // app/api/backfill-images/route.ts
-import { query } from "@/lib/db";
+import { dbQuery } from "@/lib/db";
 import { findArticleImage } from "@/lib/scrape-image";
 
 export const runtime = "nodejs";
@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   `;
 
   try {
-    const { rows } = await query<Row>(sql, [limit]);
+    const { rows } = await dbQuery<Row>(sql, [limit]);
     let scanned = 0;
     let updated = 0;
     let skipped = 0;
@@ -60,7 +60,7 @@ export async function GET(req: Request) {
 
       // If we found something new/different, update it (unless dry run)
       if (!dryRun) {
-        await query(
+        await dbQuery(
           `UPDATE articles SET image_url = $1 WHERE id = $2`,
           [found, r.id]
         );
