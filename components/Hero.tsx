@@ -3,7 +3,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK } from "@/lib/images";
 
 export type HeroProps = {
@@ -13,15 +12,10 @@ export type HeroProps = {
   source: string;
 };
 
-function fmtDate(iso?: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString();
-}
+
 
 
 export default function Hero({ title, href, src, source }: HeroProps) {
-  const resolved = getSafeImageUrl(src);
   const img = getSafeImageUrl(src) || FALLBACK;
 
 

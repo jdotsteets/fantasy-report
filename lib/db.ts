@@ -4,7 +4,6 @@ import dns from "node:dns/promises";
 
 
 declare global {
-  // eslint-disable-next-line no-var
   var __pgPool__: Pool | undefined;
 }
 

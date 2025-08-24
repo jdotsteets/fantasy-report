@@ -53,15 +53,15 @@ function cleanPrefix(t: string) {
 }
 
 export function extractLikelyNameFromTitle(title: string): string | null {
-  let t = cleanPrefix(title)
+  const t = cleanPrefix(title)
     .replace(/’/g, "'")
     .replace(/'s\b/g, ""); // Rodgers' -> Rodgers
 
   const words = t.split(/\s+/);
 
   const nameParts: string[] = [];
-  for (let raw of words) {
-    let w = raw.replace(/[^\w'-]/g, ""); // strip punctuation around word
+  for (const raw of words) {
+    const w = raw.replace(/[^\w'-]/g, ""); // strip punctuation around word
     if (!w) continue;
 
     const lower = w.toLowerCase();

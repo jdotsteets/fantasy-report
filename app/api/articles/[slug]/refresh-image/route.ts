@@ -6,10 +6,30 @@ import { cacheRemoteImageToSupabase } from "@/lib/upload";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type RouteParams = { slug?: string };
 
-/** @ts-expect-error Next wants the 2nd param untyped */
-export async function POST(req: Request, ctx) {
-  const slug = (ctx as any)?.params?.slug as string | undefined;
+// Next 15 sometimes provides `params` as a thenable; handle both cases.
+async function readSlug(ctx: unknown): Promise<string | null> {
+  try {
+    const maybeParams = (ctx as { params?: unknown })?.params as
+      | RouteParams
+      | Promise<RouteParams>
+      | undefined;
+
+    const params =
+      maybeParams && typeof (maybeParams as Promise<unknown>).then === "function"
+        ? await (maybeParams as Promise<RouteParams>)
+        : (maybeParams as RouteParams | undefined);
+
+    const slug = params?.slug;
+    return typeof slug === "string" && slug.length > 0 ? slug : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function POST(req: Request, ctx: unknown) {
+  const slug = await readSlug(ctx);
   if (!slug) return new Response("Missing slug", { status: 400 });
 
   const url = new URL(req.url);
@@ -26,10 +46,10 @@ export async function POST(req: Request, ctx) {
     image_url: string | null;
   }>(
     `
-    select a.id, coalesce(a.cleaned_title, a.title) as title, a.image_url
-    from articles a
-    where a.slug = $1 or a.id = $2
-    limit 1
+      select a.id, coalesce(a.cleaned_title, a.title) as title, a.image_url
+        from articles a
+       where a.slug = $1 or a.id = $2
+       limit 1
     `,
     [slug, idForQuery]
   );
@@ -41,13 +61,12 @@ export async function POST(req: Request, ctx) {
     return json({ updated: false, reason: "existing image ok", id: a.id });
   }
 
-  // 2) try to infer a name from the title (e.g., "Jake Bobo ...")
-  let name = extractLikelyNameFromTitle(a.title);
- 
+  // 2) infer a player/person name from the title
+  const name = extractLikelyNameFromTitle(a.title);
   if (!name) return json({ updated: false, reason: "no name found", id: a.id });
 
   // 3) search Wikimedia for a usable headshot
-  let hit = await findWikipediaHeadshot(name);
+  const hit = await findWikipediaHeadshot(name);
   if (!hit) return json({ updated: false, reason: "no wiki image", id: a.id, name });
 
   // 4) cache to your bucket/CDN and update DB
@@ -63,5 +82,3 @@ function json(data: unknown, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
-
-

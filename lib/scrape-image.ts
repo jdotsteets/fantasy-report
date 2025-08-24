@@ -1,5 +1,3 @@
-// lib/scrape-image.ts
-
 /** Normalize raw image URL against the page URL and fix protocol-relative links. */
 function resolveImageUrl(raw: string | null | undefined, pageUrl: string): string | null {
   if (!raw) return null;
@@ -85,6 +83,29 @@ function metaCandidates(html: string, pageUrl: string): string[] {
   return Array.from(out);
 }
 
+/** Narrowing helpers for JSON-LD traversal */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object";
+}
+function pushResolved(val: unknown, pageUrl: string, out: string[]) {
+  if (typeof val === "string") {
+    const u = resolveImageUrl(val, pageUrl);
+    if (u) out.push(u);
+    return;
+  }
+  if (Array.isArray(val)) {
+    for (const v of val) pushResolved(v, pageUrl, out);
+    return;
+  }
+  if (isRecord(val)) {
+    const raw = (val.url ?? val.contentUrl) as unknown;
+    if (typeof raw === "string") {
+      const u = resolveImageUrl(raw, pageUrl);
+      if (u) out.push(u);
+    }
+  }
+}
+
 /** Parse JSON-LD blocks searching for Article/NewsArticle ImageObject/image arrays. */
 function jsonLdCandidates(html: string, pageUrl: string): string[] {
   const urls: string[] = [];
@@ -108,41 +129,23 @@ function jsonLdCandidates(html: string, pageUrl: string): string[] {
   return Array.from(new Set(urls));
 }
 
-function collectJsonLd(node: any, pageUrl: string, out: string[]) {
-  if (!node || typeof node !== "object") return;
+/** Walk a JSON-LD node safely (no `any`). */
+function collectJsonLd(node: unknown, pageUrl: string, out: string[]): void {
+  if (!isRecord(node)) return;
 
-  // If this node has image or thumbnailUrl
-  const props = ["image", "thumbnail", "thumbnailUrl", "primaryImageOfPage"];
+  // common image-like props
+  const props = ["image", "thumbnail", "thumbnailUrl", "primaryImageOfPage"] as const;
   for (const key of props) {
-    if (node[key]) {
-      const val = node[key];
-      if (typeof val === "string") {
-        const u = resolveImageUrl(val, pageUrl);
-        if (u) out.push(u);
-      } else if (Array.isArray(val)) {
-        for (const v of val) {
-          if (typeof v === "string") {
-            const u = resolveImageUrl(v, pageUrl);
-            if (u) out.push(u);
-          } else if (v && typeof v === "object" && v.url) {
-            const u = resolveImageUrl(v.url, pageUrl);
-            if (u) out.push(u);
-          }
-        }
-      } else if (val && typeof val === "object" && val.url) {
-        const u = resolveImageUrl(val.url, pageUrl);
-        if (u) out.push(u);
-      }
-    }
+    if (key in node) pushResolved(node[key], pageUrl, out);
   }
 
-  // Recurse into graph/array children
-  const childrenKeys = ["@graph", "itemListElement", "hasPart", "associatedMedia"];
+  // recurse into typical child containers
+  const childrenKeys = ["@graph", "itemListElement", "hasPart", "associatedMedia"] as const;
   for (const k of childrenKeys) {
     const child = node[k];
     if (Array.isArray(child)) {
       for (const n of child) collectJsonLd(n, pageUrl, out);
-    } else if (child && typeof child === "object") {
+    } else if (isRecord(child)) {
       collectJsonLd(child, pageUrl, out);
     }
   }
@@ -199,7 +202,10 @@ function scoreUrl(u: string): number {
   if (/\/ads?\//.test(url)) score -= 5;
 
   // Favor larger hints in filename/query
-  const sizeHints = url.match(/(\d{3,4})x(\d{3,4})/) || url.match(/w=(\d{3,4})/) || url.match(/width=(\d{3,4})/);
+  const sizeHints =
+    url.match(/(\d{3,4})x(\d{3,4})/) ||
+    url.match(/(?:\b|[?&])w=(\d{3,4})\b/) ||
+    url.match(/(?:\b|[?&])width=(\d{3,4})\b/);
   if (sizeHints) score += 4;
 
   // Prefer https
@@ -210,7 +216,6 @@ function scoreUrl(u: string): number {
 
 function chooseBest(cands: string[]): string | null {
   if (!cands.length) return null;
-  // Deduplicate on full URL
   const uniq = Array.from(new Set(cands));
   uniq.sort((a, b) => scoreUrl(b) - scoreUrl(a));
   return uniq[0] || null;
@@ -227,11 +232,10 @@ export async function findArticleImage(url: string, timeoutMs = 7000): Promise<s
       headers: {
         "user-agent":
           "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-        "accept":
+        accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "accept-language": "en-US,en;q=0.8",
         "cache-control": "no-cache",
-        // a referer sometimes gets around anti-bot rules:
         referer: new URL(url).origin,
       },
       redirect: "follow",
@@ -241,11 +245,9 @@ export async function findArticleImage(url: string, timeoutMs = 7000): Promise<s
     const ctype = res.headers.get("content-type") || "";
     if (!/text\/html|application\/xhtml\+xml/i.test(ctype)) return null;
 
-    // cap body size to keep it fast (first ~600KB is plenty)
     const htmlFull = await res.text();
     const html = htmlFull.slice(0, 600_000);
 
-    // Gather candidates from multiple strategies
     const cands: string[] = [];
     cands.push(...metaCandidates(html, url));
     cands.push(...jsonLdCandidates(html, url));
@@ -253,7 +255,6 @@ export async function findArticleImage(url: string, timeoutMs = 7000): Promise<s
       cands.push(...bodyCandidates(html, url));
     }
 
-    // Choose the best-scoring candidate
     return chooseBest(cands);
   } catch {
     return null;
