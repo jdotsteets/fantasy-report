@@ -171,7 +171,7 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
 
   return (
     <Suspense fallback={null}>
-      <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
+      <main className="mx-auto max-w-[100%] px-1 sm:px-2 lg:px-6 py-4">
         <header className="mb-6 text-center">
           <h1 className="font-extrabold tracking-tight text-black
                          text-5xl sm:text-6xl md:text-7xl lg:text-8xl
@@ -201,7 +201,7 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
 
             {/* right-aligned image toggle */}
             <div className="flex justify-end px-3 py-2">
-              <ImageToggle />
+              <ImageToggle  className="h-9 sm:h-9" />
             </div>
 
             <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
