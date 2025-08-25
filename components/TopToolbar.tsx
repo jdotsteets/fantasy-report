@@ -28,7 +28,6 @@ export default function TopToolbar() {
 
   useEffect(() => {
     // safe on client only
-    const p = window.location.pathname || "/";
     const sp = new URLSearchParams(window.location.search);
     setActive(sp.get("section") ?? "");
   }, []);

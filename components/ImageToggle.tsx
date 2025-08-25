@@ -93,7 +93,7 @@ export default function ImageToggle({ className = "" }: { className?: string }) 
         // Light mode glossy gradient:
         "bg-[linear-gradient(180deg,#fafafa_0%,#eaeaea_100%)]",
         // Dark mode glossy gradient:
-        "dark:bg-[linear-gradient(180deg,#5f5f5f_0%,#4b4b4b_100%)]",
+       // "dark:bg-[linear-gradient(180deg,#5f5f5f_0%,#4b4b4b_100%)]",
 
         // ==== OUTER RING COLORS / HOVER =====================================
         // Uses RING and RING_HOVER constants defined at the top:
@@ -112,7 +112,7 @@ export default function ImageToggle({ className = "" }: { className?: string }) 
         className={[
           "pointer-events-none absolute inset-[3px] rounded-full",
           `ring-1 ${RING} group-hover:ring-emerald-500`,
-          "bg-white/20 dark:bg-white/0", // <-- lighten/darken the interior here
+          "bg-white/20," // <-- lighten/darken the interior here
         ].join(" ")}
       />
 

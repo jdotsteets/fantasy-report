@@ -7,19 +7,18 @@ import {
   QueryResultRow,
 } from "pg";
 
-// Reuse a single Pool across HMR / route invocations
 declare global {
-  // eslint-disable-next-line no-var
   var __PG_POOL__: Pool | undefined;
 }
 
+// Reuse one Pool across hot reloads / invocations
 export const pool: Pool =
   global.__PG_POOL__ ??
   new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 5,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 8_000,
+    connectionString: process.env.DATABASE_URL, // Supabase pooler URL
+    max: 3,                      // gentle on pgBouncer in serverless
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 15_000,
     keepAlive: true,
     ssl: { rejectUnauthorized: false },
     allowExitOnIdle: true,
@@ -27,20 +26,19 @@ export const pool: Pool =
 
 if (!global.__PG_POOL__) global.__PG_POOL__ = pool;
 
-// Ensure callers always release the client
+// Always release the client; set a per-connection statement timeout
 export async function withClient<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
+    // optional but helpful to avoid long-running queries
+    await client.query(`SET statement_timeout = '10s'`);
     return await fn(client);
   } finally {
     client.release();
   }
 }
 
-/**
- * Typed query helper.
- * R = row type (must extend QueryResultRow)
- */
+/** Typed query helper */
 export async function dbQuery<R extends QueryResultRow = QueryResultRow>(
   text: string | QueryConfig<unknown[]>,
   params?: unknown[]

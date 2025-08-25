@@ -1,5 +1,5 @@
 // app/page.tsx
-import { Suspense } from "react"; // 👈 add
+import { Suspense } from "react";
 import ArticleList from "@/components/ArticleList";
 import Section from "@/components/Section";
 import Hero from "@/components/Hero";
@@ -51,8 +51,8 @@ function weekLabel(week: number) {
   return week === 0 ? "Preseason" : `Week ${week}`;
 }
 
-// --- API types / fetcher ---
-type ApiArticle = {
+// ---- API payloads ----
+type DbRow = {
   id: number;
   title: string;
   url: string;
@@ -64,84 +64,53 @@ type ApiArticle = {
   topics: string[] | null;
   source: string;
 };
-type ApiResp = { items: ApiArticle[]; nextCursor?: string | null };
 
-async function fetchArticles(
-  params: Record<string, string | number | null | undefined>
-): Promise<Article[]> {
-  const usp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && `${v}`.trim() !== "") usp.set(k, String(v));
-  }
-  if (!usp.has("days")) usp.set("days", "45");
+type HomePayload = {
+  items: {
+    latest: DbRow[];
+    rankings: DbRow[];
+    startSit: DbRow[];
+    advice: DbRow[];
+    dfs: DbRow[];
+    waivers: DbRow[];
+    injuries: DbRow[];
+    heroCandidates: DbRow[];
+  };
+};
 
-  const url = absUrl(`/api/articles?${usp.toString()}`);
+// ---- Map DB row → Article (only keep fields Article knows about) ----
+function mapRow(a: DbRow): Article {
+  return {
+    id: a.id,
+    title: a.title,
+    url: a.url,
+    canonical_url: a.canonical_url,
+    domain: a.domain,
+    image_url: a.image_url ?? null,
+    published_at: a.published_at ?? null,
+    source: a.source,
+  };
+}
 
-  const ATTEMPTS = 3;
-  const timeoutMs = 8000;
-  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function fetchHome(sport: string, currentWeek: number): Promise<HomePayload> {
+  const usp = new URLSearchParams({
+    sport,
+    days: "45",
+    week: String(currentWeek),
+    limitNews: "25",
+    limitRankings: "10",
+    limitStartSit: "12",
+    limitAdvice: "10",
+    limitDFS: "10",
+    limitWaivers: "10",
+    limitInjuries: "10",
+    limitHero: "12",
+  });
+  const url = absUrl(`/api/home?${usp.toString()}`);
 
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-
-    try {
-      const res = await fetch(url, {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        if ((res.status >= 500 || res.status === 429) && attempt < ATTEMPTS) {
-          await wait(300 * attempt * attempt);
-          continue;
-        }
-        console.error("API error", res.status, body);
-        return [];
-      }
-
-      const data = (await res.json().catch(() => null)) as (ApiResp & { error?: string }) | null;
-      if (!data) {
-        console.error("API error: invalid JSON");
-        return [];
-      }
-      if (data.error) {
-        if (attempt < ATTEMPTS) {
-          await wait(300 * attempt * attempt);
-          continue;
-        }
-        console.error("API error body:", data.error);
-        return [];
-      }
-
-      const items = data.items ?? [];
-      return items.map((a) => ({
-        id: a.id,
-        title: a.title,
-        url: a.url,
-        canonical_url: a.canonical_url,
-        domain: a.domain,
-        image_url: a.image_url ?? null,
-        published_at: a.published_at ?? null,
-        week: a.week ?? null,
-        topics: a.topics ?? [],
-        source: a.source,
-      }));
-    } catch (err) {
-      clearTimeout(timer);
-      if (attempt < ATTEMPTS) {
-        await wait(300 * attempt * attempt);
-        continue;
-      }
-      console.error("API fetch failed:", err);
-      return [];
-    }
-  }
-
-  return [];
+  const res = await fetch(url, { cache: "no-store", headers: { accept: "application/json" } });
+  if (!res.ok) throw new Error(`home api ${res.status}`);
+  return (await res.json()) as HomePayload;
 }
 
 export default async function Home(props: { searchParams?: Promise<Search> }) {
@@ -149,25 +118,18 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
   const urlWeek = Number(sp.week);
   const CURRENT_WEEK = Number.isFinite(urlWeek) ? urlWeek : getCurrentNFLWeek();
 
-  const [
-    latest,
-    rankings,
-    startSit,
-    advice,
-    dfs,
-    waivers,
-    injuries,
-    heroCandidates,
-  ] = await Promise.all([
-    fetchArticles({ sport: "nfl", limit: 25 }), // news
-    fetchArticles({ sport: "nfl", topic: "rankings", limit: 10 }),
-    fetchArticles({ sport: "nfl", topic: "start-sit", week: CURRENT_WEEK, limit: 12 }),
-    fetchArticles({ sport: "nfl", topic: "advice", limit: 10 }),
-    fetchArticles({ sport: "nfl", topic: "dfs", limit: 10 }),
-    fetchArticles({ sport: "nfl", topic: "waiver-wire", limit: 10 }),
-    fetchArticles({ sport: "nfl", topic: "injury", limit: 10 }),
-    fetchArticles({ sport: "nfl", limit: 12 }),
-  ]);
+  // 🔥 single call
+  const data = await fetchHome("nfl", CURRENT_WEEK);
+
+  // map to Article[]
+  const latest         = data.items.latest.map(mapRow);
+  const rankings       = data.items.rankings.map(mapRow);
+  const startSit       = data.items.startSit.map(mapRow);
+  const advice         = data.items.advice.map(mapRow);
+  const dfs            = data.items.dfs.map(mapRow);
+  const waivers        = data.items.waivers.map(mapRow);
+  const injuries       = data.items.injuries.map(mapRow);
+  const heroCandidates = data.items.heroCandidates.map(mapRow);
 
   // hero
   const heroRow = heroCandidates.find(
@@ -182,12 +144,12 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
   const dropHero = <T extends { id: number }>(arr: T[]) =>
     heroId ? arr.filter((a) => a.id !== heroId) : arr;
 
-  const latestFiltered = dropHero(latest);
+  const latestFiltered   = dropHero(latest);
   const rankingsFiltered = dropHero(rankings);
   const startSitFiltered = dropHero(startSit);
-  const adviceFiltered = dropHero(advice);
-  const dfsFiltered = dropHero(dfs);
-  const waiversFiltered = dropHero(waivers);
+  const adviceFiltered   = dropHero(advice);
+  const dfsFiltered      = dropHero(dfs);
+  const waiversFiltered  = dropHero(waivers);
   const injuriesFiltered = dropHero(injuries);
 
   // --- section toggle via ?section= ---
@@ -196,13 +158,13 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
     | undefined;
 
   const sectionMap: Record<SectionKey, { title: string; items: Article[] }> = {
-    news: { title: "News & Updates", items: latestFiltered },
-    rankings: { title: "Rankings", items: rankingsFiltered },
-    "start-sit": { title: `${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`, items: startSitFiltered },
-    injury: { title: "Injuries", items: injuriesFiltered },
-    dfs: { title: "DFS", items: dfsFiltered },
-    waivers: { title: "Waiver Wire", items: waiversFiltered },
-    advice: { title: "Advice", items: adviceFiltered },
+    news:       { title: "News & Updates",                          items: latestFiltered },
+    rankings:   { title: "Rankings",                                 items: rankingsFiltered },
+    "start-sit":{ title: `${weekLabel(CURRENT_WEEK)} Start/Sit & Sleepers`, items: startSitFiltered },
+    injury:     { title: "Injuries",                                 items: injuriesFiltered },
+    dfs:        { title: "DFS",                                      items: dfsFiltered },
+    waivers:    { title: "Waiver Wire",                              items: waiversFiltered },
+    advice:     { title: "Advice",                                   items: adviceFiltered },
   };
 
   const isFiltered = !!sectionParam && sectionMap[sectionParam as SectionKey];
@@ -210,18 +172,14 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
   return (
     <Suspense fallback={null}>
       <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
-        {/* Header block – pills live in TopToolbar; keep the H1 */}
         <header className="mb-6 text-center">
-          <h1
-            className="font-extrabold tracking-tight text-black
-                      text-5xl sm:text-6xl md:text-7xl lg:text-8xl
-                      leading-[0.9]"
-          >
+          <h1 className="font-extrabold tracking-tight text-black
+                         text-5xl sm:text-6xl md:text-7xl lg:text-8xl
+                         leading-[0.9]">
             The Fantasy Report
           </h1>
         </header>
 
-        {/* When a pill is active, show only that section; hide hero + grid */}
         {isFiltered ? (
           <div className="mx-auto max-w-2xl">
             <Section title={sectionMap[sectionParam as SectionKey].title}>
@@ -240,10 +198,11 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
                 />
               </div>
             ) : null}
-            
- <div className="flex justify-end px-3 py-2">
-      <ImageToggle />
-    </div>
+
+            {/* right-aligned image toggle */}
+            <div className="flex justify-end px-3 py-2">
+              <ImageToggle />
+            </div>
 
             <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1.2fr_1fr]">
               <div className="order-2 md:order-1 space-y-4">
@@ -265,7 +224,6 @@ export default async function Home(props: { searchParams?: Promise<Search> }) {
               </div>
 
               <div className="order-3 space-y-4">
-                
                 <Section title="Advice">
                   <ArticleList items={adviceFiltered} />
                 </Section>
