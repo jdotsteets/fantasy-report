@@ -9,7 +9,6 @@ export const runtime = "nodejs";
 type CacheEntry = { body: unknown; ts: number };
 type CacheStore = Map<string, CacheEntry>;
 declare global {
-  // eslint-disable-next-line no-var
   var __HOME_CACHE__: CacheStore | undefined;
 }
 const CACHE: CacheStore = global.__HOME_CACHE__ ?? new Map();
@@ -24,7 +23,6 @@ function clamp(n: number, min: number, max: number) {
 
 // Acceptable SQL param types for `pg`
 type SqlParam = string | number | boolean | null | readonly string[];
-type SqlParams = ReadonlyArray<SqlParam>;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);

@@ -1,47 +1,117 @@
-// lib/db.ts
-import {
-  Pool,
-  PoolClient,
-  QueryConfig,
-  QueryResult,
-  QueryResultRow,
-} from "pg";
+import { Pool, PoolClient, QueryConfig, QueryResult } from "pg";
 
+/** ──────────────────────────────────────────────────────────────────────────
+ *  Singleton Pool (works in dev HMR and serverless)
+ *  ────────────────────────────────────────────────────────────────────────── */
 declare global {
+  // eslint-disable-next-line no-var
   var __PG_POOL__: Pool | undefined;
 }
 
-// Reuse one Pool across hot reloads / invocations
-export const pool: Pool =
+const pool: Pool =
   global.__PG_POOL__ ??
   new Pool({
-    connectionString: process.env.DATABASE_URL, // Supabase pooler URL
-    max: 3,                      // gentle on pgBouncer in serverless
-    idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 15_000,
+    connectionString: process.env.DATABASE_URL,
+    max: 5,                       // keep small for serverless / pgBouncer
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 8_000,
     keepAlive: true,
-    ssl: { rejectUnauthorized: false },
+    // Supabase/managed PG often needs rejectUnauthorized:false in prod
+    ssl:
+      process.env.NODE_ENV === "production"
+        ? { rejectUnauthorized: false }
+        : undefined,
     allowExitOnIdle: true,
   });
 
-if (!global.__PG_POOL__) global.__PG_POOL__ = pool;
-
-// Always release the client; set a per-connection statement timeout
-export async function withClient<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    // optional but helpful to avoid long-running queries
-    await client.query(`SET statement_timeout = '10s'`);
-    return await fn(client);
-  } finally {
-    client.release();
-  }
+if (!global.__PG_POOL__) {
+  global.__PG_POOL__ = pool;
 }
 
-/** Typed query helper */
-export async function dbQuery<R extends QueryResultRow = QueryResultRow>(
-  text: string | QueryConfig<unknown[]>,
-  params?: unknown[]
+// Don't crash the process on background client errors
+pool.on("error", (err) => {
+  console.error("[pg pool error]", (err as { code?: string })?.code, err.message);
+});
+
+/** ──────────────────────────────────────────────────────────────────────────
+ *  Retry helpers
+ *  ────────────────────────────────────────────────────────────────────────── */
+type PgErr = { code?: string; message?: string };
+
+function isTransient(err: unknown): boolean {
+  const { code, message } = (err ?? {}) as PgErr;
+  const msg = (message ?? "").toLowerCase();
+  return (
+    code === "XX000" || // db_termination
+    code === "57P01" || // admin_shutdown
+    code === "53300" || // too_many_connections
+    msg.includes("connection terminated") ||
+    msg.includes("terminating connection") ||
+    msg.includes("connection reset") ||
+    msg.includes("server closed the connection unexpectedly") ||
+    msg.includes("timeout exceeded when trying to connect")
+  );
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Run a function with a client, with transient-error retries. */
+export async function withClient<T>(
+  fn: (c: PoolClient) => Promise<T>,
+  opts: { attempts?: number; baseBackoffMs?: number } = {}
+): Promise<T> {
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const baseBackoffMs = opts.baseBackoffMs ?? 300;
+
+  let lastErr: unknown;
+  for (let tryNo = 0; tryNo < attempts; tryNo++) {
+    try {
+      const client = await pool.connect();
+      try {
+        // Optional: uncomment to fail slow queries fast (server-side timeout)
+        // await client.query("SET statement_timeout = 10000");
+        return await fn(client);
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      lastErr = err;
+      if (tryNo < attempts - 1 && isTransient(err)) {
+        const backoff = baseBackoffMs * Math.pow(2, tryNo); // 300, 600, 1200…
+        console.warn(
+          `[pg retry] transient error (${(err as PgErr)?.code ?? "unknown"}): ${
+            (err as PgErr)?.message ?? ""
+          } – retrying in ${backoff}ms`
+        );
+        await sleep(backoff);
+        continue;
+      }
+      break;
+    }
+  }
+  throw lastErr;
+}
+
+/** ──────────────────────────────────────────────────────────────────────────
+ *  dbQuery helper (keeps your existing imports working)
+ *  - No `any` in our code (satisfies @typescript-eslint/no-explicit-any)
+ *  - Accepts SQL string + params OR a QueryConfig
+ *  ────────────────────────────────────────────────────────────────────────── */
+export type SqlParam = string | number | boolean | null | readonly string[];
+export type SqlParams = ReadonlyArray<SqlParam>;
+
+export async function dbQuery<R extends Record<string, unknown> = Record<string, unknown>>(
+  textOrCfg: string | QueryConfig<SqlParam[]>,
+  params?: SqlParams
 ): Promise<QueryResult<R>> {
-  return withClient(async (c) => c.query<R>(text as string, params as unknown[] | undefined));
+  return withClient((c) => {
+    if (typeof textOrCfg === "string") {
+      // pg typings accept `any[]`; pass our params as unknown[] without using `any` locally
+      const values = (params as unknown[] | undefined);
+      return c.query<R>(textOrCfg, values);
+    }
+    return c.query<R>(textOrCfg);
+  });
 }
