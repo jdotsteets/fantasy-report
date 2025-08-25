@@ -1,3 +1,4 @@
+// lib/feeds.ts
 import { XMLParser } from "fast-xml-parser";
 import * as iconv from "iconv-lite";
 import * as cheerio from "cheerio";
@@ -9,8 +10,7 @@ export type FeedItem = {
   description?: string | null;
 };
 
-
-// --- helpers (put near top of file) ---
+// ─── helpers ────────────────────────────────────────────────────────────────
 function s(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
 }
@@ -22,15 +22,38 @@ type Rss2 = { rss?: { channel?: { item?: unknown | unknown[] } } };
 type Atom = { feed?: { entry?: unknown | unknown[] } };
 type Rdf1 = { RDF?: { item?: unknown | unknown[] }; rdf?: { item?: unknown | unknown[] } };
 
+const BAD_SCHEMES = /^(javascript:|mailto:|tel:)/i;
+const SOCIAL_OR_CORP: ReadonlyArray<RegExp> = [
+  /twitter\.com/i, /x\.com/i, /facebook\.com/i, /instagram\.com/i, /youtube\.com/i,
+  /about/i, /privacy/i, /terms/i, /subscribe/i, /login/i, /signin/i, /signup/i,
+  /affiliate/i, /advertis/i, /gift/i,
+];
 
+const ALLOW_BY_DOMAIN: Record<string, RegExp[]> = {
+  "fantasypros.com": [
+    /^https?:\/\/(www\.)?fantasypros\.com\/nfl\/(news|rankings|start-sit|waiver-wire|dfs|advice)\/?/i,
+    /^https?:\/\/(www\.)?fantasypros\.com\/nfl\/[\w-]+\/?$/i,
+  ],
+  "pff.com": [/^https?:\/\/(www\.)?pff\.com\/news\//i],
+};
+
+function allowedByDomain(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./i, "");
+    const allow = ALLOW_BY_DOMAIN[host];
+    if (!allow) return true; // default permissive
+    return allow.some((re) => re.test(url));
+  } catch {
+    return false;
+  }
+}
 
 export type FeedFetchOpts = {
   url: string;
   userAgent?: string;
   timeoutMs?: number;
-  // When true, drop urls that look premium/paywalled
   dropPremium?: boolean;
-  // Extra denylist patterns (in addition to built-ins)
   denyPatterns?: RegExp[];
 };
 
@@ -46,7 +69,7 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
-const PREMIUM_DENY = [
+const PREMIUM_DENY: ReadonlyArray<RegExp> = [
   /\/subscribe/i,
   /\/subscription/i,
   /\/premium/i,
@@ -56,7 +79,7 @@ const PREMIUM_DENY = [
   /paywall/i,
 ];
 
-function dropPremium(url: string, extra?: RegExp[]) {
+function dropPremium(url: string, extra?: ReadonlyArray<RegExp>) {
   return [...PREMIUM_DENY, ...(extra ?? [])].some((re) => re.test(url));
 }
 
@@ -87,9 +110,7 @@ function decode(buf: Buffer, ctype: string) {
   return buf.toString("utf8");
 }
 
-// ---- RSS/Atom normalizers
-
-// --- replace your normalizeRss with this ---
+// ─── RSS/Atom normalizers ───────────────────────────────────────────────────
 function normalizeRss(rss: unknown): FeedItem[] {
   const r = rss as Rss2 & Atom & Rdf1;
 
@@ -164,24 +185,49 @@ function normalizeRss(rss: unknown): FeedItem[] {
   throw new Error("Feed not recognized as RSS or Atom");
 }
 
-// ---- Fallback HTML scraping
+// ─── Fallback HTML list scraping ────────────────────────────────────────────
 function parseListHtml(html: string, baseUrl: string): FeedItem[] {
   const $ = cheerio.load(html);
-  const links: FeedItem[] = [];
-  $("a[href]").each((_i, el) => {
-    const href = $(el).attr("href") || "";
-    const title = ($(el).text() || "").trim();
-    if (!title || !href) return;
-    if (title.length < 6) return;
+  const base = new URL(baseUrl);
+  const sameHost = base.hostname.replace(/^www\./i, "");
 
-    const link = new URL(href, baseUrl).toString();
-    links.push({ title, link, publishedAt: null });
+  const BANNED_SLUGS = new Set([
+    "about","company","contact","accessibility","privacy","terms",
+    "do_not_sell_modal","ccpa","cookie","contribute","advertise",
+    "affiliate","gift-cards","plans","pricing","accounts",
+    "signin","sign-in","login","signup","sign-up","mobile","apps",
+  ]);
+
+  const out: FeedItem[] = [];
+  $("a[href]").each((_i, el) => {
+    const rawHref = ($(el).attr("href") || "").trim();
+    const title = ($(el).text() || "").trim();
+    if (!rawHref || !title || title.length < 6) return;
+    if (BAD_SCHEMES.test(rawHref)) return;
+
+    let u: URL;
+    try {
+      u = new URL(rawHref, base);
+    } catch {
+      return;
+    }
+
+    const host = u.hostname.replace(/^www\./i, "");
+    if (host !== sameHost) return;
+
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length === 0) return;
+    if (parts.some((p) => BANNED_SLUGS.has(p))) return;
+
+    out.push({ title, link: u.toString(), publishedAt: null });
   });
+
+  // de-dupe by absolute URL
   const seen = new Set<string>();
-  return links.filter((x) => (seen.has(x.link) ? false : (seen.add(x.link), true))).slice(0, 50);
+  return out.filter((x) => (seen.has(x.link) ? false : (seen.add(x.link), true))).slice(0, 100);
 }
 
-// ---- Main
+// ─── Main fetch ─────────────────────────────────────────────────────────────
 export async function fetchFeed(opts: FeedFetchOpts): Promise<FeedItem[]> {
   const {
     url,
@@ -198,15 +244,19 @@ export async function fetchFeed(opts: FeedFetchOpts): Promise<FeedItem[]> {
     const data = parser.parse(text);
     let items = normalizeRss(data);
 
-    if (drop) {
-      items = items.filter((it) => it.link && !dropPremium(it.link, denyPatterns));
-    }
+    // normalize and filter
+    items = items
+      .map((it) => ({ ...it, link: (it.link || "").trim() }))
+      .filter((it) => it.title && it.link && /^https?:\/\//i.test(it.link))
+      .filter((it) => !BAD_SCHEMES.test(it.link))
+      .filter((it) => !drop || !dropPremium(it.link, denyPatterns))
+      .filter((it) => SOCIAL_OR_CORP.every((re) => !re.test(it.link)))
+      .filter((it) => allowedByDomain(it.link));
 
-    return items.map((it) => ({
-      ...it,
-      link: (it.link || "").replace(/^<|>$/g, ""),
-    }));
+    // final cleanup of angle-bracketed links
+    return items.map((it) => ({ ...it, link: it.link.replace(/^<|>$/g, "") }));
   } catch {
+    // Not valid XML? Fall back to basic list scraping.
     const items = parseListHtml(text, url).filter(
       (it) => it.link && (!drop || !dropPremium(it.link, denyPatterns))
     );
