@@ -4,7 +4,6 @@ import { Pool, PoolClient, QueryConfig, QueryResult } from "pg";
  *  Singleton Pool (works in dev HMR and serverless)
  *  ────────────────────────────────────────────────────────────────────────── */
 declare global {
-  // eslint-disable-next-line no-var
   var __PG_POOL__: Pool | undefined;
 }
 
@@ -99,7 +98,7 @@ export async function withClient<T>(
  *  - No `any` in our code (satisfies @typescript-eslint/no-explicit-any)
  *  - Accepts SQL string + params OR a QueryConfig
  *  ────────────────────────────────────────────────────────────────────────── */
-export type SqlParam = string | number | boolean | null | readonly string[];
+export type SqlParam = string | number | boolean | Date | null | readonly string[];
 export type SqlParams = ReadonlyArray<SqlParam>;
 
 export async function dbQuery<R extends Record<string, unknown> = Record<string, unknown>>(
