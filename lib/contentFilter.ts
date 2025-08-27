@@ -114,19 +114,31 @@ export const filterConfig: FilterConfig = {
       categoryAllow: ["Fantasy", "News", "Injury", "Rumor", "DepthChart"],
     },
 
-    // NBCSports — NFL-only and exclude player pages
+    // NBCSports — NFL-only and exclude player pages + hubs
     {
       match: { domain: "nbcsports.com" },
-      // Require content to live under /nfl/
-      pathAllow: [/^\/nfl\//i],
-      // Deny obvious non-NFL sections and generic watch pages
-      pathDeny:  [/^\/watch\//i, /\/soccer\//i, /\/(mlb|nba|nhl)\//i],
-      // Forbid player detail urls and "bare-name" titles (e.g., "C.J. Henderson")
-      forbidden: [
-        /\/nfl\/[a-z0-9-]+\/\d+\/?$/i,
-        /^[A-Z][A-Za-z\.'\-]+( [A-Z][A-Za-z\.'\-]+){0,3}$/
+
+      // Must live under /nfl/
+      pathAllow: [/^\/nfl(\/|$)/i],
+
+      // Obvious non-NFL sections
+      pathDeny: [
+        /^\/(watch|soccer|mlb|nba|nhl|college-?football)\//i,
       ],
-      categoryAllow: ["Fantasy", "News", "Injury", "Rumor"]
+
+      // Forbid player detail urls and "bare-name" titles; also block hub/tag listings
+      forbidden: [
+        // /nfl/<slug>/<id> where <id> is numeric OR NBC GUID
+        /\/nfl\/[a-z0-9-]+\/(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i,
+
+        // bare-name titles allowing initials/dots/hyphens and common suffixes
+        /^[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}(?: (?:Jr|Sr|II|III|IV|V)\.?)?$/,
+
+        // hub/tag/category pages under /nfl/
+        /\/nfl\/(?:tag|category|topics?)\//i,
+      ],
+
+      categoryAllow: ["Fantasy", "News", "Injury", "Rumor"],
     },
 
     // FantasyPros by source_id (3126) — block "»" titles and player/stat/news php pages
@@ -136,6 +148,30 @@ export const filterConfig: FilterConfig = {
       forbidden: [/^»/, /\/nfl\/(players|stats|news)\/[a-z0-9-]+\.php$/i],
       requiredAny: [/\bnfl\b/i, /fantasy[ -]?football/i],
       categoryAllow: ["Fantasy", "News", "Injury"]
+    },
+
+    // Fantasy Footballers
+    {
+      match: { domain: "fantasyfootballers.com" },
+      // deny tools/hubs
+      pathDeny: [/\/(lineup|optimizer|builder|dfs-?pass|tools?)(\/|$)/i],
+      forbidden: [
+        /\b(DFS Pass|Lineup Generator|Multi Lineup Optimizer|Single Lineup Builder|DFS Articles)\b/i,
+        /<[^>]+>/ // HTML leaked into title
+      ],
+      requiredAny: [/\bnfl\b/i, /fantasy[ -]?football/i],
+      categoryAllow: ["Fantasy", "News"]
+    },
+
+    // Footballguys
+    {
+      match: { domain: "footballguys.com" },
+      pathDeny: [/\/(lineup|optimizer|builder|dfs-?pass|tools?)(\/|$)/i],
+      forbidden: [
+        /\b(DFS Pass|Lineup Generator|Multi Lineup Optimizer|Single Lineup Builder|News \(free only\))\b/i
+      ],
+      requiredAny: [/\bnfl\b/i, /fantasy[ -]?football/i],
+      categoryAllow: ["Fantasy", "News"]
     },
 
     // Restrict selected sources to NFL/fantasy-football only by source_id

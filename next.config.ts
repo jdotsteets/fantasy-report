@@ -46,6 +46,13 @@ const nextConfig: NextConfig = {
     { protocol: "https", hostname: "images.contentstack.io", pathname: "/**" },
     { protocol: "https", hostname: "s26212.pcdn.co", pathname: "/**" },
     { protocol: "https", hostname: "cdn.profootballrumors.com", pathname: "/**" },
+    { protocol: "https", hostname: "cdn.yourdomain.com" },
+      // If CDN redirects to your app domain (example)
+      { protocol: "https", hostname: "fantasy-report.vercel.app" },
+      // If CDN redirects to S3/CloudFront/Imgix/etc. (examples)
+      { protocol: "https", hostname: "your-bucket.s3.amazonaws.com" },
+      { protocol: "https", hostname: "d1234abcd.cloudfront.net" },
+      { protocol: "https", hostname: "assets.imgix.net" },
 
     // Your fallback
     { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },

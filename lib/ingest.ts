@@ -1,7 +1,4 @@
 // lib/ingest.ts
-// End-to-end typed ingestion with NFL/Fantasy filtering and DB upsert.
-// Uses dbQuery/from lib/db.ts (no direct pool usage).
-
 import Parser from "rss-parser";
 import * as cheerio from "cheerio";
 import { allowItem, classifyLeagueCategory } from "@/lib/contentFilter";
@@ -45,6 +42,123 @@ const parser = new Parser({
   headers: { "user-agent": "FantasyReportBot/1.0 (+https://fantasy-report.vercel.app)" },
 });
 
+/* ───────────── utility ───────────── */
+
+function nameFromFantasyProsUrl(u: string): string | null {
+  try {
+    const url = new URL(u);
+    if (!/fantasypros\.com$/i.test(url.hostname.replace(/^www\./i, ""))) return null;
+    const m = url.pathname.match(/\/nfl\/(players|stats|news)\/([a-z0-9-]+)\.php$/i);
+    if (!m) return null;
+    const slug = m[2];
+    const name = slug
+      .split("-")
+      .map((s) => (s ? s[0].toUpperCase() + s.slice(1) : s))
+      .join(" ");
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeUrl(raw: string): string {
+  const u = new URL(raw);
+  const drop = new Set([
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "gclid",
+    "fbclid",
+  ]);
+  for (const k of [...u.searchParams.keys()]) if (drop.has(k.toLowerCase())) u.searchParams.delete(k);
+  return u.toString();
+}
+
+function stripHtml(raw: string): string {
+  const noTags = raw.replace(/<[^>]*>/g, " ");
+  return noTags
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&ldquo;|&rdquor;|&rdquo;/gi, '"')
+    .replace(/&lsquo;|&rsquo;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanTitle(t: string): string {
+  return stripHtml(t);
+}
+function cleanDescription(d: string | null | undefined): string | null {
+  if (!d) return null;
+  const s = stripHtml(d);
+  return s.length ? s : null;
+}
+
+function absolutize(baseUrl: string, href: string): string | null {
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractImageFromItem(it: Record<string, unknown>): string | null {
+  const tryFields: ReadonlyArray<string> = [
+    "enclosure",
+    "image",
+    "thumbnail",
+    "media:content",
+    "media:thumbnail",
+  ];
+  for (const f of tryFields) {
+    const v = it[f as keyof typeof it];
+    if (!v) continue;
+    if (typeof v === "object" && v !== null && "url" in v) {
+      const url = (v as { url?: unknown }).url;
+      if (typeof url === "string" && url) return url;
+    }
+    if (typeof v === "string" && v) return v;
+  }
+  const html =
+    (typeof it["content:encoded"] === "string" && (it["content:encoded"] as string)) ||
+    (typeof it["content"] === "string" && (it["content"] as string)) ||
+    null;
+  if (html) {
+    try {
+      const $ = cheerio.load(html);
+      const src = $("img[src]").first().attr("src") ?? "";
+      if (src) return src;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+/* ───────────── logging ───────────── */
+
+type SkipReason = "blocked_by_filter" | "non_nfl_league" | "invalid_item" | "fetch_error";
+
+async function logSkip(
+  sourceId: number,
+  url: string,
+  title: string,
+  reason: SkipReason,
+  detail?: string
+): Promise<void> {
+  await dbQuery("INSERT INTO ingest_skips (source_id, url, title, reason, detail) VALUES ($1,$2,$3,$4,$5)", [
+    sourceId,
+    url,
+    title,
+    reason,
+    detail ?? null,
+  ]);
+}
+
+/* ───────────── public api ───────────── */
+
 export async function ingestAllSources(limitPerSource = 50): Promise<Record<number, UpsertResult>> {
   const srcs = await selectAllowedSources();
   const results: Record<number, UpsertResult> = {};
@@ -55,42 +169,65 @@ export async function ingestAllSources(limitPerSource = 50): Promise<Record<numb
 }
 
 export async function ingestSourceById(sourceId: number, limitPerSource = 50): Promise<UpsertResult> {
-  const res = await dbQuery<SourceRow>("select * from sources where id = $1", [sourceId]);
+  const res = await dbQuery<SourceRow>("SELECT * FROM sources WHERE id = $1", [sourceId]);
   if (res.rows.length === 0) return { inserted: 0, updated: 0, skipped: 0 };
   return ingestSource(res.rows[0], limitPerSource);
 }
 
 async function selectAllowedSources(): Promise<SourceRow[]> {
   const res = await dbQuery<SourceRow>(
-    "select * from sources where allowed = true order by coalesce(priority, 999), id asc"
+    "SELECT * FROM sources WHERE allowed = true ORDER BY COALESCE(priority, 999), id ASC"
   );
   return res.rows;
 }
 
 async function ingestSource(src: SourceRow, limitPerSource: number): Promise<UpsertResult> {
+  let inserted = 0,
+    updated = 0,
+    skipped = 0;
+
   const rawItems = await fetchForSource(src, limitPerSource);
-  const filtered = rawItems.filter((it) =>
-    allowItem({ title: it.title, description: it.description ?? null, link: it.link }, src.id.toString())
-  );
 
-  let inserted = 0;
-  let updated = 0;
-  let skipped = 0;
+  // Iterate raw items so we can log each decision.
+  for (const raw of rawItems) {
+    const title = cleanTitle(raw.title ?? "");
+    const link = raw.link ? normalizeUrl(raw.link) : "";
+    const descr = cleanDescription(raw.description ?? null);
 
-  for (const item of filtered) {
-    const { league, category } = classifyLeagueCategory({
-      title: item.title,
-      description: item.description ?? null,
-      link: item.link,
-    });
-
-    if (league !== "NFL") {
+    if (!title || !link) {
       skipped += 1;
+      await logSkip(
+        src.id,
+        link || raw.link || "(missing url)",
+        title || raw.title || "(missing title)",
+        "invalid_item",
+        "missing title or link"
+      );
       continue;
     }
 
-    const canonicalUrl = item.link;
-    const domain = new URL(item.link).hostname.replace(/^www\./i, "");
+    // Central filter (domain/path/title rules)
+    const allowed = allowItem({ title, description: descr, link }, String(src.id));
+    if (!allowed) {
+      skipped += 1;
+      await logSkip(src.id, link, title, "blocked_by_filter");
+      continue;
+    }
+
+    // Categorize (NFL only)
+    const { league, category } = classifyLeagueCategory({ title, description: descr, link });
+    if (league !== "NFL") {
+      skipped += 1;
+      await logSkip(src.id, link, title, "non_nfl_league", league ?? "unknown");
+      continue;
+    }
+
+    const canonicalUrl = link;
+    const domain = new URL(link).hostname.replace(/^www\./i, "");
+
+    // —— NEW: compute cleaned_title for FantasyPros player pages
+    const fantasyName = nameFromFantasyProsUrl(link); // null unless /nfl/(players|stats|news)/<slug>.php
+    const cleanedForInsert = fantasyName ?? title;
 
     const up = await dbQuery<{ inserted: boolean }>(
       `
@@ -111,21 +248,21 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
         primary_topic = EXCLUDED.primary_topic,
         domain = EXCLUDED.domain,
         cleaned_title = EXCLUDED.cleaned_title
-      RETURNING (xmax = 0) as inserted
+      RETURNING (xmax = 0) AS inserted
       `,
       [
         src.id,
-        item.link,
+        link,
         canonicalUrl,
-        item.title,
-        item.author ?? null,
-        item.publishedAt ?? null,
-        item.description ?? null,
-        item.imageUrl ?? null,
-        "NFL",            // sport
-        category,         // primary_topic
+        title, // keep original feed title (e.g., "» Stats") for provenance
+        raw.author ?? null,
+        raw.publishedAt ?? null,
+        descr,
+        raw.imageUrl ?? null,
+        "NFL",
+        category,
         domain,
-        cleanTitle(item.title),
+        cleanedForInsert, // ← prefer FantasyPros player name, else sanitized title
       ]
     );
 
@@ -137,20 +274,20 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
   return { inserted, updated, skipped };
 }
 
-function cleanTitle(t: string): string {
-  return t.replace(/\s+/g, " ").trim();
-}
-
-// ———————————————————————————————————————————
-// Fetchers
-// ———————————————————————————————————————————
+/* ───────────── fetchers ───────────── */
 
 async function fetchForSource(src: SourceRow, limit: number): Promise<FeedItem[]> {
-  if (src.rss_url) {
-    return readRss(src.rss_url, limit);
-  }
-  if (src.homepage_url && src.scrape_selector) {
-    return scrapeLinks(src.homepage_url, src.scrape_selector, limit);
+  try {
+    if (src.rss_url) return readRss(src.rss_url, limit);
+    if (src.homepage_url && src.scrape_selector) return scrapeLinks(src.homepage_url, src.scrape_selector, limit);
+  } catch {
+    // log a fetch error for the source as a whole
+    await logSkip(
+      src.id,
+      src.rss_url ?? src.homepage_url ?? "(no url)",
+      src.name ?? "(source)",
+      "fetch_error"
+    );
   }
   return [];
 }
@@ -159,17 +296,24 @@ async function readRss(rssUrl: string, limit: number): Promise<FeedItem[]> {
   const feed = await parser.parseURL(rssUrl);
   const items: FeedItem[] = [];
   for (const it of feed.items.slice(0, limit)) {
-    const title = (it.title ?? "").trim();
-    const link = (it.link ?? "").trim();
-    if (!title || !link) continue;
+    const title = cleanTitle((it.title ?? "").trim());
+    const linkRaw = (it.link ?? "").trim();
+    if (!title || !linkRaw) continue;
+
+    const link = normalizeUrl(linkRaw);
+    const descText =
+      (typeof it.contentSnippet === "string" && it.contentSnippet) ||
+      (typeof it.content === "string" && it.content) ||
+      (typeof it.summary === "string" && it.summary) ||
+      null;
 
     items.push({
       title,
       link,
-      description: (it.contentSnippet ?? it.content ?? it.summary ?? null) || null,
-      author: (it.creator ?? it.author ?? null) || null,
+      description: cleanDescription(descText),
+      author: (typeof it.creator === "string" && it.creator) || (typeof it.author === "string" && it.author) || null,
       publishedAt: it.isoDate ? new Date(it.isoDate) : null,
-      imageUrl: extractImageFromItem(it),
+      imageUrl: extractImageFromItem(it as unknown as Record<string, unknown>),
     });
   }
   return items;
@@ -185,7 +329,8 @@ async function scrapeLinks(url: string, selector: string, limit: number): Promis
   $(selector).each((_, el) => {
     if (items.length >= limit) return;
     const href = $(el).attr("href") ?? "";
-    const title = ($(el).text() ?? "").trim();
+    const titleRaw = ($(el).text() ?? "").trim();
+    const title = cleanTitle(titleRaw);
     if (!href || !title) return;
 
     const link = absolutize(url, href);
@@ -194,7 +339,7 @@ async function scrapeLinks(url: string, selector: string, limit: number): Promis
 
     items.push({
       title,
-      link,
+      link: normalizeUrl(link),
       description: null,
       publishedAt: null,
       author: null,
@@ -203,28 +348,4 @@ async function scrapeLinks(url: string, selector: string, limit: number): Promis
   });
 
   return items;
-}
-
-function absolutize(baseUrl: string, href: string): string | null {
-  try {
-    const u = new URL(href, baseUrl);
-    return u.toString();
-  } catch {
-    return null;
-  }
-}
-
-// Narrow, typed extraction (no `any`)
-function extractImageFromItem(it: Record<string, unknown>): string | null {
-  const tryFields: ReadonlyArray<string> = ["enclosure", "image", "thumbnail"];
-  for (const f of tryFields) {
-    const v = it[f as keyof typeof it];
-    if (!v) continue;
-    if (typeof v === "object" && v !== null && "url" in v) {
-      const url = (v as { url?: unknown }).url;
-      if (typeof url === "string" && url) return url;
-    }
-    if (typeof v === "string" && v) return v;
-  }
-  return null;
 }
