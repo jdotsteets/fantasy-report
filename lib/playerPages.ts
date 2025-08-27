@@ -4,9 +4,9 @@ import { dbQuery } from "@/lib/db";
 export type PlayerMatrixRow = {
   key: string;
   name: string;
-  domain: string;
-  url: string;
-  last_seen: string; // ISO
+  domain: string | null;     // may be NULL from SQL
+  url: string | null;        // be defensive
+  last_seen: string;         // ISO
 };
 
 export type PlayerEntry = {
@@ -16,7 +16,25 @@ export type PlayerEntry = {
   lastSeen: string;
 };
 
-export async function getPlayerMatrix(days = 180): Promise<{ players: PlayerEntry[]; domains: string[] }> {
+// Normalize a domain; if missing, try to derive from URL.
+// Always return lowercased host without "www." or "" if not derivable.
+function normalizeDomain(d: string | null, url: string | null): string {
+  try {
+    const fromD = (d ?? "").trim();
+    if (fromD) return fromD.toLowerCase().replace(/^www\./, "");
+    if (url) {
+      const host = new URL(url).hostname;
+      return host.toLowerCase().replace(/^www\./, "");
+    }
+  } catch {
+    // fallthrough to ""
+  }
+  return "";
+}
+
+export async function getPlayerMatrix(
+  days = 180
+): Promise<{ players: PlayerEntry[]; domains: string[] }> {
   const sql = `
     /* 1) Build a single "name_src" per row using best-available signal */
     WITH base AS (
@@ -102,22 +120,36 @@ export async function getPlayerMatrix(days = 180): Promise<{ players: PlayerEntr
   const domainSet = new Set<string>();
 
   for (const r of res.rows) {
-    domainSet.add(r.domain);
+    const domain = normalizeDomain(r.domain, r.url);
+    if (!domain) continue; // skip rows with no usable domain
+
+    const url = r.url ?? "";
+    if (!url) continue;
+
+    domainSet.add(domain);
+
     const cur = playersMap.get(r.key);
     if (!cur) {
       playersMap.set(r.key, {
         key: r.key,
         name: r.name,
-        links: { [r.domain]: r.url },
+        links: { [domain]: url },
         lastSeen: r.last_seen,
       });
     } else {
-      cur.links[r.domain] = r.url;
+      if (!cur.links[domain]) cur.links[domain] = url;
       if (r.last_seen > cur.lastSeen) cur.lastSeen = r.last_seen;
     }
   }
 
-  const players = [...playersMap.values()].sort((a, b) => a.name.localeCompare(b.name));
-  const domains = [...domainSet.values()].sort((a, b) => a.localeCompare(b));
+  // Case-insensitive, stable sorts
+  const players = Array.from(playersMap.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+  );
+
+  const domains = Array.from(domainSet)
+    .filter((d) => d && d.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
   return { players, domains };
 }
