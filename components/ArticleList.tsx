@@ -11,10 +11,7 @@ type ImagesMode = "all" | "first" | "hero";
 const MODE_KEY = "ffa_images_mode";
 
 type SectionKey = "waivers" | "rankings" | "start-sit" | "injury" | "dfs" | "news";
-type Filter = {
-  section?: SectionKey;
-  source?: string;
-};
+type Filter = { section?: SectionKey; source?: string };
 
 type Props = {
   items: Article[];
@@ -29,36 +26,44 @@ function fmtDate(iso?: string | null) {
   return d.toLocaleString();
 }
 
-/** Keyword matcher in case your Article model doesn't have a dedicated section field yet. */
+/** Client-side matcher only applies if you explicitly pass filter.section. */
 function matchesSection(a: Article, section?: SectionKey): boolean {
   if (!section) return true;
 
-  const t = (a.title ?? "").toLowerCase();
-  const u = (a.canonical_url ?? a.url ?? "").toLowerCase();
-  const contains = (arr: string[]) => arr.some((k) => t.includes(k) || u.includes(k));
+  const title = (a.title ?? "").toLowerCase();
+  const url = (a.canonical_url ?? a.url ?? "").toLowerCase();
+  const has = (re: RegExp) => re.test(title) || re.test(url);
 
   switch (section) {
     case "waivers":
-      return contains(["waiver", "waivers", "wire", "pickup", "adds"]);
+      return has(/\bwaiver(?:s)?\b/);
     case "rankings":
-      return contains(["ranking", "rankings", "tiers", "tier list", "top 100", "qb1", "rb1", "wr1"]);
+      return has(/\branking(?:s)?\b|\btiers?\b|\btop\s?\d+\b|\bqb1\b|\brb1\b|\bwr1\b/);
     case "start-sit":
-      return contains(["start/sit", "start-sit", "start or sit", "who to start", "who to sit"]);
+      return has(/\bstart[\s/-]?sit\b|\bwho to (start|sit)\b|\bsleeper(?:s)?\b/);
     case "injury":
-      return contains(["injury", "injuries", "questionable", "out", "status report", "practice report"]);
+      return has(/\binjur(?:y|ies)\b|\bquestionable\b|\b(dnp|out|doubtful)\b|\bpractice report\b|\bstatus report\b/);
     case "dfs":
-      return contains(["dfs", "draftkings", "fanduel", "gpp", "cash games", "lineup", "stack"]);
+      return has(/\bdfs\b|\bdraftkings\b|\bfanduel\b|\bgpp\b|\bcash games?\b|\b(lineup|stack)s?\b/);
     case "news":
-      // Treat items that don't match any of the above as general news
-      return !(
-        matchesSection(a, "waivers") ||
-        matchesSection(a, "rankings") ||
-        matchesSection(a, "start-sit") ||
-        matchesSection(a, "injury") ||
-        matchesSection(a, "dfs")
-      );
+      return true; // server already picked "latest"
   }
 }
+
+/**
+ * ▶︎ Font sizing controls
+ * To adjust HEADLINE (article title) size, change the text utilities below.
+ *    - Smaller example: "text-[12px] sm:text-[13px]"
+ *    - Larger example:  "text-sm sm:text-base"
+ *
+ * To adjust SUBHEAD (date/source) size, tweak SUBHEADLINE_TEXT_CLS likewise.
+ *    - Smaller example: "text-[10px] sm:text-[11px]"
+ *    - Larger example:  "text-xs sm:text-sm"
+ */
+const HEADLINE_TEXT_CLS =
+  "mt-0 text-[12px] sm:text-[13px] leading-tight tracking-tight text-black hover:text-green-900";
+const SUBHEADLINE_TEXT_CLS =
+  "mt-0 flex flex-wrap items-center gap-x-2 text-[10px] sm:text-[11px] leading-tight text-zinc-700";
 
 export default function ArticleList({ items, title, className, filter }: Props) {
   const [mode, setMode] = useState<ImagesMode>("all");
@@ -67,14 +72,14 @@ export default function ArticleList({ items, title, className, filter }: Props) 
     try {
       setMode((localStorage.getItem(MODE_KEY) as ImagesMode | null) ?? "all");
     } catch {
-      // no-op
+      /* no-op */
     }
     const onChange = (e: Event) => setMode((e as CustomEvent<ImagesMode>).detail);
     window.addEventListener("ffa:imagesMode", onChange as EventListener);
     return () => window.removeEventListener("ffa:imagesMode", onChange as EventListener);
   }, []);
 
-  // Apply optional filters, fully typed
+  // Apply optional filters; if you don't pass filter.section/source, nothing is filtered here.
   const filtered = useMemo(() => {
     let out = items;
     if (filter?.section) out = out.filter((a) => matchesSection(a, filter.section));
@@ -85,6 +90,8 @@ export default function ArticleList({ items, title, className, filter }: Props) 
     return out;
   }, [items, filter?.section, filter?.source]);
 
+  const isEmpty = filtered.length === 0;
+
   return (
     <section className={["rounded-xl bg-white", className].filter(Boolean).join(" ")}>
       {title ? (
@@ -93,53 +100,56 @@ export default function ArticleList({ items, title, className, filter }: Props) 
         </header>
       ) : null}
 
-      <ul className="divide-y divide-zinc-300">
-        {filtered.map((r, idx) => {
-          const href = r.canonical_url ?? r.url;
+      {isEmpty ? (
+        <div className="px-3 py-6 sm:px-5 text-sm text-zinc-500">No items to show.</div>
+      ) : (
+        <ul className="divide-y divide-zinc-300">
+          {filtered.map((r, idx) => {
+            const href = r.canonical_url ?? r.url;
 
-          let candidate = getSafeImageUrl(r.image_url);
-          if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate)) {
-            candidate = null;
-          }
+            let candidate = getSafeImageUrl(r.image_url);
+            if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate)) {
+              candidate = null;
+            }
 
-          const wantImage = mode === "all" ? true : mode === "first" ? idx === 0 : false;
-          const displaySrc = candidate && wantImage ? candidate : "";
+            const wantImage = mode === "all" ? true : mode === "first" ? idx === 0 : false;
+            const displaySrc = candidate && wantImage ? candidate : "";
 
-          return (
-            <li key={r.id} className="px-3 py-1.5 sm:px-5 sm:py-2">
-              {displaySrc ? (
-                <div className="relative mb-1 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:mb-1.5 sm:aspect-[16/9]">
-                  <Image
-                    src={displaySrc}
-                    alt=""
-                    fill
-                    sizes="(max-width: 640px) 100vw, 50vw"
-                    className="object-cover"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                </div>
-              ) : null}
+            return (
+              <li key={r.id} className="px-3 py-1.5 sm:px-5 sm:py-2">
+                {displaySrc ? (
+                  <div className="relative mb-1 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:mb-1.5 sm:aspect-[16/9]">
+                    <Image
+                      src={displaySrc}
+                      alt=""
+                      fill
+                      sizes="(max-width: 640px) 100vw, 50vw"
+                      className="object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  </div>
+                ) : null}
 
-              <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-                <h3
-                  className="mt-0 text-[13px] leading-tight tracking-tight text-black hover:text-green-900 sm:text-[14px]"
-                  title={r.title}
-                >
-                  {r.title}
-                </h3>
+                <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
+                  {/* HEADLINE — adjust via HEADLINE_TEXT_CLS above */}
+                  <h3 className={HEADLINE_TEXT_CLS} title={r.title}>
+                    {r.title}
+                  </h3>
 
-                <div className="mt-0 flex flex-wrap items-center gap-x-2 text-[10px] leading-tight text-zinc-700">
-                  <span>{fmtDate(r.published_at)}</span>
-                  <span>• {r.source}</span>
-                </div>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+                  {/* SUB-HEAD (date • source) — adjust via SUBHEADLINE_TEXT_CLS above */}
+                  <div className={SUBHEADLINE_TEXT_CLS}>
+                    <span>{fmtDate(r.published_at)}</span>
+                    <span>• {r.source}</span>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

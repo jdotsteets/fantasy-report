@@ -1,11 +1,18 @@
 // lib/ingest.ts
-// Ingestion with strict NFL filtering + safe player-page heuristics.
-// Uses dbQuery from lib/db.ts (no `any` types).
+// Ingestion with strict NFL filtering + safe player-page heuristics,
+// plus image hygiene + auto-seeding of player_images for future fallbacks.
 
 import Parser from "rss-parser";
 import * as cheerio from "cheerio";
 import { dbQuery } from "@/lib/db";
 import { allowItem, classifyLeagueCategory } from "@/lib/contentFilter";
+import {
+  FALLBACK,
+  getSafeImageUrl,
+  isWeakArticleImage,
+  extractLikelyNameFromTitle,
+} from "@/lib/images";
+import { normalizeTitle } from "@/lib/strings";
 
 type SourceRow = {
   id: number;
@@ -41,6 +48,8 @@ const parser = new Parser({
   headers: { "user-agent": "FantasyReportBot/1.0 (+https://fantasy-report.vercel.app)" },
 });
 
+/* ───────────────────────── Public API ───────────────────────── */
+
 export async function ingestAllSources(limitPerSource = 50): Promise<Record<number, UpsertResult>> {
   const srcs = await selectAllowedSources();
   const results: Record<number, UpsertResult> = {};
@@ -54,12 +63,16 @@ export async function ingestSourceById(sourceId: number, limitPerSource = 50): P
   return ingestSource(res.rows[0], limitPerSource);
 }
 
+/* ───────────────────────── DB helpers ───────────────────────── */
+
 async function selectAllowedSources(): Promise<SourceRow[]> {
   const res = await dbQuery<SourceRow>(
     "select * from sources where allowed = true order by coalesce(priority, 999), id asc"
   );
   return res.rows;
 }
+
+/* ───────────────────────── Ingest ───────────────────────── */
 
 async function ingestSource(src: SourceRow, limitPerSource: number): Promise<UpsertResult> {
   const rawItems = await fetchForSource(src, limitPerSource);
@@ -74,13 +87,16 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
   let skipped = 0;
 
   for (const item of filtered) {
+    // Normalize title once (decodes entities, strips "NEWS…" prefixes, trims)
+    const normalizedTitle = normalizeTitle(item.title || "");
+
     const { league, category } = classifyLeagueCategory({
-      title: item.title,
+      title: normalizedTitle,
       description: item.description ?? null,
       link: item.link,
     });
 
-    // Only keep NFL
+    // NFL only
     if (league !== "NFL") {
       skipped += 1;
       continue;
@@ -89,19 +105,28 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
     // —— Player-page heuristics (strict, low false positives) ——————————
     const titleIsName = looksLikeNameTitle(item.title);
     const titleStartsArrow = startsWithArrow(item.title);
+
     const slug = pickRightMostAlphaSlug(item.link);
     const slugIsName = slug ? /^[a-z]+(?:-[a-z]+){1,3}$/.test(slug) : false;
 
     const isPlayer = titleIsName || (titleStartsArrow && slugIsName);
-    const parsedName = slugIsName && slug ? prettyFromSlug(slug) : null;
+    const parsedNameFromSlug = slugIsName && slug ? prettyFromSlug(slug) : null;
 
     // Only overwrite cleaned_title from slug when the title starts with "»"
-    const cleanedTitle = titleStartsArrow && parsedName ? parsedName : cleanTitle(item.title);
+    const cleanedTitle =
+      titleStartsArrow && parsedNameFromSlug ? parsedNameFromSlug : normalizedTitle;
+
+    // Topic we store at ingest time (backfill-classify may refine later)
     const chosenTopic: string = isPlayer ? "Player" : category;
 
+    // Domain & canonical
     const canonicalUrl = item.link;
     const domain = new URL(item.link).hostname.replace(/^www\./i, "");
 
+    // Sanitize the incoming feed image, but DO NOT store FALLBACK or obvious favicons/logos
+    const articleImageForDb = toDbImage(item.imageUrl);
+
+    // Insert / Update article
     const up = await dbQuery<{ inserted: boolean }>(
       `
       INSERT INTO articles (
@@ -132,11 +157,11 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
         item.author ?? null,
         item.publishedAt ?? null,
         item.description ?? null,
-        item.imageUrl ?? null,
+        articleImageForDb, // sanitized or null
         "NFL",
         chosenTopic,
         domain,
-        cleanedTitle,
+        cleanedTitle, // ← string value (normalized or slug-derived)
         isPlayer,
       ]
     );
@@ -144,15 +169,70 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
     const row = up.rows[0];
     if (row?.inserted) inserted += 1;
     else updated += 1;
+
+    // —— Seed player_images when we have a strong article image + likely player key ——
+    const maybeName =
+      (titleStartsArrow && parsedNameFromSlug) ||
+      extractLikelyNameFromTitle(item.title) ||
+      null;
+
+    const playerKey = maybeName ? toPlayerKey(maybeName) : slugIsName && slug ? slug : null;
+
+    if (playerKey && articleImageForDb) {
+      // Avoid inserting weak logos/favicons
+      if (!isWeakArticleImage(articleImageForDb)) {
+        await upsertPlayerImage({
+          key: playerKey,
+          url: articleImageForDb,
+          source: "article",
+          source_rank: 0, // best
+        });
+      }
+    }
   }
 
   return { inserted, updated, skipped };
 }
 
-// ——— Helpers ————————————————————————————————————————————————
+/* ───────────────────────── player_images upsert ───────────────────────── */
 
-function cleanTitle(t: string): string {
-  return t.replace(/\s+/g, " ").trim();
+async function upsertPlayerImage(args: { key: string; url: string; source: string; source_rank: number }) {
+  await dbQuery(
+    `
+    INSERT INTO player_images (key, url, source, source_rank, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, NOW(), NOW())
+    ON CONFLICT (key) DO UPDATE
+      SET
+        url = CASE
+                WHEN EXCLUDED.source_rank < player_images.source_rank THEN EXCLUDED.url
+                ELSE player_images.url
+              END,
+        source = CASE
+                   WHEN EXCLUDED.source_rank < player_images.source_rank THEN EXCLUDED.source
+                   ELSE player_images.source
+                 END,
+        source_rank = LEAST(player_images.source_rank, EXCLUDED.source_rank),
+        updated_at = NOW()
+    `,
+    [args.key, args.url, args.source, args.source_rank]
+  );
+}
+
+/* ───────────────────────── Utilities ───────────────────────── */
+
+function toDbImage(raw?: string | null): string | null {
+  const safe = getSafeImageUrl(raw);
+  if (!safe || safe === FALLBACK) return null;
+  if (isWeakArticleImage(safe)) return null;
+  return safe;
+}
+
+function toPlayerKey(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function startsWithArrow(t: string): boolean {
@@ -231,7 +311,7 @@ function prettyFromSlug(slug: string): string {
   return s;
 }
 
-// ——— Fetchers ————————————————————————————————————————————————
+/* ───────────────────────── Fetchers ───────────────────────── */
 
 async function fetchForSource(src: SourceRow, limit: number): Promise<FeedItem[]> {
   if (src.rss_url) return readRss(src.rss_url, limit);

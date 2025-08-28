@@ -1,3 +1,4 @@
+// app/admin/excluded/page.tsx
 import {
   getExcludedItems,
   type ExcludedRow,
@@ -6,12 +7,13 @@ import {
 } from "@/lib/excludedData";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { PendingFieldset, RunIngestButton } from "@/components/admin/RunIngestControls";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// ───────────────────────── Server Action ─────────────────────────
+/* ───────────────────────── Server Actions ───────────────────────── */
 async function runIngest(formData: FormData) {
   "use server";
 
@@ -22,7 +24,6 @@ async function runIngest(formData: FormData) {
     return;
   }
 
-  // NOTE: headers() is async in your setup — await it
   const h = await headers();
   const proto = h.get("x-forwarded-proto") ?? "http";
   const host =
@@ -53,10 +54,67 @@ async function runIngest(formData: FormData) {
     console.error("[/admin/excluded] ingest POST failed:", e);
   }
 
-  revalidatePath("/admin/excluded");
+  redirect("/admin/excluded?notice=" + encodeURIComponent("Ingest triggered."));
 }
 
-// ───────────────────────── Labels & Utils ────────────────────────
+async function runBackfill(formData: FormData) {
+  "use server";
+
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    console.error("[/admin/excluded] Missing CRON_SECRET env var");
+    redirect("/admin/excluded?notice=" + encodeURIComponent("CRON_SECRET is not set"));
+  }
+
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host =
+    h.get("x-forwarded-host") ??
+    h.get("host") ??
+    process.env.VERCEL_URL ??
+    "localhost:3000";
+  const base = `${proto}://${host}`;
+
+  const batch = Number((formData.get("batch") as string) || 500);
+  const fromId = Number((formData.get("fromId") as string) || 0);
+  const dryRun = (formData.get("dryRun") as string | null) === "on";
+  const debug = (formData.get("debug") as string | null) === "on";
+
+  const qs = new URLSearchParams({
+    key: secret!,
+    batch: String(batch),
+    fromId: String(fromId),
+    dryRun: dryRun ? "1" : "0",
+    debug: debug ? "1" : "0",
+  });
+
+  let notice = "Backfill started.";
+  try {
+    const res = await fetch(`${base}/api/backfill-classify?${qs.toString()}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      notice = `Backfill failed: HTTP ${res.status}${txt ? ` – ${txt.slice(0, 200)}` : ""}`;
+    } else {
+      const j = (await res.json()) as {
+        processed?: number;
+        updated?: number;
+        dryRun?: boolean;
+      };
+      notice = `Backfill ${j.dryRun ? "(dry-run) " : ""}ok – processed ${j.processed ?? 0}, updated ${j.updated ?? 0}.`;
+    }
+  } catch (e) {
+    notice = "Backfill error (network)";
+    console.error("[/admin/excluded] backfill GET failed:", e);
+  }
+
+  redirect("/admin/excluded?notice=" + encodeURIComponent(notice));
+}
+
+/* ───────────────────────── Labels & Utils ──────────────────────── */
 const REASON_LABEL: Record<string, string> = {
   player_page: "Player page",
   nbc_non_nfl: "NBC non-NFL path",
@@ -96,7 +154,7 @@ function ReasonBadge({ code }: { code: string }) {
   return <Badge text={REASON_LABEL[code] ?? code} />;
 }
 
-// ───────────────────────── UI Components ─────────────────────────
+/* ───────────────────────── UI Components ───────────────────────── */
 function Group({ title, items }: { title: string; items: ExcludedRow[] }) {
   return (
     <section className="mb-8">
@@ -111,12 +169,7 @@ function Group({ title, items }: { title: string; items: ExcludedRow[] }) {
                 <ReasonBadge key={k} code={k} />
               ))}
             </div>
-            <a
-              href={r.url}
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium hover:underline"
-            >
+            <a href={r.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">
               {r.title || "(no title)"}
             </a>
             <div className="text-sm text-gray-500">
@@ -140,12 +193,7 @@ function LogRow({ r }: { r: IngestLogRow }) {
         <Badge text={SKIP_LABEL[r.reason]} />
         {r.detail ? <Badge text={r.detail} /> : null}
       </div>
-      <a
-        href={r.url}
-        target="_blank"
-        rel="noreferrer"
-        className="font-medium hover:underline"
-      >
+      <a href={r.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">
         {r.title || "(no title)"}
       </a>
       <div className="text-sm text-gray-500">
@@ -155,13 +203,21 @@ function LogRow({ r }: { r: IngestLogRow }) {
   );
 }
 
-// ───────────────────────── Page ──────────────────────────────────
-export default async function Page() {
+/* ───────────────────────── Page ────────────────────────────────── */
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+
+  // Fetch data
   const [rows, logs] = await Promise.all([
     getExcludedItems({ days: 30, limit: 250 }),
     getIngestLogs(7, 200),
   ]);
 
+  // Group excluded items by first reason
   const groups = new Map<string, ExcludedRow[]>();
   for (const r of rows) {
     const k = r.reasons[0] ?? "unknown";
@@ -169,15 +225,29 @@ export default async function Page() {
     groups.get(k)!.push(r);
   }
 
+  // Notice banner from ?notice=
+  const notice =
+    (Array.isArray(sp?.notice) ? sp.notice?.[0] : sp?.notice) ?? null;
+
   return (
     <main className="mx-auto max-w-4xl p-6 space-y-8">
+      {notice ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          {notice}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Excluded Items</h1>
+      </div>
 
-        {/* Run Ingest (server action + client-side pending UI) */}
-        <form action={runIngest}>
+      {/* ── Controls Row: Ingest + Backfill ── */}
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        {/* Ingest */}
+        <form action={runIngest} className="rounded-xl border p-4">
+          <h2 className="mb-3 text-lg font-semibold">Run Ingest</h2>
           <PendingFieldset>
-            <div className="flex items-end gap-2">
+            <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-xs font-medium">Source ID (optional)</label>
                 <input
@@ -199,6 +269,49 @@ export default async function Page() {
                 />
               </div>
               <RunIngestButton />
+            </div>
+          </PendingFieldset>
+        </form>
+
+        {/* Backfill */}
+        <form action={runBackfill} className="rounded-xl border p-4">
+          <h2 className="mb-3 text-lg font-semibold">Run Backfill (classify)</h2>
+          <PendingFieldset>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium">Batch</label>
+                <input
+                  name="batch"
+                  type="number"
+                  inputMode="numeric"
+                  defaultValue={500}
+                  className="h-8 w-28 rounded border px-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium">From ID</label>
+                <input
+                  name="fromId"
+                  type="number"
+                  inputMode="numeric"
+                  defaultValue={0}
+                  className="h-8 w-28 rounded border px-2 text-sm"
+                />
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input name="dryRun" type="checkbox" className="h-4 w-4" />
+                Dry run
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input name="debug" type="checkbox" className="h-4 w-4" />
+                Debug
+              </label>
+              <button
+                type="submit"
+                className="h-9 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-black"
+              >
+                Run Backfill
+              </button>
             </div>
           </PendingFieldset>
         </form>

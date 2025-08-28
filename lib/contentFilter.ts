@@ -1,5 +1,6 @@
 // lib/contentFilter.ts
 // Typed, flexible, per-source filtering for NFL/Fantasy content (no `any`).
+import { normalizeTitle } from "@/lib/strings";
 
 export type League = "NFL" | "NBA" | "MLB" | "NHL" | "NCAA" | "OTHER" | "UNKNOWN";
 export type Category =
@@ -51,6 +52,38 @@ const SCOREBOARD_HINTS: ReadonlyArray<RegExp> = [
   /scoreboard/i, /scores?/i, /schedule/i, /fixtures?/i, /results?/i
 ];
 
+
+// ⬇️ add these helpers near your other constants
+
+// NFL teams (names + common short codes)
+const TEAM_NAMES = [
+  "49ers","Bears","Bengals","Bills","Broncos","Browns","Buccaneers","Cardinals","Chargers","Chiefs","Colts",
+  "Commanders","Cowboys","Dolphins","Eagles","Falcons","Giants","Jaguars","Jets","Lions","Packers","Panthers",
+  "Patriots","Raiders","Rams","Ravens","Saints","Seahawks","Steelers","Texans","Titans","Vikings",
+];
+const TEAM_SHORT = [
+  "SF","CHI","CIN","BUF","DEN","CLE","TB","ARI","LAC","KC","IND","WAS","DAL","MIA","PHI","ATL","NYG","JAX",
+  "NYJ","DET","GB","CAR","NE","LV","LAR","BAL","NO","SEA","PIT","HOU","TEN","MIN",
+];
+
+const TRADE_VERBS = /(trade[sd]?|acquire[sd]?|send[s]?|deal[sd]?|land(?:ed)?|swap(?:ped)?)/i;
+const FANTASY_HINTS = /(fantasy|dynasty|redraft|keeper|buy(?:\s|-)?low|sell(?:\s|-)?high|rankings?|start\/sit|advice|waiver)/i;
+const TRADE_TARGET_PHRASE = /\btrade\b.*\btarget(s)?\b/i;
+
+function countTeamMentions(lowerBlob: string): number {
+  const padded = ` ${lowerBlob} `;
+  let n = 0;
+  for (const name of TEAM_NAMES) {
+    if (padded.includes(` ${name.toLowerCase()} `)) n++;
+  }
+  for (const abbr of TEAM_SHORT) {
+    const a = abbr.toLowerCase();
+    if (padded.includes(` ${a} `)) n++;
+  }
+  return n;
+}
+
+
 function testAny(text: string, patterns: ReadonlyArray<RegExp>): boolean {
   for (const re of patterns) if (re.test(text)) return true;
   return false;
@@ -58,24 +91,47 @@ function testAny(text: string, patterns: ReadonlyArray<RegExp>): boolean {
 
 /** Very lightweight classifier used by allowItem. */
 export function classifyLeagueCategory(item: FeedLike): { league: League; category: Category } {
-  const blob = `${item.title} ${item.description ?? ""} ${item.link}`.toLowerCase();
+  // Normalize title to remove junk like "NEWSRanking…" and decode HTML entities
+  const titleNorm = normalizeTitle(item.title);
+  const blobLower = `${titleNorm} ${item.description ?? ""} ${item.link}`.toLowerCase();
 
-  // League: NFL if "nfl" or "fantasy football" is present; otherwise UNKNOWN/OTHER
+  // League
   const league: League =
-    /\bnfl\b/i.test(blob) || /fantasy[ -]?football/i.test(blob) ? "NFL" :
-    testAny(blob, NON_NFL_TERMS) ? "OTHER" : "UNKNOWN";
+    /\bnfl\b/i.test(blobLower) || /fantasy[ -]?football/i.test(blobLower)
+      ? "NFL"
+      : testAny(blobLower, NON_NFL_TERMS)
+      ? "OTHER"
+      : "UNKNOWN";
 
-  // Category: quick heuristics
-  const category: Category =
-    /waiver/i.test(blob) ? "DepthChart" :
-    /start[\s-]?sit/i.test(blob) ? "Fantasy" :
-    /\branking|tiers?\b/i.test(blob) ? "Fantasy" :
-    /\binjur(y|ies)|inactives?|questionable|doubtful|probable/i.test(blob) ? "Injury" :
-    /\bdfs|draftkings|fanduel|daily[- ]fantasy/i.test(blob) ? "Fantasy" :
-    testAny(blob, SCOREBOARD_HINTS) ? "Scoreboard" :
-    /rumou?r/i.test(blob) ? "Rumor" :
-    /advice|analysis|strategy|cheat[- ]?sheet|values|sleepers/i.test(blob) ? "Fantasy" :
+  // --- Trade routing: real NFL transactions vs fantasy trade advice ---
+  const mentionsTrade = /trade/i.test(blobLower);
+  let tradeOverride: Category | null = null;
+  if (mentionsTrade) {
+    const hasTwoTeams = countTeamMentions(blobLower) >= 2;
+    const hasTradeVerb = TRADE_VERBS.test(blobLower);
+    const looksLikeAdvice = FANTASY_HINTS.test(blobLower) || TRADE_TARGET_PHRASE.test(blobLower);
+
+    if (hasTwoTeams && hasTradeVerb) {
+      tradeOverride = "News";      // e.g., "Raiders trade Jakobi Meyers to Patriots"
+    } else if (looksLikeAdvice) {
+      tradeOverride = "Fantasy";   // e.g., "Week 3 Trade Targets", "Buy Low/Sell High"
+    }
+  }
+
+  // Category (general heuristics)
+  let category: Category =
+    /waiver/i.test(blobLower) ? "DepthChart" :
+    /start[\s-]?sit/i.test(blobLower) ? "Fantasy" :
+    /\branking|tiers?\b/i.test(blobLower) ? "Fantasy" :
+    /\binjur(y|ies)|inactives?|questionable|doubtful|probable/i.test(blobLower) ? "Injury" :
+    /\bdfs|draftkings|fanduel|daily[- ]fantasy/i.test(blobLower) ? "Fantasy" :
+    testAny(blobLower, SCOREBOARD_HINTS) ? "Scoreboard" :
+    /rumou?r/i.test(blobLower) ? "Rumor" :
+    /advice|analysis|strategy|cheat[- ]?sheet|values|sleepers/i.test(blobLower) ? "Fantasy" :
     "News";
+
+  // Apply trade override if we determined one
+  if (tradeOverride) category = tradeOverride;
 
   return { league, category };
 }
@@ -221,3 +277,5 @@ export function allowItem(item: FeedLike, sourceIdOrUrl: string): boolean {
 
   return true;
 }
+
+

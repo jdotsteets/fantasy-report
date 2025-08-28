@@ -8,7 +8,8 @@ export const runtime = "nodejs";
 // tiny per-instance cache
 type CacheEntry = { body: unknown; ts: number };
 type CacheStore = Map<string, CacheEntry>;
-declare global { 
+declare global {
+  // eslint-disable-next-line no-var
   var __ART_CACHE__: CacheStore | undefined;
 }
 const CACHE: CacheStore = global.__ART_CACHE__ ?? new Map();
@@ -17,16 +18,28 @@ if (!global.__ART_CACHE__) global.__ART_CACHE__ = CACHE;
 const TTL_MS = 30_000;
 const STALE_MS = 5 * 60_000;
 
-// Topics we support client-side. We’ll map to a single “primary_topic” on the DB side.
-const TOPICS = new Set(["rankings", "start-sit", "advice", "dfs", "waiver-wire", "injury", "sleepers"]);
+// Topics we support via this endpoint (maps to primary_topic)
+const TOPICS = new Set([
+  "rankings",
+  "start-sit",
+  "advice",
+  "dfs",
+  "waiver-wire",
+  "injury",
+  "sleepers",
+]);
 
 type SqlParam = string | number | boolean | null | readonly string[];
 
 async function withRetries<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
   let err: unknown;
   for (let i = 1; i <= attempts; i++) {
-    try { return await fn(); }
-    catch (e) { err = e; await new Promise((r) => setTimeout(r, 300 * i * i)); }
+    try {
+      return await fn();
+    } catch (e) {
+      err = e;
+      await new Promise((r) => setTimeout(r, 300 * i * i));
+    }
   }
   throw err;
 }
@@ -56,14 +69,17 @@ export async function GET(req: Request) {
   const where: string[] = [];
   const params: SqlParam[] = [];
 
-  // time window
+  // time window (reuse the same bind twice)
   params.push(String(days));
   where.push(
     `(a.published_at >= NOW() - ($${params.length} || ' days')::interval
       OR a.discovered_at >= NOW() - ($${params.length} || ' days')::interval)`
   );
 
-  // optional topic: prefer single primary_topic if present; otherwise compute a winner
+  // sport hard-stop
+  where.push(`COALESCE(a.sport, 'nfl') = 'nfl'`);
+
+  // optional topic: prefer primary_topic, else pick best from topics
   if (topic) {
     params.push(topic);
     where.push(`(
@@ -82,30 +98,31 @@ export async function GET(req: Request) {
     )`);
   }
 
-  // optional week
+  // optional exact week
   if (Number.isFinite(week)) {
     params.push(Number(week!));
     where.push(`a.week = $${params.length}`);
   }
 
-  // Exclude obvious player pages (FantasyPros/NBCSports) and restrict NBCSports to /nfl/
-  params.push("»%");
-  where.push(`NOT (a.source_id = 3126 AND COALESCE(a.cleaned_title, a.title) LIKE $${params.length})`);
-  where.push(`NOT (
-    a.domain ILIKE '%fantasypros.com%'
-    AND a.url ~* '/nfl/(players|stats|news)/[a-z0-9-]+\\.php$'
-  )`);
-  where.push(`NOT (
-    a.domain ILIKE '%nbcsports.com%'
-    AND (
-      a.url ~* '/nfl/[a-z0-9-]+/\\d+/?$'
-      OR COALESCE(a.cleaned_title, a.title) ~* '^[A-Z][A-Za-z\\.'\\-]+( [A-Z][A-Za-z\\.'\\-]+){0,3}$'
-    )
-  )`);
-  // kick non-NFL NBCSports
+  // Exclude detected player pages (computed column)
+  where.push(`a.is_player_page IS NOT TRUE`);
+
+  // Keep NBCSports to /nfl/
   where.push(`NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')`);
 
-  // Gate keeper sources 3135/3138/3141 to nfl/fantasy-football only (in title or url)
+  // Static/Resource pages – drop broad site indexes & utility pages
+  where.push(`NOT (a.url ~* '/(tags?|category|topics?|teams?|roster|depth-?chart|schedules?|standings?|videos?/channel|highlights?)(/|$)')`);
+  where.push(
+    `NOT (COALESCE(a.cleaned_title, a.title) ~* '^(Highlights|Teams?|News|Articles|Subscribe|Lineup Generator|DFS Pass|Multi Lineup Optimizer)$')`
+  );
+
+  // Betting/Promos – exclude outright
+  where.push(
+    `NOT (COALESCE(a.cleaned_title, a.title) ~* '\\y(promo|promotion|bonus\\s*code|odds|best\\s*bets?|parlay|props?|sportsbook|betting)\\y'
+          OR a.url ~* '/(sportsbook|odds|betting)/')`
+  );
+
+  // Gate keeper sources 3135/3138/3141 to nfl/fantasy-football (title or url)
   const nflLike = "%nfl%";
   const ffLike = "%fantasy%football%";
   params.push(nflLike, nflLike, ffLike, ffLike);
@@ -118,6 +135,16 @@ export async function GET(req: Request) {
        OR a.url ILIKE $${baseIdx + 3}
      ))`
   );
+
+  // Waiver section must contain explicit waiver/streamer/add/drop/FAAB signals
+  if (topic === "waiver-wire") {
+    // keep backslashes for Postgres regex
+    const waiverRe =
+      `(waiver(?:\\s*wire)?|waivers|pick[\\s-]*ups?|adds?|drop(?:s|\\/adds?)?|streamers?|faab|stash(?:es)?|deep\\s*adds?)`;
+    where.push(
+      `(COALESCE(a.cleaned_title, a.title) ~* '${waiverRe}' OR a.url ~* '${waiverRe}')`
+    );
+  }
 
   // final limit
   params.push(limit);

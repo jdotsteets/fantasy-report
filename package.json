@@ -10,12 +10,16 @@
     "lint": "next lint",
     "clean": "rm -rf .next .turbo node_modules/.cache"
   },
+  "engines": {
+    "node": ">=20 <21"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.56.0",
     "@tailwindcss/postcss": "^4.1.12",
     "autoprefixer": "^10.4.21",
     "cheerio": "^1.1.2",
     "fast-xml-parser": "^5.2.5",
+    "he": "^1.2.0",
     "iconv-lite": "^0.7.0",
     "lucide-react": "^0.541.0",
     "next": "15.4.6",
@@ -30,6 +34,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@types/he": "^1.2.3",
     "@types/node": "^20",
     "@types/pg": "^8.15.5",
     "@types/react": "^19",

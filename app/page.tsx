@@ -5,7 +5,7 @@ import Section from "@/components/Section";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
 import type { Article } from "@/types/sources";
-import { isLikelyFavicon } from "@/lib/images";
+import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import ImageToggle from "@/components/ImageToggle";
 import { getHomeData, type DbRow } from "@/lib/HomeData";
 
@@ -95,10 +95,10 @@ export default async function Page({
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
-  const hasRealImage = (a: Article) =>
-    typeof a.image_url === "string" &&
-    a.image_url.length > 0 &&
-    !isLikelyFavicon(a.image_url);
+ const hasRealImage = (a: Article) => {
+  const u = getSafeImageUrl(a.image_url);
+  return !!u && u !== FALLBACK && !isLikelyFavicon(u);
+};
 
   const heroRow = latest.find(hasRealImage) ?? null;
 
@@ -106,7 +106,7 @@ export default async function Page({
     ? {
         title: heroRow.title,
         href: heroRow.canonical_url ?? heroRow.url ?? `/go/${heroRow.id}`,
-        src: heroRow.image_url as string,
+        src: getSafeImageUrl(heroRow.image_url)!,
         source: heroRow.source,
       }
     : null;

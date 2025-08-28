@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
     "default-src 'self'; script-src 'none'; style-src 'unsafe-inline'; img-src * data: blob: https: http:; media-src 'none'; connect-src 'self'",
 
   remotePatterns: [
+    { protocol: "https", hostname: "jziinxyvfngxvkjtltqp.supabase.co", pathname: "/storage/v1/object/public/**", },
     { protocol: "https", hostname: "**" }, // broad, or lock down later
     { protocol: "http", hostname: "**" },  // if you truly have http sources
     // WordPress / Jetpack CDN (often used as redirect targets)
@@ -26,6 +27,17 @@ const nextConfig: NextConfig = {
     { protocol: "https", hostname: "www.rotoballer.com", pathname: "/wp-content/**" },
     { protocol: "http",  hostname: "rotoballer.com", pathname: "/wp-content/**" },
     { protocol: "http",  hostname: "www.rotoballer.com", pathname: "/wp-content/**" },
+      { protocol: "https", hostname: "**.espncdn.com" },
+      { protocol: "https", hostname: "**.nbcsports.com" },
+      { protocol: "https", hostname: "**.fantasypros.com" },
+      { protocol: "https", hostname: "s.yimg.com" },        // Yahoo images
+      { protocol: "https", hostname: "media.bleacherreport.com" },
+      { protocol: "https", hostname: "**.usatoday.com" },
+      { protocol: "https", hostname: "**.rookiewire.usatoday.com" },
+      { protocol: "https", hostname: "**.theathletic.com" },
+      { protocol: "https", hostname: "**.rotoballer.com" },
+      { protocol: "https", hostname: "**.razzball.com" },
+      { protocol: "https", hostname: "**.sharpfootballanalysis.com" },
 
     // Yahoo / ESPN / CBS / NBC / PFF (common in your feed)
     { protocol: "https", hostname: "s.yimg.com", pathname: "/**" },
@@ -46,7 +58,6 @@ const nextConfig: NextConfig = {
     { protocol: "https", hostname: "images.contentstack.io", pathname: "/**" },
     { protocol: "https", hostname: "s26212.pcdn.co", pathname: "/**" },
     { protocol: "https", hostname: "cdn.profootballrumors.com", pathname: "/**" },
-    { protocol: "https", hostname: "cdn.yourdomain.com" },
       // If CDN redirects to your app domain (example)
       { protocol: "https", hostname: "fantasy-report.vercel.app" },
       // If CDN redirects to S3/CloudFront/Imgix/etc. (examples)
@@ -62,3 +73,5 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+

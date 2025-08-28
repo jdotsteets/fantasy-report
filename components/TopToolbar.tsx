@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import {
-  Newspaper, TrendingUp, Stethoscope, HandHeart, Swords, ShoppingCart, Lightbulb, Users,
+  Newspaper, TrendingUp, Stethoscope, HandHeart, Swords, Coins, Lightbulb, Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -16,7 +16,7 @@ const items: ReadonlyArray<Item> = [
   { slug: "rankings",  label: "Rankings",  icon: TrendingUp },
   { slug: "start-sit", label: "Start/Sit", icon: Swords },
   { slug: "injury",    label: "Injuries",  icon: Stethoscope },
-  { slug: "dfs",       label: "DFS",       icon: ShoppingCart },
+  { slug: "dfs",       label: "DFS",       icon: Coins },
   { slug: "advice",    label: "Advice",    icon: Lightbulb },
   { slug: "news",      label: "News",      icon: Newspaper },
   { slug: "players",   label: "Players",   icon: Users, route: "/players" },
