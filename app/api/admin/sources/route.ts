@@ -9,6 +9,8 @@ const upsertSchema = z.object({
   rss_url: z.string().url().optional().or(z.literal("")),
   favicon_url: z.string().url().optional().or(z.literal("")),
   sitemap_url: z.string().url().optional().or(z.literal("")),
+  scrape_selector: z.string().max(500).optional().or(z.literal("")),
+  // keep your existing categories
   category: z
     .enum([
       "Fantasy News",
@@ -24,10 +26,11 @@ const upsertSchema = z.object({
       "",
     ])
     .optional(),
+  // optional sport (default nfl)
+  sport: z.string().min(2).max(20).optional().default("nfl"),
   priority: z.coerce.number().int().min(0).max(9999).optional().default(0),
   allowed: z.coerce.boolean().optional().default(true),
 });
-
 
 // Helper to extract a useful error message from unknown
 function getErrorMessage(err: unknown): string {
@@ -41,11 +44,32 @@ function getErrorMessage(err: unknown): string {
   return "Invalid input";
 }
 
+// Small helpers shared by POST/PATCH
+const toNullIfBlank = (v: unknown): string | null => {
+  const t = (v ?? "").toString().trim();
+  return t.length ? t : null;
+};
+
+const normalizeUrl = (v: unknown): string | null => {
+  const raw = (v ?? "").toString().trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
+  } catch {}
+  // accept bare domains/paths and coerce to https
+  try {
+    const u2 = new URL("https://" + raw.replace(/^\/*/, ""));
+    if (u2.protocol === "http:" || u2.protocol === "https:") return u2.toString();
+  } catch {}
+  return raw;
+};
+
 // GET: list latest sources
 export async function GET() {
   try {
     const r = await dbQuery(
-      `select id, name, homepage_url, rss_url, scrape_selector, favicon_url, sitemap_url, category, allowed, priority
+      `select id, name, homepage_url, rss_url, scrape_selector, favicon_url, sitemap_url, category, sport, allowed, priority
        from sources
        order by created_at desc
        limit 500`
@@ -56,34 +80,56 @@ export async function GET() {
   }
 }
 
-// POST: upsert one source by name
+// POST: upsert one source by name (create if not exists, otherwise update)
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const v = upsertSchema.parse(body);
 
+    // Normalize inputs
+    const homepage = normalizeUrl(v.homepage_url);
+    const rss = normalizeUrl(v.rss_url);
+    const favicon = normalizeUrl(v.favicon_url);
+    const sitemap = normalizeUrl(v.sitemap_url);
+    const selector = toNullIfBlank(v.scrape_selector);
+    const sport = (v.sport || "nfl").toLowerCase();
+
+    // Require at least one of homepage_url or rss_url
+    if (!homepage && !rss) {
+      return Response.json(
+        { ok: false, error: "Either homepage_url or rss_url is required." },
+        { status: 400 }
+      );
+    }
+
     const res = await dbQuery(
       `
-      insert into sources (name, homepage_url, rss_url, favicon_url, sitemap_url, category, allowed, priority)
-      values ($1,$2,$3,$4,$5,$6,$7,$8)
+      insert into sources
+        (name, homepage_url, rss_url, scrape_selector, favicon_url, sitemap_url, category, sport, allowed, priority, created_at)
+      values
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
       on conflict (name)
       do update set
-        homepage_url = excluded.homepage_url,
-        rss_url      = excluded.rss_url,
-        favicon_url  = excluded.favicon_url,
-        sitemap_url  = excluded.sitemap_url,
-        category     = excluded.category,
-        allowed      = excluded.allowed,
-        priority     = excluded.priority
+        homepage_url   = excluded.homepage_url,
+        rss_url        = excluded.rss_url,
+        scrape_selector= excluded.scrape_selector,
+        favicon_url    = excluded.favicon_url,
+        sitemap_url    = excluded.sitemap_url,
+        category       = excluded.category,
+        sport          = excluded.sport,
+        allowed        = excluded.allowed,
+        priority       = excluded.priority
       returning id
       `,
       [
         v.name.trim(),
-        v.homepage_url || null,
-        v.rss_url || null,
-        v.favicon_url || null,
-        v.sitemap_url || null,
+        homepage,
+        rss,
+        selector,
+        favicon,
+        sitemap,
         v.category || null,
+        sport,
         v.allowed ?? true,
         v.priority ?? 0,
       ]
@@ -106,26 +152,6 @@ export async function PATCH(req: Request) {
       return Response.json({ ok: false, error: "invalid_id" }, { status: 400 });
     }
 
-    // Helpers
-    const toNullIfBlank = (v: unknown): string | null => {
-      const t = (v ?? "").toString().trim();
-      return t.length ? t : null;
-    };
-
-    const normalizeUrl = (v: unknown): string | null => {
-      const raw = (v ?? "").toString().trim();
-      if (!raw) return null;
-      try {
-        const u = new URL(raw);
-        if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
-      } catch {}
-      try {
-        const u2 = new URL("https://" + raw.replace(/^\/*/, ""));
-        if (u2.protocol === "http:" || u2.protocol === "https:") return u2.toString();
-      } catch {}
-      return raw;
-    };
-
     // Build updates only for provided fields
     const updates: Record<string, unknown> = {};
     if (Object.prototype.hasOwnProperty.call(body, "allowed")) {
@@ -140,6 +166,23 @@ export async function PATCH(req: Request) {
     if (Object.prototype.hasOwnProperty.call(body, "scrape_selector")) {
       updates.scrape_selector = toNullIfBlank(body.scrape_selector);
     }
+    if (Object.prototype.hasOwnProperty.call(body, "favicon_url")) {
+      updates.favicon_url = normalizeUrl(body.favicon_url);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "sitemap_url")) {
+      updates.sitemap_url = normalizeUrl(body.sitemap_url);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "category")) {
+      updates.category = (body.category ?? null) as string | null;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "sport")) {
+      const s = (body.sport ?? "").toString().trim().toLowerCase();
+      updates.sport = s || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "priority")) {
+      const p = Number(body.priority);
+      if (Number.isFinite(p)) updates.priority = p;
+    }
 
     if (Object.keys(updates).length === 0) {
       return Response.json({ ok: false, error: "no_fields_to_update" }, { status: 400 });
@@ -149,16 +192,13 @@ export async function PATCH(req: Request) {
     const fields = Object.keys(updates);
     const setSql = fields.map((k, i) => `${k} = $${i + 1}`).join(", ");
 
-    // 👇 Type the params to what dbQuery expects
     type SqlParam = string | number | boolean | Date | null;
-    const params: SqlParam[] = fields.map(
-      (k) => updates[k] as SqlParam
-    );
+    const params: SqlParam[] = fields.map((k) => updates[k] as SqlParam);
     params.push(id as SqlParam);
 
     await dbQuery(
       `UPDATE sources SET ${setSql} WHERE id = $${fields.length + 1}`,
-      params // satisfies readonly SqlParam[] (okay to pass a normal array)
+      params
     );
 
     return Response.json({ ok: true });

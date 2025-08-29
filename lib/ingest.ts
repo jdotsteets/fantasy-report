@@ -67,7 +67,8 @@ const parser = new Parser({
   headers: { "user-agent": "FantasyReportBot/1.0 (+https://fantasy-report.vercel.app)" },
 });
 
-const DEFAULT_NFL_SELECTOR = 'a[href*="/nfl/"]';
+const DEFAULT_NFL_SELECTOR = 'a[href*="/nfl/"], a[href*="fantasy-football"]';
+
 
 /* ───────────────────────── Public API ───────────────────────── */
 
@@ -448,6 +449,10 @@ function decodeHtmlEntities(input: string): string {
 
 /* ───────────────────────── Fetchers ───────────────────────── */
 
+const BROWSER_UA =
+  process.env.SCRAPER_UA ??
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
 async function fetchForSource(src: SourceRow, limit: number): Promise<FeedItem[]> {
   // 1) RSS first
   if (src.rss_url) {
@@ -455,20 +460,15 @@ async function fetchForSource(src: SourceRow, limit: number): Promise<FeedItem[]
     if (rss.length > 0) return rss;
   }
 
-  // 2) Scrape (configured selector)
+  // 2) Scrape (configured selector, then smart fallbacks)
   const homepageEff = buildEffectiveHomepageUrl(src.homepage_url, src.scrape_path);
-  if (homepageEff) {
-    if (src.scrape_selector && src.scrape_selector.trim().length > 0) {
-      const hits = await scrapeLinks(src, homepageEff, src.scrape_selector.trim(), limit);
-      if (hits.length > 0) return hits;
-    }
+  if (!homepageEff) return [];
 
-    // 3) Fallback selector if configured selector missing or yielded nothing
-    if (!src.scrape_selector || src.scrape_selector.trim() !== DEFAULT_NFL_SELECTOR) {
-      const fallback = await scrapeLinks(src, homepageEff, DEFAULT_NFL_SELECTOR, limit);
-      if (fallback.length > 0) return fallback;
-    }
-  }
+  // Build a sequence of selectors to try, in order.
+  const selectors = candidateSelectorsFor(src);
+
+  const hits = await scrapeLinks(src, homepageEff, selectors, limit);
+  if (hits.length > 0) return hits;
 
   return [];
 }
@@ -478,7 +478,7 @@ function buildEffectiveHomepageUrl(homepage: string | null, path: string | null)
   try {
     const base = new URL(homepage);
     if (path && path.trim()) {
-      return new URL(path, base).toString(); // supports relative or absolute path
+      return new URL(path, base).toString(); // supports relative or absolute
     }
     return base.toString();
   } catch {
@@ -508,7 +508,7 @@ async function readRss(src: SourceRow, limit: number): Promise<FeedItem[]> {
       }
       items.push({
         title,
-        link,
+        link: normalizeLink(link),
         description: (it.contentSnippet ?? it.content ?? it.summary ?? null) || null,
         author: (it.creator ?? it.author ?? null) || null,
         publishedAt: it.isoDate ? new Date(it.isoDate) : null,
@@ -529,14 +529,69 @@ async function readRss(src: SourceRow, limit: number): Promise<FeedItem[]> {
   }
 }
 
+/** A better fetch that looks like a browser so sites return SSR HTML. */
+async function browserFetch(url: string): Promise<Response> {
+  const origin = (() => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return undefined;
+    }
+  })();
+
+  return fetch(url, {
+    redirect: "follow",
+    headers: {
+      "user-agent": BROWSER_UA,
+      "accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+      ...(origin ? { referer: origin } : {}),
+    },
+  });
+}
+
+/** Build ordered selectors to try for this source. */
+function candidateSelectorsFor(src: SourceRow): string[] {
+  const custom = (src.scrape_selector ?? "").trim();
+  const list: string[] = [];
+
+  if (custom) list.push(custom);
+
+  // Common CMS patterns (headings, article cards, etc.)
+  list.push(
+    'h2 a[href^="/"]',
+    'h3 a[href^="/"]',
+    'article a[href^="/"]',
+    'a.card[href^="/"]',
+    // Fantasy-specific fallbacks
+    'a[href*="/fantasy-football"]',
+    'a[href*="/nfl/"]',
+    'a[href^="/articles/"]',
+    DEFAULT_NFL_SELECTOR
+  );
+
+  // Deduplicate while preserving order
+  return Array.from(new Set(list));
+}
+
+/**
+ * Try one or more selectors in order until we get links.
+ * Accepts a single selector or a list of selectors.
+ */
 async function scrapeLinks(
   src: SourceRow,
   url: string,
-  selector: string,
+  selectorOrList: string | string[],
   limit: number
 ): Promise<FeedItem[]> {
+  const selectors = Array.isArray(selectorOrList) ? selectorOrList : [selectorOrList];
+
+  let html: string | null = null;
   try {
-    const res = await fetch(url, { headers: { "user-agent": "FantasyReportBot/1.0" } });
+    const res = await browserFetch(url);
     if (!res.ok) {
       await logIngestError({
         sourceId: src.id,
@@ -548,49 +603,80 @@ async function scrapeLinks(
       });
       return [];
     }
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const items: FeedItem[] = [];
-    const seen = new Set<string>();
-
-    $(selector).each((_, el) => {
-      if (items.length >= limit) return;
-
-      const rawHref = $(el).attr("href");
-      const rawTitle = ($(el).text() ?? "").trim();
-      if (!rawHref || !rawTitle) return;
-
-      const abs = absolutize(url, rawHref);
-      if (!abs) return;
-      if (seen.has(abs)) return;
-
-      seen.add(abs);
-      items.push({ title: rawTitle, link: abs, description: null, publishedAt: null, author: null, imageUrl: null });
-    });
-
-    if (items.length === 0) {
-      await logIngestError({
-        sourceId: src.id,
-        sourceName: src.name ?? null,
-        url,
-        domain: domainOf(url),
-        reason: "scrape_no_matches",
-        detail: `selector "${selector}" matched 0 links`,
-      });
-    }
-
-    return items;
+    html = await res.text();
   } catch (e) {
     await logIngestError({
       sourceId: src.id,
       sourceName: src.name ?? null,
       url,
       domain: domainOf(url),
-      reason: "parse_error",
+      reason: "fetch_error",
       detail: errString(e),
     });
     return [];
   }
+
+  const $ = cheerio.load(html);
+  const seen = new Set<string>();
+
+  // Try selectors in order. Stop when we have matches.
+  for (const selector of selectors) {
+    const items: FeedItem[] = [];
+
+    $(selector).each((_, node) => {
+      if (items.length >= limit) return;
+
+      // Some selectors point to H2/H3 elements; grab closest <a>.
+      const $el = $(node);
+      const href =
+        $el.attr("href") ||
+        $el.closest("a").attr("href") ||
+        $el.find("a[href]").first().attr("href");
+
+      if (!href) return;
+
+      const abs = absolutize(url, href);
+      if (!abs) return;
+
+      const normalized = normalizeLink(abs);
+      if (seen.has(normalized)) return;
+
+      // Skip category/tag/author/login/store/etc.
+      if (looksLikeNonArticle(normalized)) return;
+
+      // Pull a reasonable title: text of <a>, or element text fallback.
+      let title = ($el.is("a") ? $el.text() : $el.find("a").first().text()) || $el.text();
+      title = title.replace(/\s+/g, " ").trim();
+
+      if (!title || title.length < 4) return;
+
+      seen.add(normalized);
+      items.push({
+        title,
+        link: normalized,
+        description: null,
+        publishedAt: null,
+        author: null,
+        imageUrl: null,
+      });
+    });
+
+    if (items.length > 0) {
+      return items.slice(0, limit);
+    }
+  }
+
+  // Nothing matched; log once with the first selector we tried.
+  await logIngestError({
+    sourceId: src.id,
+    sourceName: src.name ?? null,
+    url,
+    domain: domainOf(url),
+    reason: "scrape_no_matches",
+    detail: `Tried selectors: ${selectors.join(" | ")}`,
+  });
+
+  return [];
 }
 
 function absolutize(baseUrl: string, href: string | null | undefined): string | null {
@@ -600,6 +686,49 @@ function absolutize(baseUrl: string, href: string | null | undefined): string | 
     return u.toString();
   } catch {
     return null;
+  }
+}
+
+function normalizeLink(raw: string): string {
+  try {
+    const u = new URL(raw);
+    u.hash = "";
+    // strip tracking
+    const toDelete: string[] = [];
+    u.searchParams.forEach((_, k) => {
+      if (/^utm_/i.test(k) || /^(gclid|ocid|mc_cid|mc_eid)$/i.test(k)) toDelete.push(k);
+    });
+    toDelete.forEach((k) => u.searchParams.delete(k));
+    // collapse multiple slashes; drop trailing /amp
+    u.pathname = u.pathname.replace(/\/+/g, "/").replace(/\/amp\/?$/i, "/");
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
+function looksLikeNonArticle(absUrl: string): boolean {
+  try {
+    const { pathname } = new URL(absUrl);
+    const p = pathname.toLowerCase();
+    // basic nav/category/user areas we don't want
+    return (
+      p.endsWith("/fantasy") || // a category hub itself
+      p.includes("/tags/") ||
+      p.includes("/tag/") ||
+      p.includes("/category/") ||
+      p.includes("/categories/") ||
+      p.includes("/author/") ||
+      p.includes("/authors/") ||
+      p.includes("/login") ||
+      p.includes("/signup") ||
+      p.includes("/subscribe") ||
+      p.includes("/store") ||
+      p.includes("/shop") ||
+      p.includes("/page/") // pagination landing
+    );
+  } catch {
+    return false;
   }
 }
 

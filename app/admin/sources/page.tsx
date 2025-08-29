@@ -4,6 +4,7 @@ import { getSourcesHealth, type HealthSummary, type SourceHealth } from "@/lib/a
           // your health query helper
 import { Suspense } from "react";
 import SourcesTable from "@/components/admin/SourcesTable";        // <-- NEW client component (next block)
+import QuickAddSource from "@/components/admin/QuickAddSource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +59,7 @@ export default async function AdminSourcesPage({
 
   return (
     <main className="mx-auto max-w-[1100px] px-4 py-8 space-y-8">
+      <QuickAddSource />
       {/* Admin nav (links to Sources / Excluded / etc.) */}
       <AdminNav active="sources" />
 
