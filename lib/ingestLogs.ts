@@ -41,7 +41,6 @@ export async function logIngest(args: {
     );
   } catch (e) {
     // Don't let logging break ingestion
-    // eslint-disable-next-line no-console
     console.warn("[ingest_logs] insert failed:", (e as Error)?.message);
   }
 }

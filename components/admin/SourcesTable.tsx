@@ -74,11 +74,6 @@ export default function SourcesTable() {
 
   // --- Normalizers ----------------------------------------------------------
 
-  const toNullIfBlank = (s?: string | null) => {
-    const t = (s ?? "").trim();
-    return t.length ? t : null;
-  };
-
   const normalizeUrl = (s?: string | null): string | null => {
     const raw = (s ?? "").trim();
     if (!raw) return null;

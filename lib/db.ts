@@ -33,9 +33,13 @@ if (!global.__PG_POOL__) {
 
 // Attach the error listener **once** to avoid MaxListenersExceededWarning.
 if (CREATED_NEW_POOL && !global.__PG_POOL_LISTENER_ATTACHED__) {
-  // Optional: disable listener limit entirely
-  // @ts-ignore - node types allow setMaxListeners
-  typeof pool.setMaxListeners === "function" && pool.setMaxListeners(0);
+  // Optional: disable listener limit entirely (Pool is an EventEmitter at runtime).
+  const maybeSetMax = (pool as unknown as {
+    setMaxListeners?: (n: number) => void;
+  }).setMaxListeners;
+  if (typeof maybeSetMax === "function") {
+    maybeSetMax.call(pool, 0);
+  }
 
   pool.on("error", (err: unknown) => {
     const e = (err ?? {}) as { code?: string; message?: string };
@@ -56,7 +60,7 @@ if (CREATED_NEW_POOL && !global.__PG_POOL_LISTENER_ATTACHED__) {
       msg.includes("connection reset");
 
     if (benign) {
-      // Uncomment if you want to see a one-line hint instead of silence:
+      // Uncomment if you want a hint instead of silence:
       // console.warn("[pg pool] benign termination/reset:", code, e.message);
       return;
     }
@@ -119,9 +123,8 @@ export async function withClient<T>(
       lastErr = err;
       if (tryNo < attempts - 1 && isTransient(err)) {
         const backoff = baseBackoffMs * 2 ** tryNo; // 300, 600, 1200…
-        console.warn(
-          `[pg retry] transient (${(err as PgErr)?.code ?? "unknown"}) – retrying in ${backoff}ms`
-        );
+        const code = (err as PgErr)?.code ?? "unknown";
+        console.warn(`[pg retry] transient (${code}) – retrying in ${backoff}ms`);
         await sleep(backoff);
         continue;
       }
@@ -142,7 +145,9 @@ export async function dbTx<T>(run: (c: PoolClient) => Promise<T>): Promise<T> {
     } catch (e) {
       try {
         await c.query("ROLLBACK");
-      } catch {}
+      } catch {
+        // ignore rollback errors
+      }
       throw e;
     }
   });

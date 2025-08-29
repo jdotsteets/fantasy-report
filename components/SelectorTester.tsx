@@ -9,29 +9,54 @@ type Props = {
   defaultSelector: string | null;
 };
 
+type Hit = { href: string; text: string };
+type TestScrapeResponse = {
+  ok: boolean;
+  error?: string;
+  hits?: Hit[];
+};
+
 export default function SelectorTester({ sourceId, defaultUrl, defaultSelector }: Props) {
   const [url, setUrl] = useState<string>(defaultUrl ?? "");
   const [selector, setSelector] = useState<string>(defaultSelector ?? 'a[href*="/nfl/"]');
   const [limit, setLimit] = useState<number>(20);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [hits, setHits] = useState<Array<{ href: string; text: string }>>([]);
+  const [hits, setHits] = useState<Hit[]>([]);
 
-  const test = async () => {
+  const test = async (): Promise<void> => {
     setLoading(true);
     setError(null);
     setHits([]);
+
     try {
-      const u = new URL(`/api/admin?task=testScrape&sourceId=${sourceId}&limit=${limit}&url=${encodeURIComponent(url)}&selector=${encodeURIComponent(selector)}`, window.location.origin);
+      const u = new URL(
+        `/api/admin?task=testScrape&sourceId=${sourceId}&limit=${limit}&url=${encodeURIComponent(
+          url
+        )}&selector=${encodeURIComponent(selector)}`,
+        window.location.origin
+      );
+
       const res = await fetch(u.toString(), { cache: "no-store" });
-      const json = await res.json();
-      if (!json.ok) {
-        setError(json.error || "Failed");
-      } else {
-        setHits(json.hits || []);
+
+      let json: unknown;
+      try {
+        json = await res.json();
+      } catch {
+        setError("Response was not valid JSON.");
+        return;
       }
-    } catch (e: any) {
-      setError(e?.message || "Failed");
+
+      const data = json as Partial<TestScrapeResponse>;
+      if (!data || data.ok !== true) {
+        setError((data && data.error) || "Request failed.");
+        return;
+      }
+
+      setHits(Array.isArray(data.hits) ? data.hits : []);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed";
+      setError(msg);
     } finally {
       setLoading(false);
     }

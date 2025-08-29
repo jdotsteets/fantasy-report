@@ -71,7 +71,6 @@ export default async function Page({
   const sectionParam = rawSection.toLowerCase().trim();
   const selected: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
 
-  const show = (k: SectionKey) => selected === null || selected === k;
 
   const data: HomePayload = await getHomeData({
     sport,

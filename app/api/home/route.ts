@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 type CacheEntry = { body: unknown; ts: number };
 type CacheStore = Map<string, CacheEntry>;
 
-// eslint-disable-next-line no-var
+
 declare global { var __HOME_CACHE__: CacheStore | undefined; }
 
 const CACHE: CacheStore = global.__HOME_CACHE__ ?? new Map();

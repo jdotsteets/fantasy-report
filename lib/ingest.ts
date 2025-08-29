@@ -48,6 +48,20 @@ export type UpsertResult = { inserted: number; updated: number; skipped: number 
 
 type DbParam = string | number | boolean | Date | null;
 
+type PgLikeError = { code?: string; detail?: string; message?: string };
+
+type RssItem = {
+  title?: string | null;
+  link?: string | null;
+  contentSnippet?: string | null;
+  content?: string | null;
+  summary?: string | null;
+  creator?: string | null;
+  author?: string | null;
+  isoDate?: string | null;
+  [k: string]: unknown;
+};
+
 const parser = new Parser({
   timeout: 15000,
   headers: { "user-agent": "FantasyReportBot/1.0 (+https://fantasy-report.vercel.app)" },
@@ -178,7 +192,6 @@ async function ingestSource(src: SourceRow, limitPerSource: number): Promise<Ups
 
     if (result === "inserted") {
       inserted += 1;
-      // success log
       await logIngest({
         sourceId: src.id,
         sourceName: src.name ?? null,
@@ -255,11 +268,12 @@ async function upsertArticle(
       vals as unknown as DbParam[]
     );
     return up.rows[0]?.inserted ? "inserted" : "updated";
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Unique violation on canonical_url? Update by canonical_url instead of failing.
-    const msg = String(err?.message || err || "");
-    const detail = String((err as any)?.detail || "");
-    if (err?.code === "23505" && (/canonical_url/i.test(msg) || /canonical_url/i.test(detail))) {
+    const e = (err ?? {}) as PgLikeError;
+    const msg = String(e.message ?? "");
+    const detail = String(e.detail ?? "");
+    if (e.code === "23505" && (/canonical_url/i.test(msg) || /canonical_url/i.test(detail))) {
       await dbQuery(
         `
         UPDATE articles SET
@@ -322,10 +336,15 @@ function domainOf(u?: string | null): string | null {
   }
 }
 
-function errString(e: unknown) {
+function isErrorWithMessage(x: unknown): x is { message: string } {
+  return typeof x === "object" && x !== null && "message" in x && typeof (x as { message: unknown }).message === "string";
+}
+
+function errString(e: unknown): string {
   if (!e) return "Unknown error";
+  if (isErrorWithMessage(e)) return e.message;
   try {
-    return (e as any)?.message ? String((e as any).message) : String(e);
+    return String(e);
   } catch {
     return "Unknown error";
   }
@@ -413,7 +432,7 @@ function normalizeTitle(raw: string): string {
 
 function decodeHtmlEntities(input: string): string {
   return input
-    .replace(/&#(\d+);?/g, (_, n) => {
+    .replace(/&#(\d+);?/g, (_, n: string) => {
       const code = parseInt(n, 10);
       return Number.isFinite(code) ? String.fromCharCode(code) : _;
     })
@@ -471,7 +490,8 @@ async function readRss(src: SourceRow, limit: number): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL(src.rss_url!);
     const items: FeedItem[] = [];
-    for (const it of feed.items.slice(0, limit)) {
+    for (const raw of feed.items.slice(0, limit)) {
+      const it = raw as unknown as RssItem;
       const title = (it.title ?? "").trim();
       const link = (it.link ?? "").trim();
       if (!title || !link) {

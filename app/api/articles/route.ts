@@ -9,7 +9,6 @@ export const runtime = "nodejs";
 type CacheEntry = { body: unknown; ts: number };
 type CacheStore = Map<string, CacheEntry>;
 declare global {
-  // eslint-disable-next-line no-var
   var __ART_CACHE__: CacheStore | undefined;
 }
 const CACHE: CacheStore = global.__ART_CACHE__ ?? new Map();
