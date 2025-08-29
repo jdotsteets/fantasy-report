@@ -50,7 +50,7 @@ function getErrorMessage(err: unknown): string {
 export async function GET() {
   try {
     const r = await dbQuery(
-      `select id, name, homepage_url, rss_url, favicon_url, sitemap_url, category, allowed, priority
+      `select id, name, homepage_url, rss_url, scrape_selector, favicon_url, sitemap_url, category, allowed, priority
        from sources
        order by created_at desc
        limit 500`
@@ -100,14 +100,75 @@ export async function POST(req: Request) {
   }
 }
 
-// PATCH: toggle allowed
+// PATCH: update source fields (allowed, homepage_url, rss_url, scrape_selector)
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const v = toggleSchema.parse(body);
-    await dbQuery(`update sources set allowed=$2 where id=$1`, [v.id, v.allowed]);
+
+    // Validate id
+    const id = Number(body?.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return Response.json({ ok: false, error: "invalid_id" }, { status: 400 });
+    }
+
+    // Helpers
+    const toNullIfBlank = (v: unknown): string | null => {
+      const t = (v ?? "").toString().trim();
+      return t.length ? t : null;
+    };
+
+    const normalizeUrl = (v: unknown): string | null => {
+      const raw = (v ?? "").toString().trim();
+      if (!raw) return null;
+      try {
+        const u = new URL(raw);
+        if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
+      } catch {}
+      try {
+        const u2 = new URL("https://" + raw.replace(/^\/*/, ""));
+        if (u2.protocol === "http:" || u2.protocol === "https:") return u2.toString();
+      } catch {}
+      return raw;
+    };
+
+    // Build updates only for provided fields
+    const updates: Record<string, unknown> = {};
+    if (Object.prototype.hasOwnProperty.call(body, "allowed")) {
+      updates.allowed = !!body.allowed;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "homepage_url")) {
+      updates.homepage_url = normalizeUrl(body.homepage_url);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "rss_url")) {
+      updates.rss_url = normalizeUrl(body.rss_url);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "scrape_selector")) {
+      updates.scrape_selector = toNullIfBlank(body.scrape_selector);
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return Response.json({ ok: false, error: "no_fields_to_update" }, { status: 400 });
+    }
+
+    // Dynamic parameterized UPDATE
+    const fields = Object.keys(updates);
+    const setSql = fields.map((k, i) => `${k} = $${i + 1}`).join(", ");
+
+    // 👇 Type the params to what dbQuery expects
+    type SqlParam = string | number | boolean | Date | null;
+    const params: SqlParam[] = fields.map(
+      (k) => updates[k] as SqlParam
+    );
+    params.push(id as SqlParam);
+
+    await dbQuery(
+      `UPDATE sources SET ${setSql} WHERE id = $${fields.length + 1}`,
+      params // satisfies readonly SqlParam[] (okay to pass a normal array)
+    );
+
     return Response.json({ ok: true });
   } catch (err: unknown) {
-    return Response.json({ ok: false, error: getErrorMessage(err) }, { status: 400 });
+    const msg = (err as any)?.message ? String((err as any).message) : "unknown_error";
+    return Response.json({ ok: false, error: msg }, { status: 400 });
   }
 }

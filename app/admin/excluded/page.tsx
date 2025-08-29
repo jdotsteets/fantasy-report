@@ -1,4 +1,5 @@
 // app/admin/excluded/page.tsx
+import Link from "next/link";
 import {
   getExcludedItems,
   type ExcludedRow,
@@ -154,6 +155,34 @@ function ReasonBadge({ code }: { code: string }) {
   return <Badge text={REASON_LABEL[code] ?? code} />;
 }
 
+/* ───────────────────────── Admin Nav (same as Sources) ─────────────────── */
+function AdminNav({ active }: { active: "sources" | "excluded" }) {
+  const base =
+    "rounded-md px-3 py-1.5 text-sm font-medium border transition";
+  const normal =
+    "border-zinc-200 text-zinc-700 hover:bg-zinc-50";
+  const current =
+    "border-emerald-300 bg-emerald-50 text-emerald-900";
+
+  return (
+    <nav className="sticky top-0 z-20 mb-6 -mx-2 flex items-center gap-2 bg-white/70 px-2 py-2 backdrop-blur">
+      <Link
+        className={`${base} ${active === "sources" ? current : normal}`}
+        href="/admin/sources"
+      >
+        Sources
+      </Link>
+      <Link
+        className={`${base} ${active === "excluded" ? current : normal}`}
+        href="/admin/excluded"
+      >
+        Excluded
+      </Link>
+      {/* add more admin pages here as needed */}
+    </nav>
+  );
+}
+
 /* ───────────────────────── UI Components ───────────────────────── */
 function Group({ title, items }: { title: string; items: ExcludedRow[] }) {
   return (
@@ -212,10 +241,13 @@ export default async function Page({
   const sp = await searchParams;
 
   // Fetch data
-  const [rows, logs] = await Promise.all([
+  const [rowsRaw, logs] = await Promise.all([
     getExcludedItems({ days: 30, limit: 250 }),
     getIngestLogs(7, 200),
   ]);
+
+  // Ensure we're only showing EXCLUDED rows: require at least one reason tag
+  const rows = rowsRaw.filter((r) => (r.reasons?.length ?? 0) > 0);
 
   // Group excluded items by first reason
   const groups = new Map<string, ExcludedRow[]>();
@@ -231,6 +263,9 @@ export default async function Page({
 
   return (
     <main className="mx-auto max-w-4xl p-6 space-y-8">
+      {/* Admin nav */}
+      <AdminNav active="excluded" />
+
       {notice ? (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
           {notice}

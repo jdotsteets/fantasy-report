@@ -1,13 +1,18 @@
 // lib/db.ts
+import "server-only";
 import { Pool, PoolClient, QueryConfig, QueryResult } from "pg";
 
 /** ──────────────────────────────────────────────────────────────────────────
- *  Singleton Pool (works in dev HMR and serverless)
+ *  Singleton Pool (safe with Next.js HMR)
  *  ────────────────────────────────────────────────────────────────────────── */
 declare global {
   // eslint-disable-next-line no-var
   var __PG_POOL__: Pool | undefined;
+  // eslint-disable-next-line no-var
+  var __PG_POOL_LISTENER_ATTACHED__: boolean | undefined;
 }
+
+const CREATED_NEW_POOL = !global.__PG_POOL__;
 
 const pool: Pool =
   global.__PG_POOL__ ??
@@ -28,12 +33,43 @@ if (!global.__PG_POOL__) {
   global.__PG_POOL__ = pool;
 }
 
-// Don't crash the process on background client errors
-pool.on("error", (err) => {
-  const code = (err as { code?: string })?.code ?? "unknown";
-  // eslint-disable-next-line no-console
-  console.error("[pg pool error]", code, err.message);
-});
+// Attach the error listener **once** to avoid MaxListenersExceededWarning.
+if (CREATED_NEW_POOL && !global.__PG_POOL_LISTENER_ATTACHED__) {
+  // Optional: disable listener limit entirely
+  // @ts-ignore - node types allow setMaxListeners
+  typeof pool.setMaxListeners === "function" && pool.setMaxListeners(0);
+
+  pool.on("error", (err: unknown) => {
+    const e = (err ?? {}) as { code?: string; message?: string };
+    const code = e.code ?? "unknown";
+    const msg = (e.message ?? "").toLowerCase();
+
+    // Many providers idle/kill connections. These are benign; ignore.
+    const benign =
+      code === "XX000" ||
+      code === "57P01" || // admin_shutdown
+      code === "57P02" || // crash_shutdown
+      code === "57P03" || // cannot_connect_now
+      code === "08006" || // connection_failure
+      code === "08003" || // connection_does_not_exist
+      msg.includes("connection terminated") ||
+      msg.includes("terminating connection") ||
+      msg.includes("server closed the connection unexpectedly") ||
+      msg.includes("connection reset");
+
+    if (benign) {
+      // Uncomment if you want to see a one-line hint instead of silence:
+      // console.warn("[pg pool] benign termination/reset:", code, e.message);
+      return;
+    }
+
+    // Only log surprising errors loudly.
+    // eslint-disable-next-line no-console
+    console.error("[pg pool error]", code, e.message);
+  });
+
+  global.__PG_POOL_LISTENER_ATTACHED__ = true;
+}
 
 /** ──────────────────────────────────────────────────────────────────────────
  *  Retry helpers
@@ -44,7 +80,7 @@ function isTransient(err: unknown): boolean {
   const { code, message } = (err ?? {}) as PgErr;
   const msg = (message ?? "").toLowerCase();
   return (
-    code === "XX000" || // internal_error (often db_termination)
+    code === "XX000" || // internal_error (often backend termination)
     code === "57P01" || // admin_shutdown
     code === "57P02" || // crash_shutdown
     code === "57P03" || // cannot_connect_now
@@ -60,11 +96,10 @@ function isTransient(err: unknown): boolean {
   );
 }
 
-function sleep(ms: number): Promise<void> {
+function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Run a function with a client, with transient-error retries. */
 export async function withClient<T>(
   fn: (c: PoolClient) => Promise<T>,
   opts: { attempts?: number; baseBackoffMs?: number } = {}
@@ -77,7 +112,7 @@ export async function withClient<T>(
     try {
       const client = await pool.connect();
       try {
-        // Optional: uncomment to fail slow queries fast (server-side timeout)
+        // Optional: cap statement time
         // await client.query("SET statement_timeout = 10000");
         return await fn(client);
       } finally {
@@ -86,12 +121,10 @@ export async function withClient<T>(
     } catch (err) {
       lastErr = err;
       if (tryNo < attempts - 1 && isTransient(err)) {
-        const backoff = baseBackoffMs * Math.pow(2, tryNo); // 300, 600, 1200…
+        const backoff = baseBackoffMs * 2 ** tryNo; // 300, 600, 1200…
         // eslint-disable-next-line no-console
         console.warn(
-          `[pg retry] transient error (${(err as PgErr)?.code ?? "unknown"}): ${
-            (err as PgErr)?.message ?? ""
-          } – retrying in ${backoff}ms`
+          `[pg retry] transient (${(err as PgErr)?.code ?? "unknown"}) – retrying in ${backoff}ms`
         );
         await sleep(backoff);
         continue;
@@ -102,11 +135,24 @@ export async function withClient<T>(
   throw lastErr;
 }
 
-/** ──────────────────────────────────────────────────────────────────────────
- *  dbQuery helper (keeps your existing imports working)
- *  - No `any` types
- *  - Accepts SQL string + params OR a QueryConfig
- *  ────────────────────────────────────────────────────────────────────────── */
+/** Optional transaction helper. */
+export async function dbTx<T>(run: (c: PoolClient) => Promise<T>): Promise<T> {
+  return withClient(async (c) => {
+    await c.query("BEGIN");
+    try {
+      const out = await run(c);
+      await c.query("COMMIT");
+      return out;
+    } catch (e) {
+      try {
+        await c.query("ROLLBACK");
+      } catch {}
+      throw e;
+    }
+  });
+}
+
+/** Typed dbQuery that accepts SQL+params or a QueryConfig. */
 export type SqlParam =
   | string
   | number
@@ -126,14 +172,22 @@ export async function dbQuery<R extends QueryRow = QueryRow>(
   return withClient((c) => {
     if (typeof textOrCfg === "string") {
       const values = params as SqlParam[] | undefined;
-      if (values && values.length > 0) {
-        // Use typed overload: query<T, I>(text, values)
+      if (values?.length) {
         return c.query<R, SqlParam[]>(textOrCfg, values);
       }
       return c.query<R>(textOrCfg);
     }
-    // Typed config path
     const cfg = textOrCfg as QueryConfig<SqlParam[]>;
     return c.query<R, SqlParam[]>(cfg);
   });
+}
+
+/** Quick health check (handy for debugging). */
+export async function dbHealth(): Promise<boolean> {
+  try {
+    await dbQuery("select 1");
+    return true;
+  } catch {
+    return false;
+  }
 }
