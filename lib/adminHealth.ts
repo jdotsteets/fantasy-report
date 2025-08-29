@@ -59,6 +59,27 @@ export type HealthSummary = {
   errors?: ErrorDigest[];
 };
 
+
+function getPgCode(err: unknown): string | undefined {
+  return typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    typeof (err as { code?: unknown }).code === "string"
+    ? (err as { code: string }).code
+    : undefined;
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+
 /**
  * Compute health for all sources over a time window (default 72h).
  * If you have ingest tallies, you can sum them into the top row by
@@ -190,7 +211,8 @@ export async function getSourcesHealth(
     summary.skippedTotal = skp;
   }
 
-
+  // NEW: attach recent ingest error digests
+  summary.errors = await getSourceErrorDigests(wh);
     // Merge tallies into top row if provided
   if (ingestTallies) {
     let ins = 0, upd = 0, skp = 0;
@@ -207,14 +229,14 @@ export async function getSourcesHealth(
   // 🆕 Attach recent ingest error digests (safe even if table is missing)
   try {
     summary.errors = await getSourceErrorDigests(wh);
-  } catch (e: any) {
-    // 42P01 = relation does not exist (ingest_logs not created yet)
-    if (e?.code !== "42P01") {
-      console.warn("[adminHealth] getSourceErrorDigests failed:", e?.message ?? e);
-    }
-    summary.errors = [];
+  } catch (e: unknown) {
+  // 42P01 = relation does not exist (ingest_logs not created yet)
+  const code = getPgCode(e);
+  if (code !== "42P01") {
+    console.warn("[adminHealth] getSourceErrorDigests failed:", getErrorMessage(e));
   }
-
+  summary.errors = [];
+}
   return summary;
 }
 

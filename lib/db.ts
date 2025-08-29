@@ -6,9 +6,7 @@ import { Pool, PoolClient, QueryConfig, QueryResult } from "pg";
  *  Singleton Pool (safe with Next.js HMR)
  *  ────────────────────────────────────────────────────────────────────────── */
 declare global {
-  // eslint-disable-next-line no-var
   var __PG_POOL__: Pool | undefined;
-  // eslint-disable-next-line no-var
   var __PG_POOL_LISTENER_ATTACHED__: boolean | undefined;
 }
 
@@ -64,7 +62,6 @@ if (CREATED_NEW_POOL && !global.__PG_POOL_LISTENER_ATTACHED__) {
     }
 
     // Only log surprising errors loudly.
-    // eslint-disable-next-line no-console
     console.error("[pg pool error]", code, e.message);
   });
 
@@ -122,7 +119,6 @@ export async function withClient<T>(
       lastErr = err;
       if (tryNo < attempts - 1 && isTransient(err)) {
         const backoff = baseBackoffMs * 2 ** tryNo; // 300, 600, 1200…
-        // eslint-disable-next-line no-console
         console.warn(
           `[pg retry] transient (${(err as PgErr)?.code ?? "unknown"}) – retrying in ${backoff}ms`
         );

@@ -199,7 +199,7 @@ export default async function AdminSourcesPage({
         <p className="mt-3 text-xs text-zinc-500">
           Tip: click <b>Edit</b> to open the source editor below. For 404/410, update the RSS URL
           or add a <code>scrape_selector</code> on a stable list page (e.g.{" "}
-          <code>a[href*="/nfl/"]</code>).
+          <code>a[href*=&quot/nfl/&quot;]</code>).
         </p>
       </section>
 

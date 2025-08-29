@@ -28,11 +28,6 @@ const upsertSchema = z.object({
   allowed: z.coerce.boolean().optional().default(true),
 });
 
-// Validation for toggle
-const toggleSchema = z.object({
-  id: z.coerce.number().int(),
-  allowed: z.coerce.boolean(),
-});
 
 // Helper to extract a useful error message from unknown
 function getErrorMessage(err: unknown): string {
@@ -168,7 +163,7 @@ export async function PATCH(req: Request) {
 
     return Response.json({ ok: true });
   } catch (err: unknown) {
-    const msg = (err as any)?.message ? String((err as any).message) : "unknown_error";
+    const msg = getErrorMessage(err);
     return Response.json({ ok: false, error: msg }, { status: 400 });
   }
 }
