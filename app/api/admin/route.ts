@@ -7,6 +7,7 @@ import { logIngestError, type IngestReason } from "@/lib/ingestLogs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+
 type SourceRow = {
   id: number;
   name: string | null;
@@ -42,16 +43,18 @@ export async function GET(req: NextRequest) {
   }
 
   // accept ?sourceId= OR ?id=
-  const id = Number(q.get("sourceId") ?? q.get("id"));
+  const idStr = q.get("sourceId") ?? q.get("id") ?? "";
+  const id = Number(idStr);
   const limit = Math.max(1, Math.min(Number(q.get("limit") ?? "20") || 20, 100));
-  const urlOverride = q.get("url") || null;
-  const selectorOverride = q.get("selector") || null;
+  const urlOverride = (q.get("url") || "").trim() || null;
+  const selectorOverride = (q.get("selector") || "").trim() || null;
   const shouldLog = (q.get("log") ?? "0") === "1";
 
-  if (!Number.isFinite(id)) {
+  if (!Number.isFinite(id) || id <= 0) {
     return NextResponse.json({ ok: false, error: "missing_or_invalid_id" }, { status: 400 });
   }
 
+  // load source
   const srcRes = await dbQuery<SourceRow>(
     "select id, name, homepage_url, scrape_selector from sources where id=$1",
     [id]
@@ -61,8 +64,22 @@ export async function GET(req: NextRequest) {
   }
   const src = srcRes.rows[0];
 
-  const url = (urlOverride || src.homepage_url || "").trim();
-  const selector = (selectorOverride || src.scrape_selector || "").trim();
+  // Decide URL + selector
+  const DEFAULT_SELECTOR = 'a[href*="/nfl/"]';
+
+  // Prefer override URL, else source homepage_url
+  let url = (urlOverride || src.homepage_url || "").trim();
+
+  // If override is a relative path, resolve against homepage
+  if (urlOverride && urlOverride.startsWith("/") && src.homepage_url) {
+    try {
+      url = new URL(urlOverride, src.homepage_url).toString();
+    } catch {
+      // keep as-is; fetch will error and be logged
+    }
+  }
+
+  const selector = (selectorOverride || src.scrape_selector || DEFAULT_SELECTOR).trim();
 
   if (!url) {
     return NextResponse.json(
@@ -79,22 +96,27 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(url, {
-      headers: { "user-agent": "FantasyReportBot/1.0 (+https://fantasy-report.vercel.app)" },
+      headers: {
+        "user-agent": "FantasyReportBot/1.0 (+https://fantasy-report.vercel.app)",
+        accept: "text/html,application/xhtml+xml",
+      },
       cache: "no-store",
     });
 
     if (!res.ok) {
       if (shouldLog) {
-        const reason: IngestReason = "fetch_error";
         await logIngestError({
           sourceId: id,
           url,
           domain: domainOf(url),
-          reason,
+          reason: "fetch_error",
           detail: `HTTP ${res.status}`,
         });
       }
-      return NextResponse.json({ ok: false, error: "http_error", status: res.status }, { status: 502 });
+      return NextResponse.json(
+        { ok: false, error: "http_error", status: res.status },
+        { status: 502 }
+      );
     }
 
     const html = await res.text();
@@ -114,17 +136,24 @@ export async function GET(req: NextRequest) {
     });
 
     if (hits.length === 0 && shouldLog) {
-      const reason: IngestReason = "scrape_no_matches";
       await logIngestError({
         sourceId: id,
         url,
         domain: domainOf(url),
-        reason,
+        reason: "scrape_no_matches",
         detail: `selector "${selector}" matched 0 links`,
       });
     }
 
-    return NextResponse.json({ ok: true, task: "testScrape", source: { id: src.id, name: src.name }, url, selector, limit, hits });
+    return NextResponse.json({
+      ok: true,
+      task: "testScrape",
+      source: { id: src.id, name: src.name },
+      url,
+      selector,
+      limit,
+      hits,
+    });
   } catch (err: unknown) {
     if (shouldLog) {
       await logIngestError({

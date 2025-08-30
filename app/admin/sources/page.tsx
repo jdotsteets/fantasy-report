@@ -53,7 +53,7 @@ export default async function AdminSourcesPage({
   const sp = await searchParams;
   const windowParam =
     (Array.isArray(sp?.window) ? sp?.window?.[0] : sp?.window) || "72";
-  const windowHours = Math.max(1, Math.min(Number(windowParam) || 72, 720));
+  const windowHours = Math.max(1, Math.min(Number(windowParam) || 1, 720));
 
   const summary = await getSourcesHealth(windowHours);
 
@@ -76,7 +76,7 @@ export default async function AdminSourcesPage({
               defaultValue={String(windowHours)}
               className="h-8 rounded border px-2 text-sm"
             >
-              {[24, 48, 72, 168, 336, 720].map((h) => (
+              {[1, 4, 24, 48, 72, 168, 336, 720].map((h) => (
                 <option key={h} value={h}>
                   {h}
                 </option>

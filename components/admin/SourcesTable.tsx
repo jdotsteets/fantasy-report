@@ -9,16 +9,42 @@ type SourceRow = {
   category: string | null;
   homepage_url: string | null;
   rss_url: string | null;
+  scrape_path?: string | null;
   scrape_selector?: string | null;
+  favicon_url?: string | null;
+  sitemap_url?: string | null;
   allowed: boolean | null;
   priority: number | null;
 };
 
 const DEFAULT_NFL_SELECTOR = 'a[href*="/nfl/"]';
 
+const CATEGORY_OPTIONS = [
+  { value: "", label: "(none)" },
+  { value: "Fantasy News", label: "Fantasy News" },
+  { value: "Rankings", label: "Rankings" },
+  { value: "Start/Sit", label: "Start/Sit" },
+  { value: "Injury", label: "Injury" },
+  { value: "DFS", label: "DFS" },
+  { value: "Dynasty", label: "Dynasty" },
+  { value: "Betting/DFS", label: "Betting/DFS" },
+  { value: "Podcast", label: "Podcast" },
+  { value: "Team Site", label: "Team Site" },
+  { value: "Other", label: "Other" },
+];
+
 type EditMap = Record<
   number,
-  { homepage_url: string; rss_url: string; scrape_selector: string }
+  {
+    homepage_url: string;
+    rss_url: string;
+    scrape_path: string;
+    scrape_selector: string;
+    favicon_url: string;
+    sitemap_url: string;
+    category: string;
+    priority: string; // keep as string for the input; coerce to number on save
+  }
 >;
 
 export default function SourcesTable() {
@@ -49,7 +75,6 @@ export default function SourcesTable() {
       const id = Number(hash.replace("#source-", ""));
       if (Number.isFinite(id)) {
         setOpenId(id);
-        // Defer scroll until rows are present
         setTimeout(() => {
           const el = document.getElementById(`source-${id}`);
           if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -77,97 +102,114 @@ export default function SourcesTable() {
   const normalizeUrl = (s?: string | null): string | null => {
     const raw = (s ?? "").trim();
     if (!raw) return null;
-    // If it parses, keep as-is
     try {
       const u = new URL(raw);
       return u.toString();
     } catch {
-      // Try prepending https://
       try {
         const u2 = new URL("https://" + raw.replace(/^\/*/, ""));
         return u2.toString();
       } catch {
-        // Fall back to trimmed string (server can reject/clean further)
-        return raw;
+        return raw.trim();
       }
     }
   };
 
-async function saveRow(id: number) {
-  const e = edit[id];
-  if (!e) return;
-
-  const current = rows.find((r) => r.id === id);
-  if (!current) return;
-
-  // Build normalized values
-  const nextHomepage = normalizeUrl(e.homepage_url);
-  const nextRss = normalizeUrl(e.rss_url);
-
-  // If user left selector blank, default it when homepage exists and RSS is empty
-  const toNullIfBlank = (s?: string | null) => {
+  const toNullIfBlank = (s?: string | null): string | null => {
     const t = (s ?? "").trim();
     return t.length ? t : null;
   };
-  let nextSelector = toNullIfBlank(e.scrape_selector ?? null);
 
-  const homepageFinal = nextHomepage ?? (current.homepage_url ?? null);
-  const rssFinal = nextRss ?? (current.rss_url ?? null);
+  async function saveRow(id: number) {
+    const e = edit[id];
+    if (!e) return;
 
-  if (!nextSelector && homepageFinal && !rssFinal) {
-    // auto default when scraping is the only ingest path
-    nextSelector = DEFAULT_NFL_SELECTOR;
-  }
+    const current = rows.find((r) => r.id === id);
+    if (!current) return;
 
-  // Only send changed fields
-  const patch: Record<string, unknown> = { id };
-  if ((current.homepage_url ?? null) !== nextHomepage) patch.homepage_url = nextHomepage;
-  if ((current.rss_url ?? null) !== nextRss) patch.rss_url = nextRss;
-  if ((current.scrape_selector ?? null) !== nextSelector) patch.scrape_selector = nextSelector;
+    // Build normalized values
+    const nextHomepage = normalizeUrl(e.homepage_url);
+    const nextRss = normalizeUrl(e.rss_url);
+    const nextScrapePath = toNullIfBlank(e.scrape_path);
+    let nextSelector = toNullIfBlank(e.scrape_selector);
+    const nextFavicon = normalizeUrl(e.favicon_url);
+    const nextSitemap = normalizeUrl(e.sitemap_url);
+    const nextCategory = toNullIfBlank(e.category);
+    const nextPriority =
+      e.priority === "" || e.priority == null
+        ? null
+        : Number.isFinite(Number(e.priority))
+        ? Number(e.priority)
+        : (current.priority ?? 0);
 
-  if (Object.keys(patch).length === 1) {
-    setOpenId(null);
-    return;
-  }
-
-  setSavingIds((s) => new Set(s).add(id));
-  setErrorById((m) => ({ ...m, [id]: null }));
-
-  const res = await fetch("/api/admin/sources", {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-
-  setSavingIds((s) => {
-    const n = new Set(s);
-    n.delete(id);
-    return n;
-  });
-
-  if (res.ok) {
-    await load();
-    if (typeof window !== "undefined" && window.location.hash === `#source-${id}`) {
-      history.replaceState(null, "", window.location.pathname + window.location.search);
+    // Default selector if scraping only (homepage && !rss && selector blank)
+    const homepageFinal = nextHomepage ?? (current.homepage_url ?? null);
+    const rssFinal = nextRss ?? (current.rss_url ?? null);
+    if (!nextSelector && homepageFinal && !rssFinal) {
+      nextSelector = DEFAULT_NFL_SELECTOR;
     }
-    setOpenId(null);
-  } else {
-    const text = await res.text().catch(() => "");
-    setErrorById((m) => ({
-      ...m,
-      [id]: text ? `Save failed: ${text.slice(0, 160)}` : "Save failed.",
-    }));
+
+    // Only send changed fields
+    const patch: Record<string, unknown> = { id };
+    if ((current.homepage_url ?? null) !== nextHomepage) patch.homepage_url = nextHomepage;
+    if ((current.rss_url ?? null) !== nextRss) patch.rss_url = nextRss;
+    if ((current.scrape_path ?? null) !== nextScrapePath) patch.scrape_path = nextScrapePath;
+    if ((current.scrape_selector ?? null) !== nextSelector) patch.scrape_selector = nextSelector;
+    if ((current.favicon_url ?? null) !== nextFavicon) patch.favicon_url = nextFavicon;
+    if ((current.sitemap_url ?? null) !== nextSitemap) patch.sitemap_url = nextSitemap;
+    if ((current.category ?? null) !== nextCategory) patch.category = nextCategory;
+    if ((current.priority ?? null) !== nextPriority) patch.priority = nextPriority;
+
+    if (Object.keys(patch).length === 1) {
+      // nothing changed
+      setOpenId(null);
+      return;
+    }
+
+    setSavingIds((s) => new Set(s).add(id));
+    setErrorById((m) => ({ ...m, [id]: null }));
+
+    const res = await fetch("/api/admin/sources", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+
+    setSavingIds((s) => {
+      const n = new Set(s);
+      n.delete(id);
+      return n;
+    });
+
+    if (res.ok) {
+      await load();
+      if (typeof window !== "undefined" && window.location.hash === `#source-${id}`) {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+      setOpenId(null);
+    } else {
+      const text = await res.text().catch(() => "");
+      setErrorById((m) => ({
+        ...m,
+        [id]: text ? `Save failed: ${text.slice(0, 160)}` : "Save failed.",
+      }));
+    }
   }
-}
 
   function applyDefaultSelector(id: number) {
+    const row = rows.find((r) => r.id === id);
     setEdit((m) => ({
       ...m,
       [id]: {
         ...(m[id] ?? {
-          homepage_url: rows.find((r) => r.id === id)?.homepage_url ?? "",
-          rss_url: rows.find((r) => r.id === id)?.rss_url ?? "",
-          scrape_selector: rows.find((r) => r.id === id)?.scrape_selector ?? "",
+          homepage_url: row?.homepage_url ?? "",
+          rss_url: row?.rss_url ?? "",
+          scrape_path: row?.scrape_path ?? "",
+          scrape_selector: row?.scrape_selector ?? "",
+          favicon_url: row?.favicon_url ?? "",
+          sitemap_url: row?.sitemap_url ?? "",
+          category: row?.category ?? "",
+          priority: String(row?.priority ?? 0),
         }),
         scrape_selector: DEFAULT_NFL_SELECTOR,
       },
@@ -211,9 +253,14 @@ async function saveRow(id: number) {
               const e = edit[s.id] ?? {
                 homepage_url: s.homepage_url ?? "",
                 rss_url: s.rss_url ?? "",
+                scrape_path: s.scrape_path ?? "",
                 scrape_selector:
                   s.scrape_selector ??
                   (s.homepage_url && !s.rss_url ? DEFAULT_NFL_SELECTOR : ""),
+                favicon_url: s.favicon_url ?? "",
+                sitemap_url: s.sitemap_url ?? "",
+                category: s.category ?? "",
+                priority: String(s.priority ?? 0),
               };
               const isOpen = openId === s.id;
               const isSaving = savingIds.has(s.id);
@@ -260,7 +307,16 @@ function FragmentRow({
 }: {
   anchorId: string;
   s: SourceRow;
-  e: { homepage_url: string; rss_url: string; scrape_selector: string };
+  e: {
+    homepage_url: string;
+    rss_url: string;
+    scrape_path: string;
+    scrape_selector: string;
+    favicon_url: string;
+    sitemap_url: string;
+    category: string;
+    priority: string;
+  };
   isOpen: boolean;
   isSaving: boolean;
   errorMsg: string | null;
@@ -270,6 +326,18 @@ function FragmentRow({
   onToggleAllowed: (allowed: boolean) => void;
   onApplyDefault: () => void;
 }) {
+  // Build effective URL for SelectorTester using homepage + scrape_path.
+  const effectiveTestUrl = (() => {
+    const base = e.homepage_url || s.homepage_url || "";
+    const path = e.scrape_path || s.scrape_path || "";
+    if (!base) return base;
+    try {
+      return path ? new URL(path, base).toString() : base;
+    } catch {
+      return base;
+    }
+  })();
+
   return (
     <>
       <tr id={anchorId} className="border-t">
@@ -346,13 +414,67 @@ function FragmentRow({
                   placeholder="https://site.com/feed.xml"
                 />
               </label>
-              <label className="md:col-span-2 block text-xs text-zinc-600">
+
+              <label className="block text-xs text-zinc-600">
+                Scrape path (optional)
+                <input
+                  className="mt-1 w-full rounded border border-zinc-300 px-2 py-1"
+                  value={e.scrape_path}
+                  onChange={(ev) => onChange({ scrape_path: ev.target.value })}
+                  placeholder="/articles/fantasy"
+                />
+              </label>
+              <label className="block text-xs text-zinc-600 md:col-span-2">
                 Scrape selector (CSS)
                 <input
                   className="mt-1 w-full rounded border border-zinc-300 px-2 py-1 font-mono"
                   value={e.scrape_selector}
                   onChange={(ev) => onChange({ scrape_selector: ev.target.value })}
                   placeholder={DEFAULT_NFL_SELECTOR}
+                />
+              </label>
+
+              <label className="block text-xs text-zinc-600">
+                Favicon URL (optional)
+                <input
+                  className="mt-1 w-full rounded border border-zinc-300 px-2 py-1"
+                  value={e.favicon_url}
+                  onChange={(ev) => onChange({ favicon_url: ev.target.value })}
+                  placeholder="https://site.com/favicon.ico"
+                />
+              </label>
+              <label className="block text-xs text-zinc-600">
+                Sitemap URL (optional)
+                <input
+                  className="mt-1 w-full rounded border border-zinc-300 px-2 py-1"
+                  value={e.sitemap_url}
+                  onChange={(ev) => onChange({ sitemap_url: ev.target.value })}
+                  placeholder="https://site.com/sitemap.xml"
+                />
+              </label>
+
+              <label className="block text-xs text-zinc-600">
+                Category (optional)
+                <select
+                  className="mt-1 w-full rounded border border-zinc-300 px-2 py-1"
+                  value={e.category}
+                  onChange={(ev) => onChange({ category: ev.target.value })}
+                >
+                  {CATEGORY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs text-zinc-600">
+                Priority
+                <input
+                  className="mt-1 w-full rounded border border-zinc-300 px-2 py-1"
+                  type="number"
+                  inputMode="numeric"
+                  value={e.priority}
+                  onChange={(ev) => onChange({ priority: ev.target.value })}
                 />
               </label>
             </div>
@@ -385,8 +507,10 @@ function FragmentRow({
 
             <SelectorTester
               sourceId={s.id}
-              defaultUrl={e.homepage_url || s.homepage_url || ""}
-              defaultSelector={e.scrape_selector || s.scrape_selector || DEFAULT_NFL_SELECTOR}
+              defaultUrl={effectiveTestUrl}
+              defaultSelector={
+                e.scrape_selector || s.scrape_selector || DEFAULT_NFL_SELECTOR
+              }
             />
           </td>
         </tr>
