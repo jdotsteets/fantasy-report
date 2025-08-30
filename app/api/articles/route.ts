@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
 export const preferredRegion = ["iad1"];
-export const runtime = "nodejs";
+export const runtime = "nodejs";         // ensure Node runtime (not edge)
+export const dynamic = "force-dynamic";  // NEVER prerender this route
+export const revalidate = 0;             // disable caching for the route
 
 // tiny per-instance cache
 type CacheEntry = { body: unknown; ts: number };

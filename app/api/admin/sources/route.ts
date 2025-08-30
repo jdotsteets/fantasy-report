@@ -26,6 +26,8 @@ function getErrorMessage(err: unknown): string {
   return "Invalid input";
 }
 
+await dbQuery("select 1");
+
 // GET now returns scrape_path too
 export async function GET() {
   try {

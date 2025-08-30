@@ -13,8 +13,10 @@ const okKey = (req: NextRequest) => {
   return Boolean(want && got && got === want);
 };
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";         // ensure Node runtime (not edge)
+export const dynamic = "force-dynamic";  // NEVER prerender this route
+export const revalidate = 0;             // disable caching for the route
+
 
 // ---- small helpers (no `any`) ---------------------------------------------
 
