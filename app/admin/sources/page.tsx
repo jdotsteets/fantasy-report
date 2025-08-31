@@ -120,14 +120,14 @@ async function toggleAllowedAction(formData: FormData) {
   "use server";
   const id = Number(formData.get("id"));
   const allowed = formData.get("allowed") === "1";
-  await absFetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/admin/sources`, {
+
+  await absFetch("/api/admin/sources", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id, allowed }),
     cache: "no-store",
   }).catch(() => {});
 }
-
 
 // tiny date formatter (used by SummaryTile & the table)
 function fmt(val: string | null | undefined) {
@@ -139,21 +139,19 @@ function fmt(val: string | null | undefined) {
 async function runIngestAction(formData: FormData) {
   "use server";
   const limit = Number(formData.get("limit")) || 50;
-  const includeHealth = formData.get("includeHealth") ? true : false;
-
+  const includeHealth = !!formData.get("includeHealth");
   const sourceIdRaw = formData.get("sourceId");
   const sourceId =
     typeof sourceIdRaw === "string" && sourceIdRaw.trim() !== ""
       ? Number(sourceIdRaw)
       : undefined;
 
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   const qs = new URLSearchParams();
   if (typeof sourceId === "number" && Number.isFinite(sourceId)) {
     qs.set("sourceId", String(sourceId));
   }
 
-  await absFetch(`${base}/api/admin/ingest${qs.size ? `?${qs.toString()}` : ""}`, {
+  await absFetch(`/api/admin/ingest${qs.size ? `?${qs.toString()}` : ""}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
