@@ -1,25 +1,24 @@
 // app/api/admin/ingest/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { ingestAllSources, type UpsertResult } from "@/lib/ingest";
+import { ingestAllSources, ingestSourceById, type UpsertResult } from "@/lib/ingest";
 import {
   getSourcesHealth,
   getSourceErrorDigests,
   type HealthSummary,
+  type IngestTalliesBySource,
 } from "@/lib/adminHealth";
 
-const okKey = (req: NextRequest) => {
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function okKey(req: NextRequest): boolean {
   const want = process.env.ADMIN_KEY ?? "";
   const got = req.headers.get("x-admin-key") ?? "";
   return Boolean(want && got && got === want);
-};
+}
 
-export const runtime = "nodejs";         // ensure Node runtime (not edge)
-export const dynamic = "force-dynamic";  // NEVER prerender this route
-export const revalidate = 0;             // disable caching for the route
-
-
-// ---- small helpers (no `any`) ---------------------------------------------
-
+// small helpers
 function toNumber(input: unknown, fallback: number): number {
   if (typeof input === "number" && Number.isFinite(input)) return input;
   if (typeof input === "string" && input.trim() !== "") {
@@ -28,7 +27,6 @@ function toNumber(input: unknown, fallback: number): number {
   }
   return fallback;
 }
-
 function toBool(input: unknown, fallback = false): boolean {
   if (typeof input === "boolean") return input;
   if (typeof input === "number") return input === 1;
@@ -38,7 +36,6 @@ function toBool(input: unknown, fallback = false): boolean {
   }
   return fallback;
 }
-
 function safeBody(obj: unknown): Record<string, unknown> {
   return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
 }
@@ -51,12 +48,11 @@ export async function POST(req: NextRequest) {
   const url = new URL(req.url);
   const q = url.searchParams;
 
-  // Try to parse JSON body, but keep it as unknown and narrow safely.
-  let parsed: unknown = undefined;
+  let parsed: unknown;
   try {
     parsed = await req.json();
   } catch {
-    // no body provided or invalid JSON; that's fine
+    parsed = undefined;
   }
   const body = safeBody(parsed);
 
@@ -65,26 +61,51 @@ export async function POST(req: NextRequest) {
   const includeHealth = toBool(q.get("includeHealth") ?? body.includeHealth, false);
   const includeErrors = toBool(q.get("includeErrors") ?? body.includeErrors, false);
 
-  // If ingestAllSources supports a specific source, you could plumb it here:
-  // const sourceId = toNumber(q.get("sourceId") ?? body.sourceId, NaN);
-  // const res = await ingestAllSources(limit, Number.isFinite(sourceId) ? sourceId : undefined);
+  // Optional: run only one source
+  const sourceIdRaw = q.get("sourceId") ?? body.sourceId;
+  const sourceId = typeof sourceIdRaw === "string" ? Number(sourceIdRaw) : Number(sourceIdRaw);
+  const hasSingle = Number.isFinite(sourceId);
 
-  const res: Record<number, UpsertResult & { error?: string }> = await ingestAllSources(limit);
+  try {
+    let resultsArray: Array<{ source_id: number; result: UpsertResult }>;
 
-  if (includeHealth) {
-    const tallies: Record<number, { inserted: number; updated: number; skipped: number }> = {};
-    for (const key of Object.keys(res)) {
-      const id = Number(key);
-      const v = res[id];
-      tallies[id] = { inserted: v.inserted, updated: v.updated, skipped: v.skipped };
+    if (hasSingle) {
+      const singleResult = await ingestSourceById(Number(sourceId));
+      resultsArray = [{ source_id: Number(sourceId), result: singleResult }];
+    } else {
+      const all = await ingestAllSources(limit);
+      resultsArray = Array.isArray(all) ? all : [];
     }
 
-    const summary: HealthSummary = await getSourcesHealth(windowHours, tallies);
-    if (includeErrors) {
-      summary.errors = await getSourceErrorDigests(windowHours);
+    // Shape back into a record keyed by source_id
+    const res: Record<number, UpsertResult & { error?: string }> = Object.fromEntries(
+      resultsArray.map((x) => [x.source_id, x.result])
+    );
+
+    if (includeHealth) {
+      // ✅ FIX: provide lastAt so this matches IngestTalliesBySource
+      const tallies: IngestTalliesBySource = {};
+      for (const [k, v] of Object.entries(res)) {
+        const id = Number(k);
+        tallies[id] = {
+          inserted: v.inserted,
+          updated: v.updated,
+          skipped: v.skipped,
+          lastAt: null, // if you later track per-source “lastAt” during this run, fill it here
+        };
+      }
+
+      const summary: HealthSummary = await getSourcesHealth(windowHours, tallies);
+      if (includeErrors) {
+        summary.errors = await getSourceErrorDigests(windowHours);
+      }
+      return NextResponse.json({ ok: true, task: "ingest", res, summary });
     }
-    return NextResponse.json({ ok: true, task: "ingest", res, summary });
+
+    return NextResponse.json({ ok: true, task: "ingest", res });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[/api/admin/ingest] error:", err);
+    return NextResponse.json({ ok: false, error: "ingest_failed" }, { status: 500 });
   }
-
-  return NextResponse.json({ ok: true, task: "ingest", res });
 }

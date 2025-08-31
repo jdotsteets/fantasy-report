@@ -17,6 +17,19 @@ export type SourceHealth = {
   suggestion: string | null;
 };
 
+
+export type PerSourceIngestRow = {
+  source_id: number;
+  source: string | null;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  lastAt: string | null;           // last successful ingest for this source
+  allowed: boolean | null;
+  homepage_url: string | null;
+  rss_url: string | null;
+};
+
 /** Recent ingest error rollups per source (window-scoped) */
 export type ErrorDigest = {
   source_id: number;
@@ -43,13 +56,30 @@ export type HealthSummary = {
   insertedTotal?: number;
   updatedTotal?: number;
   skippedTotal?: number;
-  perSource: SourceHealth[];
-  errors?: ErrorDigest[];
+
+  perSource: Array<any>;
+  errors?: Array<any>;
+  perSourceIngest?: PerSourceIngestRow[];
 };
+
+
+// ── Types ───────────────────────────────────────────────
+export type SourceIngestSummary = {
+  source_id: number;
+  source: string;
+  allowed: boolean | null;
+  rss_url: string | null;
+  homepage_url: string | null;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  lastAt: string | null; // last log timestamp for this source in window
+};
+
 
 export type IngestTalliesBySource = Record<
   number,
-  { inserted: number; updated: number; skipped: number }
+  { inserted: number; updated: number; skipped: number; lastAt: string | null }
 >;
 
 function getPgCode(err: unknown): string | undefined {
@@ -76,61 +106,130 @@ function clampHours(h: number): number {
   return Math.max(1, Math.min(h, 24 * 30));
 }
 
+
+const nz = (v: string | null) => (v ? Number(v) : 0);
+
+/** Compute per-source + total ingest tallies from ingest_logs. */
 /** Compute per-source + total ingest tallies from ingest_logs. */
 export async function getIngestTallies(
   windowHours = 72
-): Promise<{ bySource: IngestTalliesBySource; totals: { inserted: number; updated: number; skipped: number } }> {
+): Promise<{
+  bySource: IngestTalliesBySource;
+  totals: { inserted: number; updated: number; skipped: number };
+}> {
   const wh = clampHours(windowHours);
 
   try {
+    type Row = {
+      source_id: number;   // 0 => unresolved
+      inserted: string;    // bigint as text
+      updated: string;
+      skipped: string;
+      last_at: string | null;
+    };
+
     const rows = (
-      await dbQuery<{
-        source_id: number;
-        inserted: string; // numeric comes back as string in pg
-        updated: string;
-        skipped: string;
-      }>(
+      await dbQuery<Row>(
         `
         WITH win AS (
-          SELECT *
-          FROM ingest_logs
-          WHERE created_at >= NOW() - ($1::int || ' hours')::interval
+          SELECT l.*
+          FROM ingest_logs l
+          WHERE l.created_at >= NOW() - ($1::int || ' hours')::interval
+        ),
+        -- normalize URL/domain -> host (lower, strip leading 'www.')
+        hosty AS (
+          SELECT
+            w.*,
+            NULLIF(
+              lower(regexp_replace(regexp_replace(w.url    , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')),
+              ''
+            ) AS url_host,
+            NULLIF(
+              lower(regexp_replace(regexp_replace(w.domain , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')),
+              ''
+            ) AS dom_host
+          FROM win w
+        ),
+        src_hosts AS (
+          SELECT
+            s.id,
+            lower(s.name) AS name_lc,
+            NULLIF(lower(regexp_replace(regexp_replace(s.homepage_url, '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')), '') AS home_host,
+            NULLIF(lower(regexp_replace(regexp_replace(s.rss_url     , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')), '') AS rss_host
+          FROM sources s
+        ),
+        resolved AS (
+          SELECT
+            COALESCE(
+              h.source_id,
+              s_name.id,
+              s_dom.id,
+              s_url.id
+            ) AS sid,
+            h.reason,
+            h.created_at
+          FROM hosty h
+          -- 1) exact name (case-insensitive)
+          LEFT JOIN LATERAL (
+            SELECT id
+            FROM src_hosts
+            WHERE name_lc = lower(h.source)
+            LIMIT 1
+          ) AS s_name ON h.source_id IS NULL
+          -- 2) domain column → match to home/rss host
+          LEFT JOIN LATERAL (
+            SELECT id
+            FROM src_hosts
+            WHERE h.dom_host IS NOT NULL
+              AND (home_host = h.dom_host OR rss_host = h.dom_host)
+            LIMIT 1
+          ) AS s_dom ON h.source_id IS NULL AND s_name.id IS NULL
+          -- 3) url column → match to home/rss host
+          LEFT JOIN LATERAL (
+            SELECT id
+            FROM src_hosts
+            WHERE h.url_host IS NOT NULL
+              AND (home_host = h.url_host OR rss_host = h.url_host)
+            LIMIT 1
+          ) AS s_url ON h.source_id IS NULL AND s_name.id IS NULL AND s_dom.id IS NULL
         )
         SELECT
-          COALESCE(source_id, 0) AS source_id,
-          SUM(CASE WHEN reason = 'ok_insert' THEN 1 ELSE 0 END)::bigint AS inserted,
-          SUM(CASE WHEN reason = 'ok_update' THEN 1 ELSE 0 END)::bigint AS updated,
+          COALESCE(sid, 0) AS source_id,
+          -- accept both legacy and current reason strings
+          SUM(CASE WHEN reason IN ('ok_insert','inserted') THEN 1 ELSE 0 END)::bigint AS inserted,
+          SUM(CASE WHEN reason IN ('ok_update','updated') THEN 1 ELSE 0 END)::bigint AS updated,
           SUM(CASE
-                WHEN reason = 'invalid_item'
+                WHEN reason IN ('invalid_item','skipped')
                   OR reason LIKE 'skip_%'
-                THEN 1 ELSE 0 END
-          )::bigint AS skipped
-        FROM win
-        GROUP BY source_id
+              THEN 1 ELSE 0 END
+          )::bigint AS skipped,
+          MAX(created_at) AS last_at
+        FROM resolved
+        GROUP BY COALESCE(sid, 0)
+        ORDER BY 1
         `,
         [wh]
       )
     ).rows;
 
     const bySource: IngestTalliesBySource = {};
-    let ins = 0;
-    let upd = 0;
-    let skp = 0;
+    let ins = 0, upd = 0, skp = 0;
 
     for (const r of rows) {
       const sid = Number(r.source_id);
       const inserted = Number(r.inserted ?? 0);
-      const updated = Number(r.updated ?? 0);
-      const skipped = Number(r.skipped ?? 0);
-      if (sid > 0) bySource[sid] = { inserted, updated, skipped };
-      ins += inserted;
-      upd += updated;
-      skp += skipped;
+      const updated  = Number(r.updated  ?? 0);
+      const skipped  = Number(r.skipped  ?? 0);
+      const lastAt   = r.last_at ?? null;
+
+      // totals include unresolved sid=0
+      ins += inserted; upd += updated; skp += skipped;
+
+      if (sid > 0) bySource[sid] = { inserted, updated, skipped, lastAt };
     }
 
     return { bySource, totals: { inserted: ins, updated: upd, skipped: skp } };
   } catch (e: unknown) {
-    // Missing table? Fall back to zeros.
     if (getPgCode(e) === "42P01") {
       return { bySource: {}, totals: { inserted: 0, updated: 0, skipped: 0 } };
     }
@@ -138,17 +237,19 @@ export async function getIngestTallies(
   }
 }
 
+
 /**
  * Compute health for all sources over a time window (default 72h).
  * If `ingestTallies` is omitted, this will compute totals from `ingest_logs`.
  */
+// lib/adminHealth.ts
 export async function getSourcesHealth(
   windowHours = 72,
-  ingestTallies?: IngestTalliesBySource
+  ingestTalliesArg?: IngestTalliesBySource
 ): Promise<HealthSummary> {
   const wh = clampHours(windowHours);
 
-  // Pull per-source recency + counts
+  // Pull per-source recency + article counts
   const rows = (
     await dbQuery<{
       id: number;
@@ -191,7 +292,35 @@ export async function getSourcesHealth(
       )
     ).rows[0] ?? { most_recent: null, oldest: null };
 
-  const perSource: SourceHealth[] = rows.map((r) => {
+  // ── ingest tallies (per-source + totals) ──────────────────────────
+  let bySourceTallies: IngestTalliesBySource = {};
+  let totals = { inserted: 0, updated: 0, skipped: 0 };
+
+  if (ingestTalliesArg) {
+    // caller supplied (e.g., from an ingest run)
+    bySourceTallies = ingestTalliesArg;
+    for (const t of Object.values(ingestTalliesArg)) {
+      totals.inserted += t.inserted;
+      totals.updated  += t.updated;
+      totals.skipped  += t.skipped;
+    }
+  } else {
+    try {
+      const t = await getIngestTallies(wh);
+      bySourceTallies = t.bySource;
+      totals = t.totals;
+    } catch (e) {
+      // Safe fallback when ingest_logs table isn't present yet
+      if (getPgCode(e) !== "42P01") {
+        console.warn("[adminHealth] getIngestTallies failed:", getErrorMessage(e));
+      }
+      bySourceTallies = {};
+      totals = { inserted: 0, updated: 0, skipped: 0 };
+    }
+  }
+
+  // ── derive per-source health rows (recency + simple suggestions) ──
+  const perSource = rows.map((r) => {
     const inWindow = Number(r.in_window ?? 0);
     const total = Number(r.total_articles ?? 0);
 
@@ -199,7 +328,7 @@ export async function getSourcesHealth(
     if (total === 0) status = "cold";
     else if (inWindow === 0 && (r.allowed ?? true)) status = "stale";
 
-    // Suggestions
+    // suggestions
     const hasRss = !!r.rss_url;
     const hasScrape = !!r.homepage_url && !!r.scrape_selector;
     let suggestion: string | null = null;
@@ -210,8 +339,8 @@ export async function getSourcesHealth(
       else suggestion = "Check feed/selector — likely changed.";
     }
 
-    // If caller provided per-source tallies, and this source had zero activity in the run, note it.
-    const t = ingestTallies?.[r.id];
+    // If this source had zero activity in the ingest tallies during the window, nudge.
+    const t = bySourceTallies[r.id];
     if (t && t.inserted + t.updated + t.skipped === 0 && (r.allowed ?? true)) {
       suggestion = suggestion ?? "No rows in the last ingest run.";
     }
@@ -229,7 +358,28 @@ export async function getSourcesHealth(
       totalArticles: total,
       status,
       suggestion,
+    } as SourceHealth;
+  });
+
+  // ── build the table rows used by /admin/sources (perSourceIngest) ──
+  const perSourceIngest = rows.map((s) => {
+    const t = bySourceTallies[s.id] ?? {
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      lastAt: null as string | null,
     };
+    return {
+      source_id: s.id,
+      source: s.name ?? `#${s.id}`,
+      allowed: s.allowed,
+      homepage_url: s.homepage_url,
+      rss_url: s.rss_url,
+      inserted: t.inserted,
+      updated: t.updated,
+      skipped: t.skipped,
+      lastAt: t.lastAt,
+    } as PerSourceIngestRow;
   });
 
   const sourcesPulled = perSource.filter((s) => s.articlesInWindow > 0).length;
@@ -243,45 +393,18 @@ export async function getSourcesHealth(
     sourcesBlank,
     mostRecent: siteAgg.most_recent,
     oldest: siteAgg.oldest,
+    insertedTotal: totals.inserted,
+    updatedTotal: totals.updated,
+    skippedTotal: totals.skipped,
     perSource,
+    perSourceIngest,
   };
-
-  // Fill totals: use caller-provided tallies if given, else compute from ingest_logs.
-  if (ingestTallies) {
-    let ins = 0,
-      upd = 0,
-      skp = 0;
-    for (const t of Object.values(ingestTallies)) {
-      ins += t.inserted;
-      upd += t.updated;
-      skp += t.skipped;
-    }
-    summary.insertedTotal = ins;
-    summary.updatedTotal = upd;
-    summary.skippedTotal = skp;
-  } else {
-    try {
-      const { totals } = await getIngestTallies(wh);
-      summary.insertedTotal = totals.inserted;
-      summary.updatedTotal = totals.updated;
-      summary.skippedTotal = totals.skipped;
-    } catch (e: unknown) {
-      const code = getPgCode(e);
-      if (code !== "42P01") {
-        console.warn("[adminHealth] getIngestTallies failed:", getErrorMessage(e));
-      }
-      summary.insertedTotal = 0;
-      summary.updatedTotal = 0;
-      summary.skippedTotal = 0;
-    }
-  }
 
   // Attach recent ingest error digests (safe if table missing)
   try {
     summary.errors = await getSourceErrorDigests(wh);
   } catch (e: unknown) {
-    const code = getPgCode(e);
-    if (code !== "42P01") {
+    if (getPgCode(e) !== "42P01") {
       console.warn("[adminHealth] getSourceErrorDigests failed:", getErrorMessage(e));
     }
     summary.errors = [];

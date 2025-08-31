@@ -13,6 +13,8 @@ import { PendingFieldset, RunIngestButton } from "@/components/admin/RunIngestCo
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+import { absFetch } from "@/lib/absFetch"; // ✅ adjust path if lib/absFetch.ts is under app/lib
+
 
 /* ───────────────────────── Server Actions ───────────────────────── */
 async function runIngest(formData: FormData) {
@@ -42,7 +44,7 @@ async function runIngest(formData: FormData) {
   if (limitStr && /^\d+$/.test(limitStr)) payload.limit = Number(limitStr);
 
   try {
-    await fetch(`${base}/api/admin/ingest`, {
+    await absFetch(`${base}/api/admin/ingest`, {
       method: "POST",
       headers: {
         "x-admin-key": adminKey,
@@ -91,7 +93,7 @@ async function runBackfill(formData: FormData) {
 
   let notice = "Backfill started.";
   try {
-    const res = await fetch(`${base}/api/backfill-classify?${qs.toString()}`, {
+    const res = await absFetch(`${base}/api/backfill-classify?${qs.toString()}`, {
       method: "GET",
       cache: "no-store",
     });

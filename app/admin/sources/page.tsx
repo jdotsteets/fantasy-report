@@ -5,9 +5,100 @@ import { getSourcesHealth, type HealthSummary, type SourceHealth } from "@/lib/a
 import { Suspense } from "react";
 import SourcesTable from "@/components/admin/SourcesTable";        // <-- NEW client component (next block)
 import QuickAddSource from "@/components/admin/QuickAddSource";
+import RunIngestControls from "@/components/admin/RunIngestControls"; // NEW
+import SourceRowEditor from "@/components/admin/SourceRowEditor";     // NEW (next section)
+import { absFetch } from "@/lib/absFetch"; // adjust path if needed
+                   
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// ───────────────────────── Source-level table ─────────────────────────
+
+
+function SourceLevelSummaryTable({
+  rows,
+  windowHours,
+}: {
+  rows: NonNullable<HealthSummary["perSourceIngest"]>;
+  windowHours: number;
+}) {
+  const active = rows.filter((r) => r.inserted + r.updated + r.skipped > 0);
+  if (active.length === 0) {
+    return (
+      <div className="rounded border p-3 text-sm text-zinc-600">
+        No source activity in the last {windowHours} hours.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead className="bg-zinc-50">
+          <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left">
+            <th>source</th>
+            <th>inserted</th>
+            <th>updated</th>
+            <th>skipped</th>
+            <th>last seen</th>
+            <th>links</th>
+          </tr>
+        </thead>
+        <tbody>
+          {active.map((r) => (
+            <tr key={r.source_id} className="border-t">
+              <td className="px-3 py-2">
+                <a
+                  href={`/admin/sources#source-${r.source_id}`}
+                  className="text-emerald-700 underline"
+                >
+                  {r.source}
+                </a>
+                {!r.allowed ? (
+                  <span className="ml-2 rounded bg-zinc-200 px-1.5 text-xs text-zinc-700">
+                    disabled
+                  </span>
+                ) : null}
+              </td>
+              <td className="px-3 py-2">{r.inserted}</td>
+              <td className="px-3 py-2">{r.updated}</td>
+              <td className="px-3 py-2">{r.skipped}</td>
+              <td className="px-3 py-2">
+                {r.lastAt ? new Date(r.lastAt).toLocaleString() : "—"}
+              </td>
+              <td className="px-3 py-2">
+                <div className="flex flex-wrap gap-2">
+                  {r.homepage_url ? (
+                    <a
+                      className="text-blue-700 underline"
+                      href={r.homepage_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      homepage
+                    </a>
+                  ) : null}
+                  {r.rss_url ? (
+                    <a
+                      className="text-blue-700 underline"
+                      href={r.rss_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      rss
+                    </a>
+                  ) : null}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 
 
 
@@ -29,7 +120,7 @@ async function toggleAllowedAction(formData: FormData) {
   "use server";
   const id = Number(formData.get("id"));
   const allowed = formData.get("allowed") === "1";
-  await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/admin/sources`, {
+  await absFetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/admin/sources`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id, allowed }),
@@ -43,6 +134,34 @@ function fmt(val: string | null | undefined) {
   if (!val) return "—";
   const d = new Date(val);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}
+
+async function runIngestAction(formData: FormData) {
+  "use server";
+  const limit = Number(formData.get("limit")) || 50;
+  const includeHealth = formData.get("includeHealth") ? true : false;
+
+  const sourceIdRaw = formData.get("sourceId");
+  const sourceId =
+    typeof sourceIdRaw === "string" && sourceIdRaw.trim() !== ""
+      ? Number(sourceIdRaw)
+      : undefined;
+
+  const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const qs = new URLSearchParams();
+  if (typeof sourceId === "number" && Number.isFinite(sourceId)) {
+    qs.set("sourceId", String(sourceId));
+  }
+
+  await absFetch(`${base}/api/admin/ingest${qs.size ? `?${qs.toString()}` : ""}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-admin-key": process.env.ADMIN_KEY ?? "",
+    },
+    body: JSON.stringify({ limit, includeHealth }),
+    cache: "no-store",
+  }).catch(() => {});
 }
 
 export default async function AdminSourcesPage({
@@ -64,6 +183,8 @@ export default async function AdminSourcesPage({
       <AdminNav active="sources" />
 
       <h1 className="text-2xl font-bold">Sources Admin</h1>
+
+      <RunIngestControls action={runIngestAction} className="mb-6" />
 
       {/* ── Ingestion Summary (top) ───────────────────────────────────── */}
       <section className="rounded-xl border p-4">
@@ -114,6 +235,20 @@ export default async function AdminSourcesPage({
             mono
           />
         </div>
+      </section>
+
+      {/* ── Source-level Summary ─────────────────────────────── */}
+      <section className="rounded-xl border p-4">
+        <h2 className="mb-3 text-lg font-semibold">
+          Source-level Summary (last {summary.windowHours}h)
+        </h2>
+        <SourceLevelSummaryTable
+          rows={summary.perSourceIngest ?? []}
+          windowHours={summary.windowHours}
+        />
+        <p className="mt-3 text-xs text-zinc-500">
+          Same metrics as the overall summary, broken out by source for this window.
+        </p>
       </section>
 
       {/* ── Stale / Cold Sources (table) ──────────────────────────────── */}
@@ -212,6 +347,11 @@ export default async function AdminSourcesPage({
         <Suspense fallback={<div className="p-6 text-sm text-zinc-500">Loading…</div>}>
           <SourcesTable />
         </Suspense>
+
+        {/* Inline editor anchor target (table links use #source-<id>) */}
+        <div className="mt-6">
+          <SourceRowEditor />
+        </div>
       </section>
     </main>
   );
