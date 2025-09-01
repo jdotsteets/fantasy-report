@@ -6,12 +6,14 @@ import {
   FALLBACK,
   getSafeImageUrl,
   isWeakArticleImage,
-  extractLikelyNameFromTitle,
 } from "@/lib/images";
 import { logIngest, logIngestError } from "@/lib/ingestLogs";
 import { SOURCE_ADAPTERS } from "@/lib/sources";
 import type { SourceAdapter } from "@/lib/sources/types";
 import { normalizeUrl } from "@/lib/sources/shared";
+
+// ✅ new generic adapters (auto-detect)
+import { ADAPTERS } from "@/lib/sourceProbe/adapters";
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -31,8 +33,8 @@ type SourceRow = {
   scrape_path: string | null;
   scrape_selector: string | null;
   paywall: boolean | null;
-  scraper_key?: string | null;
-  adapter_config?: Record<string, unknown> | null;
+  scraper_key?: string | null; // explicit adapter key (legacy map)
+  adapter_config?: Record<string, unknown> | null; // may include { adapter?: string, pageCount?, daysBack?, limit?, headers? }
   fetch_mode?: "auto" | "rss" | "adapter" | null;
 };
 
@@ -41,6 +43,7 @@ type AdapterConfig = {
   daysBack?: number;
   pageCount?: number;
   headers?: Record<string, string>;
+  adapter?: string; // NEW: allow explicit adapter via config
 };
 
 type FeedItem = {
@@ -62,20 +65,28 @@ export type UpsertResult = {
 
 const parser = new Parser();
 
+// map {title,url,author,publishedAt,imageUrl,description?} → FeedItem
 function metaToFeedItem(meta: {
   url: string;
   title: string;
-  description?: string;
-  imageUrl?: string;
-  author?: string;
-  publishedAt?: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  author?: string | null;
+  publishedAt?: string | null | Date;
 }): FeedItem {
+  const published =
+    meta.publishedAt instanceof Date
+      ? meta.publishedAt
+      : meta.publishedAt
+      ? new Date(meta.publishedAt)
+      : null;
+
   return {
-    title: meta.title,
+    title: (meta.title ?? "").trim(),
     link: normalizeUrl(meta.url),
     description: meta.description ?? null,
     author: meta.author ?? null,
-    publishedAt: meta.publishedAt ? new Date(meta.publishedAt) : null,
+    publishedAt: published && !Number.isNaN(published.valueOf()) ? published : null,
     imageUrl: meta.imageUrl ?? null,
   };
 }
@@ -111,7 +122,7 @@ async function fetchRssItems(rssUrl: string): Promise<FeedItem[]> {
   return out;
 }
 
-/* ---------- Safe adapter call helpers (strictly typed) ---------- */
+/* ---------- Safe keyed-adapter call helpers (strictly typed) ---------- */
 
 type IndexHit = { url: string };
 
@@ -135,8 +146,7 @@ function callGetArticle(
   return typeof cfg === "undefined" ? fn(url) : fn(url, cfg);
 }
 
-/** Adapter route: get candidate URLs then enrich each to FeedItem. */
-async function fetchAdapterItems(
+async function fetchKeyedAdapterItems(
   adapter: SourceAdapter,
   pageCount: number,
   cfg?: AdapterConfig
@@ -154,22 +164,100 @@ async function fetchAdapterItems(
   return items;
 }
 
-/** Decide how to fetch items for a source based on fetch_mode. */
+/* ---------- Generic auto-detect adapters (from Probe) ---------- */
+
+type ProbeArticle = {
+  title: string;
+  url: string;
+  author?: string | null;
+  publishedAt?: string | null;
+  imageUrl?: string | null;
+  // may include description on some adapters
+  description?: string | null;
+};
+
+async function tryGenericAdapters(base: URL): Promise<FeedItem[] | null> {
+  // run the first matching adapter that yields items
+  for (const a of ADAPTERS.filter(ad => {
+    try { return ad.match(base); } catch { return false; }
+  })) {
+    try {
+      // probePreview returns OG-enriched article metas
+      const arts: ProbeArticle[] = await a.probePreview(base);
+      if (arts && arts.length) {
+        const mapped = arts.map(ar =>
+          metaToFeedItem({
+            url: ar.url,
+            title: ar.title,
+            description: ar.description ?? undefined,
+            imageUrl: ar.imageUrl ?? undefined,
+            author: ar.author ?? undefined,
+            publishedAt: ar.publishedAt ?? undefined,
+          })
+        );
+        return mapped;
+      }
+    } catch {
+      // continue to next matching adapter
+    }
+  }
+  return null;
+}
+
+/* ---------- Candidate collection (RSS → keyed adapter → generic) ---------- */
+
+function daysBackCutoff(daysBack?: number): Date | null {
+  if (!daysBack || daysBack <= 0) return null;
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - Math.floor(daysBack));
+  return d;
+}
+
+/** Decide how to fetch items for a source (rss, keyed adapter, or generic adapters). */
 async function getCandidateItems(
   src: SourceRow
 ): Promise<{ items: FeedItem[]; via: "rss" | "adapter" | "none" }> {
   const mode: "auto" | "rss" | "adapter" =
     (src.fetch_mode as "auto" | "rss" | "adapter") || "auto";
 
-  const key = (src.scraper_key || "").toLowerCase().trim();
   const cfg = (src.adapter_config ?? {}) as AdapterConfig;
   const pageCount = typeof cfg.pageCount === "number" && cfg.pageCount > 0 ? cfg.pageCount : 2;
-  const adapter = key ? SOURCE_ADAPTERS[key] : undefined;
+  const limit = typeof cfg.limit === "number" && cfg.limit > 0 ? cfg.limit : undefined;
+  const cutoff = daysBackCutoff(cfg.daysBack);
+
+  // explicit adapter key (priority 1): adapter_config.adapter > scraper_key (legacy)
+  const explicitKey =
+    (cfg.adapter || "").trim().toLowerCase() ||
+    (src.scraper_key || "").trim().toLowerCase();
+
+  // base URL for generic adapter matching
+  let base: URL | null = null;
+  try {
+    const raw =
+      (src.homepage_url && src.homepage_url.trim()) ||
+      (src.rss_url && new URL(src.rss_url).origin) ||
+      "";
+    base = raw ? new URL(raw) : null;
+  } catch {
+    base = null;
+  }
+
+  const applyPostFilters = (list: FeedItem[]): FeedItem[] => {
+    let out = list;
+    if (cutoff) {
+      out = out.filter(i => !i.publishedAt || i.publishedAt >= cutoff);
+    }
+    if (limit) {
+      out = out.slice(0, limit);
+    }
+    return out;
+  };
 
   const tryRss = async (): Promise<FeedItem[] | null> => {
     if (!src.rss_url || src.rss_url.trim().length === 0) return null;
     try {
-      return await fetchRssItems(src.rss_url.trim());
+      const items = await fetchRssItems(src.rss_url.trim());
+      return applyPostFilters(items);
     } catch (err) {
       await logIngestError({
         sourceId: src.id,
@@ -182,10 +270,12 @@ async function getCandidateItems(
     }
   };
 
-  const tryAdapter = async (): Promise<FeedItem[] | null> => {
+  const tryKeyed = async (): Promise<FeedItem[] | null> => {
+    const adapter = explicitKey ? SOURCE_ADAPTERS[explicitKey] : undefined;
     if (!adapter) return null;
     try {
-      return await fetchAdapterItems(adapter, pageCount, cfg);
+      const items = await fetchKeyedAdapterItems(adapter, pageCount, cfg);
+      return applyPostFilters(items);
     } catch (err) {
       await logIngestError({
         sourceId: src.id,
@@ -197,21 +287,41 @@ async function getCandidateItems(
     }
   };
 
+  const tryGeneric = async (): Promise<FeedItem[] | null> => {
+    if (!base) return null;
+    try {
+      const items = await tryGenericAdapters(base);
+      return items ? applyPostFilters(items) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // explicit fetch_mode routing
   if (mode === "rss") {
     const items = await tryRss();
     return { items: items ?? [], via: items ? "rss" : "none" };
   }
 
   if (mode === "adapter") {
-    const items = await tryAdapter();
-    return { items: items ?? [], via: items ? "adapter" : "none" };
+    // prefer explicit keyed adapter if present; else generic
+    const keyed = await tryKeyed();
+    if (keyed && keyed.length) return { items: keyed, via: "adapter" };
+    const generic = await tryGeneric();
+    return { items: generic ?? [], via: generic ? "adapter" : "none" };
   }
 
+  // mode === "auto"
   const rssItems = await tryRss();
   if (rssItems && rssItems.length > 0) return { items: rssItems, via: "rss" };
 
-  const adapterItems = await tryAdapter();
-  if (adapterItems && adapterItems.length > 0) return { items: adapterItems, via: "adapter" };
+  // then explicit keyed adapter
+  const keyedItems = await tryKeyed();
+  if (keyedItems && keyedItems.length > 0) return { items: keyedItems, via: "adapter" };
+
+  // finally generic detection
+  const genericItems = await tryGeneric();
+  if (genericItems && genericItems.length > 0) return { items: genericItems, via: "adapter" };
 
   return { items: [], via: "none" };
 }
@@ -285,14 +395,10 @@ async function upsertArticle(
   return "skipped";
 }
 
-/* ───────────────────────── Main entry ───────────────────────── */
+/* ───────────────────────── Main entry (unchanged) ───────────────────────── */
 
 export async function ingestSourceById(sourceId: number): Promise<UpsertResult> {
-  // ✅ parameterized + real QueryResult with `.rows`
-  const one = await dbQuery<SourceRow>(
-    "select * from sources where id = $1",
-    [Number(sourceId)]
-  );
+  const one = await dbQuery<SourceRow>("select * from sources where id = $1", [Number(sourceId)]);
   const src = one.rows[0];
   if (!src) throw new Error(`Source ${sourceId} not found`);
 
@@ -371,7 +477,6 @@ export async function ingestSourceById(sourceId: number): Promise<UpsertResult> 
 export async function ingestAllAllowedSources(): Promise<
   Array<{ source_id: number; result: UpsertResult }>
 > {
-  // ✅ parameterized (no template literal tag)
   const list = await dbQuery<SourceRow>(
     `select * from sources
        where coalesce(allowed, true) = true

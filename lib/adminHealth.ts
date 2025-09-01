@@ -409,6 +409,63 @@ export async function getSourcesHealth(
     }
     summary.errors = [];
   }
+  // lib/adminHealth.ts  (inside getSourcesHealth, near the end, before return)
+try {
+  type R = {
+    source_id: number | null;
+    source: string | null;
+    allowed: boolean | null;
+    rss_url: string | null;
+    homepage_url: string | null;
+    inserted: string;
+    updated: string;
+    skipped: string;
+    last_at: string | null;
+  };
+
+  const ingestRows = (
+    await dbQuery<R>(
+      `
+      WITH win AS (
+        SELECT *
+        FROM ingest_logs
+        WHERE created_at >= NOW() - ($1::int || ' hours')::interval
+      )
+      SELECT
+        COALESCE(w.source_id, 0)                       AS source_id,
+        s.name                                         AS source,
+        s.allowed,
+        s.rss_url,
+        s.homepage_url,
+        SUM(CASE WHEN w.reason IN ('ok_insert','inserted') THEN 1 ELSE 0 END)::bigint AS inserted,
+        SUM(CASE WHEN w.reason IN ('ok_update','updated') THEN 1 ELSE 0 END)::bigint AS updated,
+        SUM(CASE WHEN w.reason IN ('invalid_item','skipped') OR w.reason LIKE 'skip_%' THEN 1 ELSE 0 END)::bigint AS skipped,
+        MAX(w.created_at)                              AS last_at
+      FROM win w
+      LEFT JOIN sources s ON s.id = w.source_id
+      GROUP BY COALESCE(w.source_id, 0), s.name, s.allowed, s.rss_url, s.homepage_url
+      ORDER BY 1
+      `,
+      [wh]
+    )
+  ).rows;
+
+  summary.perSourceIngest = ingestRows
+    .filter(r => Number(r.source_id ?? 0) > 0)
+    .map(r => ({
+      source_id: Number(r.source_id ?? 0),
+      source: r.source ?? `#${r.source_id}`,
+      allowed: r.allowed,
+      rss_url: r.rss_url,
+      homepage_url: r.homepage_url,
+      inserted: Number(r.inserted ?? 0),
+      updated: Number(r.updated ?? 0),
+      skipped: Number(r.skipped ?? 0),
+      lastAt: r.last_at ?? null,
+    }));
+} catch {
+  summary.perSourceIngest = [];
+}
 
   return summary;
 }
