@@ -15,7 +15,8 @@ export type IngestReason =
   | "upsert_updated"
   | "upsert_skipped"
   | "ok_insert"
-  | "ok_update";
+  | "ok_update"
+  | "filtered_out";
 
 /**
  * Unified logger. Safe: will never throw up the call chain.
@@ -52,7 +53,7 @@ export async function logIngestError(args: {
   url?: string | null;
   title?: string | null;
   domain?: string | null;
-  reason: Extract<IngestReason, "fetch_error" | "parse_error" | "scrape_no_matches" | "invalid_item">;
+  reason: Extract<IngestReason, "fetch_error" | "parse_error" | "scrape_no_matches" | "invalid_item" | "filtered_out">;
   detail?: string | null;
 }) {
   return logIngest(args);

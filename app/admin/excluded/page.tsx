@@ -14,6 +14,9 @@ import { PendingFieldset, RunIngestButton } from "@/components/admin/RunIngestCo
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 import { absFetch } from "@/lib/absFetch"; // ✅ adjust path if lib/absFetch.ts is under app/lib
+// app/admin/excluded/page.tsx (or wherever your admin page is)
+import JobRunner from "@/components/admin/JobRunner";
+
 
 
 /* ───────────────────────── Server Actions ───────────────────────── */
@@ -353,6 +356,11 @@ export default async function Page({
           </PendingFieldset>
         </form>
       </div>
+
+          <div className="space-y-8">
+          {/* your existing cards/controls */}
+          <JobRunner />
+          </div>
 
       <section className="mb-8">
         <h2 className="mb-3 text-lg font-semibold">Recent Ingest Skips (7d)</h2>

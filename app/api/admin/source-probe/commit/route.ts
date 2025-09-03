@@ -1,7 +1,7 @@
 // app/api/admin/source-probe/commit/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
-import type { ProbeMethod } from "@/lib/sourceProbe/types";
+import type { ProbeMethod } from "@/lib/sources/types";
 
 type CommitBody = {
   url: string;
@@ -32,8 +32,8 @@ async function findExisting(homepage: string, name: string) {
       `
       SELECT id
       FROM sources
-      WHERE homepage_url ILIKE $1
-         OR name ILIKE $2
+      WHERE homepage_url ILIKE $1::text
+         OR name ILIKE $2::text
       LIMIT 1
       `,
       [homepage, name]
@@ -64,13 +64,12 @@ export async function POST(req: NextRequest) {
           await dbQuery<{ id: number }>(
             `
             UPDATE sources
-            SET
-              name         = $1,
-              homepage_url = $2,
-              rss_url      = $3,
-              allowed      = COALESCE(allowed, TRUE)
-            WHERE id = $4
-            RETURNING id
+               SET name         = $1::text,
+                   homepage_url = $2::text,
+                   rss_url      = $3::text,
+                   allowed      = COALESCE(allowed, TRUE)
+             WHERE id = $4::int
+             RETURNING id
             `,
             [name, homepage, rssUrl, existingId]
           )
@@ -82,7 +81,7 @@ export async function POST(req: NextRequest) {
         await dbQuery<{ id: number }>(
           `
           INSERT INTO sources (name, homepage_url, rss_url, allowed)
-          VALUES ($1, $2, $3, TRUE)
+          VALUES ($1::text, $2::text, $3::text, TRUE)
           ON CONFLICT (homepage_url) DO UPDATE SET
             name    = EXCLUDED.name,
             rss_url = EXCLUDED.rss_url,
@@ -106,13 +105,12 @@ export async function POST(req: NextRequest) {
           await dbQuery<{ id: number }>(
             `
             UPDATE sources
-            SET
-              name            = $1,
-              homepage_url    = $2,
-              scrape_selector = $3,
-              allowed         = COALESCE(allowed, TRUE)
-            WHERE id = $4
-            RETURNING id
+               SET name            = $1::text,
+                   homepage_url    = $2::text,
+                   scrape_selector = $3::text,
+                   allowed         = COALESCE(allowed, TRUE)
+             WHERE id = $4::int
+             RETURNING id
             `,
             [name, homepage, selector, existingId]
           )
@@ -124,7 +122,7 @@ export async function POST(req: NextRequest) {
         await dbQuery<{ id: number }>(
           `
           INSERT INTO sources (name, homepage_url, scrape_selector, allowed)
-          VALUES ($1, $2, $3, TRUE)
+          VALUES ($1::text, $2::text, $3::text, TRUE)
           ON CONFLICT (homepage_url) DO UPDATE SET
             name            = EXCLUDED.name,
             scrape_selector = EXCLUDED.scrape_selector,
@@ -148,14 +146,13 @@ export async function POST(req: NextRequest) {
           await dbQuery<{ id: number }>(
             `
             UPDATE sources
-            SET
-              name           = $1,
-              homepage_url   = $2,
-              adapter_config = COALESCE(adapter_config, '{}'::jsonb)
-                                 || jsonb_build_object('adapter', $3),
-              allowed        = COALESCE(allowed, TRUE)
-            WHERE id = $4
-            RETURNING id
+               SET name           = $1::text,
+                   homepage_url   = $2::text,
+                   adapter_config = COALESCE(adapter_config, '{}'::jsonb)
+                                     || jsonb_build_object('adapter', $3::text),
+                   allowed        = COALESCE(allowed, TRUE)
+             WHERE id = $4::int
+             RETURNING id
             `,
             [name, homepage, adapterKey, existingId]
           )
@@ -167,7 +164,7 @@ export async function POST(req: NextRequest) {
         await dbQuery<{ id: number }>(
           `
           INSERT INTO sources (name, homepage_url, adapter_config, allowed)
-          VALUES ($1, $2, jsonb_build_object('adapter', $3), TRUE)
+          VALUES ($1::text, $2::text, jsonb_build_object('adapter', $3::text), TRUE)
           ON CONFLICT (homepage_url) DO UPDATE SET
             name           = EXCLUDED.name,
             adapter_config = COALESCE(sources.adapter_config, '{}'::jsonb)

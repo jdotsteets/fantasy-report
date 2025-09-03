@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+
 type SourceRow = {
   id: number;
   name: string | null;
@@ -26,11 +27,27 @@ type SourceRow = {
 type SavePayload = Partial<
   Pick<
     SourceRow,
-    "id" | "name" | "rss_url" | "homepage_url" | "scraper_key" | "fetch_mode" | "adapter_config"
+    | "id"
+    | "name"
+    | "rss_url"
+    | "homepage_url"
+    | "scraper_key"
+    | "fetch_mode"
+    | "adapter_config"
   >
 >;
 
-/* Strict JSON parser for adapter_config */
+type TestAdapterResult = {
+  ok: boolean;
+  totalFound?: number;
+  sampleCount?: number;
+  sample?: Array<{ url: string; title?: string }>;
+  error?: string;
+};
+
+const ADMIN_KEY = (process.env.NEXT_PUBLIC_ADMIN_KEY ?? "").trim();
+
+/* ——— JSON parser for adapter_config ——— */
 function parseAdapterConfig(
   text: string
 ): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
@@ -47,7 +64,7 @@ function parseAdapterConfig(
   }
 }
 
-/* Robust fetch — supports several possible API shapes */
+/* ——— Fetch one source (supports several response shapes) ——— */
 async function fetchSource(id: number): Promise<SourceRow | null> {
   const res = await fetch(`/api/admin/sources?id=${id}`, { cache: "no-store" });
   if (!res.ok) return null;
@@ -57,8 +74,7 @@ async function fetchSource(id: number): Promise<SourceRow | null> {
     return (data as { source?: SourceRow }).source ?? null;
   }
   if (Array.isArray(data)) {
-    const hit = (data as SourceRow[]).find((r) => r.id === id);
-    return hit ?? null;
+    return (data as SourceRow[]).find((r) => r.id === id) ?? null;
   }
   if (data && typeof data === "object" && "items" in data) {
     const items = (data as { items?: SourceRow[] }).items ?? [];
@@ -76,11 +92,20 @@ export default function SourceRowEditor() {
   const [loading, setLoading] = useState(false);
   const [src, setSrc] = useState<SourceRow | null>(null);
 
-  // for Test Ingest UX
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  // feedback
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  // keep a ref of "is editor open?" so global listeners don't need to rebind
+  // test adapter (preview)
+  const [taLoading, setTaLoading] = useState(false);
+  const [taResult, setTaResult] = useState<TestAdapterResult | null>(null);
+  const [taMsg, setTaMsg] = useState<string | null>(null);
+
+  // test ingest (writes)
+  const [tiLoading, setTiLoading] = useState(false);
+  const [tiMsg, setTiMsg] = useState<string | null>(null);
+
+  // open/close tracking for ESC
   const isOpenRef = useRef(false);
   useEffect(() => {
     isOpenRef.current = !!src;
@@ -93,26 +118,33 @@ export default function SourceRowEditor() {
   const modeRef = useRef<HTMLSelectElement>(null);
   const cfgRef = useRef<HTMLTextAreaElement>(null);
 
+  /* Load helper */
   const loadById = async (theId: number) => {
     setLoading(true);
     try {
       const s = await fetchSource(theId);
       setSrc(s);
-      setTestResult(null); // reset any previous test result
+      setSaveMsg(null);
+      setTaResult(null);
+      setTaMsg(null);
+      setTiMsg(null);
     } finally {
       setLoading(false);
     }
   };
 
+  /* Close helper */
   const closeEditor = () => {
     setSrc(null);
     setId("");
-    setTesting(false);
-    setTestResult(null);
+    setSaveMsg(null);
+    setTaResult(null);
+    setTaMsg(null);
+    setTiMsg(null);
     history.replaceState(null, "", location.pathname + location.search);
   };
 
-  // Sync from hash on mount; keep listeners stable (no deps!)
+  /* Sync with #source-123 and custom “source:open” events */
   useEffect(() => {
     const syncFromHash = (explicitId?: number) => {
       const nextId =
@@ -124,7 +156,6 @@ export default function SourceRowEditor() {
       }
     };
 
-    // initial load
     syncFromHash();
 
     const onHash = () => syncFromHash();
@@ -144,14 +175,14 @@ export default function SourceRowEditor() {
       window.removeEventListener("source:open", onOpen as EventListener);
       window.removeEventListener("keydown", onEsc);
     };
-  }, []); // <-- important: never changes size
+  }, []);
 
   const cfgText = useMemo(
     () => (src?.adapter_config ? JSON.stringify(src.adapter_config, null, 2) : ""),
     [src?.adapter_config]
   );
 
-  // populate/clear inputs when src changes
+  /* Populate inputs when src changes */
   useEffect(() => {
     const set = (
       el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null,
@@ -177,30 +208,166 @@ export default function SourceRowEditor() {
     }
   }, [src, cfgText]);
 
-  // POST /api/admin/ingest for this source
-  async function onTestIngestClick() {
-    if (!src) return;
-    setTesting(true);
-    setTestResult(null);
+  /* Save (used by Save + Test Ingest) */
+  async function saveCurrent(): Promise<boolean> {
+    if (!src) return false;
+
+    const payload: SavePayload = { id: src.id };
+
+    const nm = nameRef.current?.value?.trim() ?? "";
+    payload.name = nm.length > 0 ? nm : null;
+
+    payload.rss_url = rssRef.current?.value || null;
+    payload.homepage_url = homeRef.current?.value || null;
+
+    const key = keyRef.current?.value?.trim() ?? "";
+    payload.scraper_key = key || null;
+
+    const modeVal = (modeRef.current?.value as SourceRow["fetch_mode"]) ?? "auto";
+    payload.fetch_mode = modeVal;
+
+    const parsed = parseAdapterConfig(cfgRef.current?.value ?? "");
+    if (!parsed.ok) {
+      setSaveMsg(`Invalid adapter_config: ${parsed.error}`);
+      return false;
+    }
+    payload.adapter_config = parsed.value;
+
+    setSaving(true);
+    setSaveMsg(null);
     try {
-      const qs = new URLSearchParams({ sourceId: String(src.id) });
-      const res = await fetch(`/api/admin/ingest?${qs.toString()}`, {
-        method: "POST",
+      const resp = await fetch("/api/admin/sources", {
+        method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ limit: 50, includeHealth: true }),
+        body: JSON.stringify(payload),
       });
 
-      const j = await res.json().catch(() => ({} as any));
-      if (res.ok) {
-        const msg = `OK — inserted=${j.inserted ?? 0}, updated=${j.updated ?? 0}, skipped=${j.skipped ?? 0}`;
-        setTestResult(msg);
+      if (!resp.ok) {
+        let err = "";
+        try {
+          const j = await resp.json();
+          err = j?.error ?? "";
+        } catch {
+          try {
+            err = await resp.text();
+          } catch {
+            /* noop */
+          }
+        }
+        setSaveMsg(`Save failed: ${err || resp.statusText}`);
+        return false;
+      }
+
+      setSaveMsg("Saved ✔︎");
+      void loadById(src.id); // refresh with any computed/default fields
+      return true;
+    } catch (e) {
+      setSaveMsg(`Save failed: ${(e as Error).message}`);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /* Test Adapter (preview) — no DB writes */
+  async function onTestAdapter() {
+    if (!src) return;
+    setTaResult(null);
+    setTiMsg(null);
+
+    // parse config *without* saving
+    const parsed = parseAdapterConfig(cfgRef.current?.value ?? "");
+    if (!parsed.ok) {
+      setTaResult({ ok: false, error: `Invalid adapter_config: ${parsed.error}` });
+      return;
+    }
+    const cfg = parsed.value as any;
+
+    const key = (keyRef.current?.value ?? "").trim();
+    if (!key) {
+      setTaResult({ ok: false, error: "scraper_key is empty." });
+      return;
+    }
+
+    const pageCount = Number(cfg.pageCount ?? 2) || 2;
+    const limit = Number(cfg.limit ?? 20) || 20;
+
+    setTaLoading(true);
+    try {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (ADMIN_KEY) headers["x-admin-key"] = ADMIN_KEY;
+
+      const res = await fetch("/api/admin/test-adapter", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          scraper_key: key,
+          pageCount,
+          limit,
+          adapter_config: cfg,
+        }),
+      });
+
+      const j = (await res.json().catch(() => ({}))) as TestAdapterResult;
+      if (!res.ok) {
+        setTaResult({ ok: false, error: j.error ?? res.statusText });
       } else {
-        setTestResult(`Failed (${res.status}) — ${j.error ?? res.statusText}`);
+        setTaResult(j);
       }
     } catch (e) {
-      setTestResult(`Failed — ${(e as Error).message}`);
+      setTaResult({ ok: false, error: (e as Error).message });
     } finally {
-      setTesting(false);
+      setTaLoading(false);
+    }
+  }
+  
+  /* Test Ingest — saves first, then POSTs JSON to /api/admin/ingest */
+  async function onTestIngest() {
+    if (!src) return;
+    setTiMsg(null);
+
+    const ok = await saveCurrent();
+    if (!ok) return;
+
+    setTiLoading(true);
+    try {
+      const qs = new URLSearchParams({ sourceId: String(src.id) });
+
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (ADMIN_KEY) headers["x-admin-key"] = ADMIN_KEY;
+
+      const body = JSON.stringify({ limit: 50, includeHealth: true });
+
+      const res = await fetch(`/api/admin/ingest?${qs.toString()}`, {
+        method: "POST",
+        headers,
+        body,
+      });
+
+      let text = "";
+      let json: any = undefined;
+      try {
+        json = await res.json();
+      } catch {
+        try {
+          text = await res.text();
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (res.ok) {
+        setTiMsg(
+          `OK — inserted=${json?.inserted ?? 0}, updated=${json?.updated ?? 0}, skipped=${json?.skipped ?? 0}`
+        );
+      } else {
+        const err = json?.error || json?.message || (text || res.statusText);
+        setTiMsg(`Failed (${res.status}) — ${err}`);
+      }
+    } catch (e) {
+      setTiMsg(`Failed — ${(e as Error).message}`);
+    } finally {
+      setTiLoading(false);
     }
   }
 
@@ -248,43 +415,7 @@ export default function SourceRowEditor() {
           className="space-y-3"
           onSubmit={async (e) => {
             e.preventDefault();
-            const payload: SavePayload = { id: src.id };
-
-            if (nameRef.current) {
-              const nm = nameRef.current.value.trim();
-              payload.name = nm.length > 0 ? nm : null;
-            }
-            if (rssRef.current) payload.rss_url = rssRef.current.value || null;
-            if (homeRef.current) payload.homepage_url = homeRef.current.value || null;
-            if (keyRef.current) payload.scraper_key = keyRef.current.value || null;
-            if (modeRef.current)
-              payload.fetch_mode = (modeRef.current.value as SourceRow["fetch_mode"]) ?? null;
-
-            let cfg: SavePayload["adapter_config"] = null;
-            if (cfgRef.current) {
-              const parsed = parseAdapterConfig(cfgRef.current.value);
-              if (!parsed.ok) {
-                alert(`Invalid adapter_config: ${parsed.error}`);
-                return;
-              }
-              cfg = parsed.value;
-            }
-            payload.adapter_config = cfg;
-
-            const resp = await fetch("/api/admin/sources", {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-
-            if (!resp.ok) {
-              const j = (await resp.json().catch(() => ({}))) as { error?: string };
-              alert(`Save failed: ${j.error ?? resp.statusText}`);
-              return;
-            }
-
-            // auto-close after a successful save
-            closeEditor();
+            await saveCurrent();
           }}
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -337,7 +468,7 @@ export default function SourceRowEditor() {
                 ref={keyRef}
                 defaultValue={src.scraper_key ?? ""}
                 className="w-full rounded border px-2 py-1 font-mono"
-                placeholder="fantasylife"
+                placeholder="fftoday"
               />
             </label>
           </div>
@@ -356,25 +487,77 @@ export default function SourceRowEditor() {
             </div>
           </label>
 
-          <div className="flex items-center gap-2">
-            <button className="rounded border px-3 py-1.5 text-sm hover:bg-zinc-50">
-              Save
+          {/* Save + tests */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="rounded border px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-60"
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save"}
             </button>
 
             <button
               type="button"
-              onClick={onTestIngestClick}
+              onClick={onTestAdapter}
               className="rounded border px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-60"
-              disabled={testing}
-              title="Run a one-off ingest for this source (limit 50)"
+              disabled={taLoading}
+              title="Preview adapter output without saving"
             >
-              {testing ? "Testing…" : "Test Ingest"}
+              {taLoading ? "Testing…" : "Test Adapter (preview)"}
             </button>
 
-            {testResult ? (
-              <span className="text-xs text-zinc-600">{testResult}</span>
+            <button
+              type="button"
+              onClick={onTestIngest}
+              className="rounded border px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-60"
+              disabled={tiLoading}
+              title="Save then run a one-off ingest for this source"
+            >
+              {tiLoading ? "Ingesting…" : "Test Ingest"}
+            </button>
+
+            {saveMsg ? (
+              <span className="text-xs text-zinc-600">{saveMsg}</span>
+            ) : null}
+            {taMsg ? (
+              <span className="text-xs text-zinc-600 whitespace-pre-line">{taMsg}</span>
+            ) : null}
+            {tiMsg ? (
+              <span className="text-xs text-zinc-600">{tiMsg}</span>
             ) : null}
           </div>
+
+          {/* Adapter preview results */}
+          {taResult ? (
+            <div className="mt-3 rounded border p-2 text-sm">
+              {taResult.ok ? (
+                <>
+                  <div>
+                    Found <b>{taResult.totalFound ?? 0}</b> • showing{" "}
+                    <b>{taResult.sampleCount ?? 0}</b>
+                  </div>
+                  <ul className="mt-1 list-disc pl-5">
+                    {(taResult.sample ?? []).map((s) => (
+                      <li key={s.url}>
+                        <a
+                          className="text-blue-700 underline"
+                          href={s.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {s.title || s.url}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <div className="text-rose-700">
+                  Failed: {taResult.error ?? "unknown_error"}
+                </div>
+              )}
+            </div>
+          ) : null}
         </form>
       )}
 

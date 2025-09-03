@@ -7,7 +7,7 @@ import type {
   ProbeMethod,
   FeedCandidate,
   ScrapeCandidate,
-} from "@/lib/sourceProbe/types";
+} from "@/lib/sources/types";
 
 export default function ProbePanel() {
   const [url, setUrl] = useState("");

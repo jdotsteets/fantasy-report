@@ -1,7 +1,7 @@
 // app/api/admin/source-probe/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { runProbe } from "@/lib/sourceProbe";
-import type { ProbeRequest } from "@/lib/sourceProbe/types";
+import { runProbe } from "@/lib/sources/index";
+import type { ProbeRequest, ProbeResult } from "@/lib/sources/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

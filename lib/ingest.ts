@@ -8,12 +8,12 @@ import {
   isWeakArticleImage,
 } from "@/lib/images";
 import { logIngest, logIngestError } from "@/lib/ingestLogs";
-import { SOURCE_ADAPTERS } from "@/lib/sources";
+import { ADAPTERS } from "@/lib/sources/adapters";
 import type { SourceAdapter } from "@/lib/sources/types";
 import { normalizeUrl } from "@/lib/sources/shared";
 
-// ✅ new generic adapters (auto-detect)
-import { ADAPTERS } from "@/lib/sourceProbe/adapters";
+import type { JobEventLevel } from "@/lib/jobs";
+import { appendEvent } from "@/lib/jobs";
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -60,6 +60,13 @@ export type UpsertResult = {
   updated: number;
   skipped: number;
 };
+
+
+const ADAPTER_MAP: Record<string, SourceAdapter> = Array.isArray(ADAPTERS as any)
+  ? Object.fromEntries(
+      (ADAPTERS as any[]).map((a: any) => [String(a?.key ?? "").toLowerCase(), a])
+    ) as Record<string, SourceAdapter>
+  : (ADAPTERS as unknown as Record<string, SourceAdapter>);
 
 /* ───────────────────────── Utilities ───────────────────────── */
 
@@ -270,8 +277,14 @@ async function getCandidateItems(
     }
   };
 
+
+
+  
   const tryKeyed = async (): Promise<FeedItem[] | null> => {
-    const adapter = explicitKey ? SOURCE_ADAPTERS[explicitKey] : undefined;
+    const adapter = explicitKey
+        ? ADAPTER_MAP[String(explicitKey).toLowerCase()]
+        : undefined;
+
     if (!adapter) return null;
     try {
       const items = await fetchKeyedAdapterItems(adapter, pageCount, cfg);
@@ -338,14 +351,43 @@ async function cleanImage(
   return { imageUrl: safe, seededPlayer: null };
 }
 
-/** Upsert article — matches your `articles` schema. */
-async function upsertArticle(
+/** Small helper: only log if a jobId is provided */
+async function logJob(
+  jobId: string | undefined,
+  level: JobEventLevel,
+  message: string,
+  meta?: Record<string, unknown>
+): Promise<void> {
+  if (!jobId) return;
+  await appendEvent(jobId, level, message, meta);
+}
+
+/** Upsert article — matches your `articles` schema, with optional job logging. */
+/** Upsert article — SAFE for url NOT NULL (falls back to canonical_url) */
+export async function upsertArticle(
   sourceId: number,
-  item: FeedItem,
-  sport: string | null
+  item: {
+    title: string;
+    link: string;
+    author?: string | null;
+    publishedAt?: Date | null;
+    description?: string | null;
+    imageUrl?: string | null;
+  },
+  sport: string | null,
+  opts?: { jobId?: string }
 ): Promise<"inserted" | "updated" | "skipped"> {
-  const normalizedLink = normalizeUrl(item.link);
-  const published = item.publishedAt ? item.publishedAt.toISOString() : null;
+  const rawLink = item.link ?? "";
+  const normalizedLink = normalizeUrl(rawLink); // your existing helper
+
+  // If we can't normalize to a usable absolute URL, skip safely.
+  if (!normalizedLink) {
+    await logJob(opts?.jobId, "warn", "Skip: invalid URL", { link: rawLink, sourceId });
+    return "skipped";
+  }
+
+  const published =
+    item.publishedAt instanceof Date ? item.publishedAt.toISOString() : null;
 
   let domain: string | null = null;
   try {
@@ -354,44 +396,72 @@ async function upsertArticle(
     domain = null;
   }
 
+  await logJob(opts?.jobId, "debug", "Upsert begin", {
+    sourceId,
+    link: normalizedLink,
+    title: item.title ?? null,
+  });
+
   const sql = `
-    insert into articles (
+    INSERT INTO articles (
       source_id, title, canonical_url, url, author, published_at, discovered_at,
       summary, image_url, sport, domain
     )
-    values (
-      $1,$2,$3,$4,$5,$6, now(),
-      $7,$8,$9,$10
+    VALUES (
+      $1::int,
+      $2::text,
+      $3::text,
+      COALESCE(NULLIF($4::text, ''), $3::text),  -- <-- url fallback so it's NEVER NULL
+      $5::text,
+      $6::timestamptz,
+      now(),
+      $7::text,
+      $8::text,
+      $9::text,
+      $10::text
     )
-    on conflict (canonical_url)
-    do update set
-      title        = excluded.title,
-      url          = excluded.url,
-      author       = excluded.author,
-      published_at = coalesce(excluded.published_at, articles.published_at),
-      summary      = excluded.summary,
-      image_url    = excluded.image_url,
-      sport        = coalesce(excluded.sport, articles.sport),
-      domain       = excluded.domain
-    returning (xmax = 0) as inserted
+    ON CONFLICT (canonical_url)
+    DO UPDATE SET
+      title        = EXCLUDED.title,
+      url          = EXCLUDED.url, -- safe, due to COALESCE above
+      author       = EXCLUDED.author,
+      published_at = COALESCE(EXCLUDED.published_at, articles.published_at),
+      summary      = EXCLUDED.summary,
+      image_url    = EXCLUDED.image_url,
+      sport        = COALESCE(EXCLUDED.sport, articles.sport),
+      domain       = EXCLUDED.domain
+    RETURNING (xmax = 0) AS inserted
   `;
+
   const params = [
     sourceId,
-    item.title,
-    normalizedLink,
-    normalizedLink,
+    item.title ?? "",
+    normalizedLink,            // canonical_url
+    normalizedLink,            // url (falls back via COALESCE)
     item.author ?? null,
     published,
     item.description ?? null,
     item.imageUrl ?? null,
     sport,
     domain,
-  ];
+  ] as const;
 
   const result = await dbQuery<{ inserted: boolean }>(sql, params);
-  const flag = result.rows[0]?.inserted;
-  if (flag === true) return "inserted";
-  if (flag === false) return "updated";
+  const insertedFlag = result.rows[0]?.inserted;
+
+  if (insertedFlag === true) {
+    await logJob(opts?.jobId, "info", "Article inserted", { link: normalizedLink, sourceId });
+    return "inserted";
+  }
+  if (insertedFlag === false) {
+    await logJob(opts?.jobId, "debug", "Article updated", { link: normalizedLink, sourceId });
+    return "updated";
+  }
+
+  await logJob(opts?.jobId, "warn", "Article upsert skipped (no RETURNING row)", {
+    link: normalizedLink,
+    sourceId,
+  });
   return "skipped";
 }
 
@@ -436,9 +506,15 @@ export async function ingestSourceById(sourceId: number): Promise<UpsertResult> 
 
       if (!allowItem(feedLike, feedLike.link)) {
         skipped++;
+        await logIngestError({
+          sourceId: src.id,
+          reason: "filtered_out",
+          detail: `filtered by allowItem`,
+          url: feedLike.link,
+          title: feedLike.title,
+        });
         continue;
       }
-
       const cls = classifyLeagueCategory(feedLike) as {
         league?: string | null;
         category?: string | null;

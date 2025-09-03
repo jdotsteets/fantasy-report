@@ -1,38 +1,16 @@
-// lib/sourceProbe/helpers.ts
+// lib/sources/helpers.ts
 import * as cheerio from "cheerio";
+import type { ProbeArticle } from "./types";
+import { httpGet } from "./shared";
 
-// Strong, browser-like User-Agent helps with Cloudflare/CDN sites (FantasyPros, etc.)
-export async function httpGet(
-  url: string,
-  opts?: { retries?: number; timeoutMs?: number; headers?: Record<string, string> }
-): Promise<string> {
-  const retries = opts?.retries ?? 2;
-  const timeoutMs = opts?.timeoutMs ?? 15000;
-  const headers: Record<string, string> = {
-    "user-agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "accept":
-      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "accept-language": "en-US,en;q=0.9",
-    ...opts?.headers,
-  };
-
-  for (let i = 0; i <= retries; i++) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, { redirect: "follow", headers, signal: ctrl.signal });
-      clearTimeout(t);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.text();
-    } catch (e) {
-      clearTimeout(t);
-      if (i === retries) throw e as Error;
-      await new Promise((r) => setTimeout(r, 250));
-    }
-  }
-  throw new Error("unreachable");
+export async function fetchText(url: string): Promise<string> {
+  const r = await fetch(url, { redirect: "follow" });
+  if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+  return await r.text();
 }
+
+
+
 
 export function parseHtml(html: string): cheerio.CheerioAPI {
   return cheerio.load(html);

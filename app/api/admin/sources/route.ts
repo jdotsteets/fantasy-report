@@ -1,127 +1,180 @@
+// app/api/admin/sources/route.ts
 import { dbQuery } from "@/lib/db";
 import { z } from "zod";
 
-// + include scrape_path (optional, allow relative or absolute)
+/* ────────────────────────── schema ────────────────────────── */
+
+const FETCH_MODE = z.enum(["auto", "rss", "adapter"]);
+
 const upsertSchema = z.object({
   name: z.string().min(2).max(200),
-  homepage_url: z.string().url().optional().or(z.literal("")),
-  rss_url: z.string().url().optional().or(z.literal("")),
-  favicon_url: z.string().url().optional().or(z.literal("")),
-  sitemap_url: z.string().url().optional().or(z.literal("")),
-  scrape_path: z.string().min(1).max(500).optional().or(z.literal("")), // <—
-  category: z.enum([
-    "Fantasy News","Rankings","Start/Sit","Injury","DFS","Dynasty",
-    "Betting/DFS","Podcast","Team Site","Other","",
-  ]).optional(),
-  priority: z.coerce.number().int().min(0).max(9999).optional().default(0),
-  allowed: z.coerce.boolean().optional().default(true),
+
+  // URLs come as strings; we nullify blank below
+  homepage_url: z.string().optional().default(""),
+  rss_url: z.string().optional().default(""),
+  favicon_url: z.string().optional().default(""),
+  sitemap_url: z.string().optional().default(""),
+
+  // optional hints for scrape
+  scrape_path: z.string().optional().default(""),
+  scrape_selector: z.string().optional().default(""),
+
+  // misc
+  category: z.string().optional().default(""),
+  allowed: z.boolean().optional().default(true),
+  priority: z.number().int().min(0).max(9999).optional().default(0),
+
+  // adapter bits
+  scraper_key: z.string().optional().default(""),
+  adapter_config: z.record(z.string(), z.unknown()).optional().default({}),
+  fetch_mode: FETCH_MODE.optional().default("auto"),
 });
+
+function toText(v: unknown): string | null {
+  const s = (v ?? "").toString().trim();
+  return s.length ? s : null;
+}
+function toJsonb(v: unknown): string | null {
+  if (v == null) return null;
+  try {
+    // pg will parse text -> jsonb when cast with ::jsonb
+    return JSON.stringify(v);
+  } catch {
+    return null;
+  }
+}
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof z.ZodError) return err.issues.map(i => i.message).join(", ");
-  if (typeof err === "object" && err && "message" in err) {
-    const m = (err as { message?: unknown }).message;
+  if (err && typeof err === "object" && "message" in err) {
+    const m = (err as any).message;
     if (typeof m === "string") return m;
   }
   return "Invalid input";
 }
 
-await dbQuery("select 1");
+/* ────────────────────────── GET ────────────────────────── */
 
-// GET now returns scrape_path too
 export async function GET() {
   try {
     const r = await dbQuery(
-      `select id, name, homepage_url, rss_url, scrape_selector, scrape_path,
-              favicon_url, sitemap_url, category, allowed, priority
+      `select id, name, homepage_url, rss_url, favicon_url, sitemap_url,
+              scrape_path, scrape_selector, category, allowed, priority,
+              scraper_key, adapter_config, fetch_mode
          from sources
-        order by created_at desc
-        limit 500`
+        order by id desc
+        limit 500`,
+      []
     );
     return Response.json(r.rows);
-  } catch (err: unknown) {
+  } catch (err) {
     return Response.json({ ok: false, error: getErrorMessage(err) }, { status: 500 });
   }
 }
 
+/* ────────────────────────── POST (create) ────────────────────────── */
+
 export async function POST(req: Request) {
   try {
-    const v = upsertSchema.parse(await req.json());
-    const res = await dbQuery(
-      `
-      insert into sources
-        (name, homepage_url, rss_url, favicon_url, sitemap_url, scrape_path,
-         category, allowed, priority)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      on conflict (name) do update set
-        homepage_url = excluded.homepage_url,
-        rss_url      = excluded.rss_url,
-        favicon_url  = excluded.favicon_url,
-        sitemap_url  = excluded.sitemap_url,
-        scrape_path  = excluded.scrape_path,
-        category     = excluded.category,
-        allowed      = excluded.allowed,
-        priority     = excluded.priority
+    const body = upsertSchema.parse(await req.json());
+
+    const params = [
+      body.name,                                             // $1  ::text
+      toText(body.homepage_url),                             // $2  ::text
+      toText(body.rss_url),                                  // $3  ::text
+      toText(body.favicon_url),                              // $4  ::text
+      toText(body.sitemap_url),                              // $5  ::text
+      toText(body.scrape_path),                              // $6  ::text
+      toText(body.scrape_selector),                          // $7  ::text
+      toText(body.category),                                 // $8  ::text
+      !!body.allowed,                                        // $9  ::boolean
+      Number(body.priority) || 0,                            // $10 ::integer
+      toText(body.scraper_key),                              // $11 ::text
+      toJsonb(body.adapter_config),                          // $12 ::jsonb
+      body.fetch_mode,                                       // $13 ::text
+    ];
+
+    const sql = `
+      insert into sources (
+        name, homepage_url, rss_url, favicon_url, sitemap_url,
+        scrape_path, scrape_selector, category, allowed, priority,
+        scraper_key, adapter_config, fetch_mode
+      )
+      values (
+        $1::text,  $2::text,  $3::text,  $4::text,  $5::text,
+        $6::text,  $7::text,  $8::text,  $9::boolean, $10::integer,
+        $11::text, $12::jsonb, $13::text
+      )
       returning id
-      `,
-      [
-        v.name.trim(),
-        v.homepage_url || null,
-        v.rss_url || null,
-        v.favicon_url || null,
-        v.sitemap_url || null,
-        v.scrape_path || null,           // <—
-        v.category || null,
-        v.allowed ?? true,
-        v.priority ?? 0,
-      ]
-    );
-    return Response.json({ ok: true, id: res.rows[0].id });
-  } catch (err: unknown) {
+    `;
+
+    const r = await dbQuery(sql, params);
+    return Response.json({ ok: true, id: r.rows[0].id });
+  } catch (err) {
     return Response.json({ ok: false, error: getErrorMessage(err) }, { status: 400 });
   }
 }
 
+/* ────────────────────────── PATCH (partial update) ────────────────────────── */
+
 export async function PATCH(req: Request) {
   try {
-    const body = await req.json();
-    const id = Number(body?.id);
+    const raw = await req.json();
+    const id = Number(raw?.id);
     if (!Number.isFinite(id) || id <= 0) {
       return Response.json({ ok: false, error: "invalid_id" }, { status: 400 });
     }
 
-    const toNullIfBlank = (v: unknown) => {
-      const t = (v ?? "").toString().trim();
-      return t.length ? t : null;
-    };
-    const normalizeUrl = (v: unknown): string | null => {
-      const raw = (v ?? "").toString().trim();
-      if (!raw) return null;
-      try { const u = new URL(raw); if (/^https?:$/.test(u.protocol)) return u.toString(); } catch {}
-      try { const u2 = new URL("https://" + raw.replace(/^\/*/, "")); if (/^https?:$/.test(u2.protocol)) return u2.toString(); } catch {}
-      return raw;
-    };
+    // Accept a subset; convert/normalize here
+    const updates: Record<string, any> = {};
 
-    const updates: Record<string, unknown> = {};
-    if (Object.prototype.hasOwnProperty.call(body, "allowed")) updates.allowed = !!body.allowed;
-    if (Object.prototype.hasOwnProperty.call(body, "homepage_url")) updates.homepage_url = normalizeUrl(body.homepage_url);
-    if (Object.prototype.hasOwnProperty.call(body, "rss_url")) updates.rss_url = normalizeUrl(body.rss_url);
-    if (Object.prototype.hasOwnProperty.call(body, "scrape_selector")) updates.scrape_selector = toNullIfBlank(body.scrape_selector);
-    if (Object.prototype.hasOwnProperty.call(body, "scrape_path")) updates.scrape_path = toNullIfBlank(body.scrape_path); // <—
+    if ("name" in raw) updates.name = toText(raw.name);
+    if ("homepage_url" in raw) updates.homepage_url = toText(raw.homepage_url);
+    if ("rss_url" in raw) updates.rss_url = toText(raw.rss_url);
+    if ("favicon_url" in raw) updates.favicon_url = toText(raw.favicon_url);
+    if ("sitemap_url" in raw) updates.sitemap_url = toText(raw.sitemap_url);
+    if ("scrape_path" in raw) updates.scrape_path = toText(raw.scrape_path);
+    if ("scrape_selector" in raw) updates.scrape_selector = toText(raw.scrape_selector);
+    if ("category" in raw) updates.category = toText(raw.category);
+    if ("allowed" in raw) updates.allowed = !!raw.allowed;
+    if ("priority" in raw) updates.priority = Number(raw.priority) || 0;
+    if ("scraper_key" in raw) updates.scraper_key = toText(raw.scraper_key);
+    if ("adapter_config" in raw) updates.adapter_config = toJsonb(raw.adapter_config);
+    if ("fetch_mode" in raw) updates.fetch_mode = toText(raw.fetch_mode);
 
     if (Object.keys(updates).length === 0) {
       return Response.json({ ok: false, error: "no_fields_to_update" }, { status: 400 });
     }
 
     const fields = Object.keys(updates);
-    const setSql = fields.map((k, i) => `${k} = $${i + 1}`).join(", ");
-    type SqlParam = string | number | boolean | Date | null;
-    const params: SqlParam[] = fields.map(k => updates[k] as SqlParam);
-    params.push(id as SqlParam);
+    const casts: Record<string, string> = {
+      name: "::text",
+      homepage_url: "::text",
+      rss_url: "::text",
+      favicon_url: "::text",
+      sitemap_url: "::text",
+      scrape_path: "::text",
+      scrape_selector: "::text",
+      category: "::text",
+      allowed: "::boolean",
+      priority: "::integer",
+      scraper_key: "::text",
+      adapter_config: "::jsonb",
+      fetch_mode: "::text",
+    };
 
-    await dbQuery(`update sources set ${setSql} where id = $${fields.length + 1}`, params);
+    const setSql = fields
+      .map((k, i) => `${k} = $${i + 1}${casts[k] ?? ""}`)
+      .join(", ");
+
+    const params = fields.map(k => updates[k]);
+    params.push(id);
+
+    const sql = `update sources set ${setSql} where id = $${fields.length + 1}::integer`;
+    await dbQuery(sql, params);
+
     return Response.json({ ok: true });
-  } catch (err: unknown) {
+  } catch (err) {
     return Response.json({ ok: false, error: getErrorMessage(err) }, { status: 400 });
   }
 }

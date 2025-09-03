@@ -1,78 +1,139 @@
 // app/api/admin/test-adapter/route.ts
-import { NextResponse } from "next/server";
-import { z } from "zod";
-import { SOURCE_ADAPTERS } from "@/lib/sources";
-import { normalizeUrl } from "@/lib/sources/shared";
+import { NextRequest } from "next/server";
+// If your adapter map lives in "@/lib/sources":
+import { ADAPTERS } from "@/lib/sources/adapters";
+// If instead you keep them in "@/lib/source/adapters", swap the import:
+// import { ADAPTERS as ADAPTERS } from "@/lib/source/adapters";
 
-const bodySchema = z.object({
-  scraper_key: z.string().min(1),
-  // optional: either test a single article URL...
-  url: z.string().url().optional(),
-  // ...or list N pages and enrich the first M hits
-  pageCount: z.number().int().min(1).max(10).optional().default(2),
-  limit: z.number().int().min(1).max(20).optional().default(5),
-});
+import type { SourceAdapter } from "@/lib/sources/types";
 
-type TestHit = { url: string; title?: string; publishedAt?: string | null };
+type AdapterConfig = {
+  pageCount?: number;
+  daysBack?: number;
+  limit?: number;
+  headers?: Record<string, string>;
+};
 
-export async function POST(req: Request) {
+function okAuth(req: NextRequest) {
+  // Optional guard (matches SourceRowEditor + ingest routes)
+  const key =
+    (process.env.NEXT_PUBLIC_ADMIN_KEY ?? process.env.ADMIN_KEY ?? "").trim();
+  if (!key) return true;
+  return (req.headers.get("x-admin-key") ?? "").trim() === key;
+}
+
+function getAdapterByKey(
+  key: string
+): SourceAdapter | undefined {
+  const anyAdapters: any = ADAPTERS as any;
+
+  if (Array.isArray(anyAdapters)) {
+    // array of adapters with a 'key' property
+    return anyAdapters.find(
+      (a: any) => (a?.key ?? "").toLowerCase() === key
+    ) as SourceAdapter | undefined;
+  }
+
+  // dictionary/object form
+  const dict = anyAdapters as Record<string, SourceAdapter | undefined>;
+  return dict[key];
+}
+
+
+async function callGetIndex(
+  adapter: SourceAdapter,
+  pageCount: number,
+  cfg?: AdapterConfig
+) {
+  const fn = adapter.getIndex as (
+    pages?: number,
+    config?: AdapterConfig
+  ) => Promise<Array<{ url: string }>>;
+  return typeof cfg === "undefined" ? fn(pageCount) : fn(pageCount, cfg);
+}
+
+async function callGetArticle(
+  adapter: SourceAdapter,
+  url: string,
+  cfg?: AdapterConfig
+) {
+  const fn = adapter.getArticle as (
+    u: string,
+    config?: AdapterConfig
+  ) => Promise<{
+    url: string;
+    title: string;
+    description?: string;
+    imageUrl?: string;
+    author?: string;
+    publishedAt?: string;
+  }>;
+  return typeof cfg === "undefined" ? fn(url) : fn(url, cfg);
+}
+
+export async function POST(req: NextRequest) {
+  if (!okAuth(req)) {
+    return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
   try {
-    const raw = await req.json();
-    const body = bodySchema.parse(raw);
+    const body = (await req.json().catch(() => ({}))) as {
+      scraper_key?: string;
+      pageCount?: number;
+      limit?: number;
+      adapter_config?: AdapterConfig;
+    };
 
-    const key = body.scraper_key.trim().toLowerCase();
-    const adapter = SOURCE_ADAPTERS[key];
-    if (!adapter) {
-      return NextResponse.json(
-        { ok: false, error: `No adapter registered for '${key}'` },
-        { status: 404 }
+    const key = String(body.scraper_key ?? "").trim().toLowerCase();
+    if (!key) {
+      return Response.json(
+        { ok: false, error: "scraper_key required" },
+        { status: 400 }
       );
     }
 
-    // Mode A: enrich a single URL
-    if (body.url) {
-      const meta = await adapter.getArticle(normalizeUrl(body.url));
-      const sample: TestHit[] = [
-        { url: meta.url, title: meta.title, publishedAt: meta.publishedAt ?? null },
-      ];
-      return NextResponse.json({
-        ok: true,
-        mode: "single",
-        sampleCount: sample.length,
-        sample,
-      });
+    const adapter = getAdapterByKey(key);
+    if (!adapter) {
+      return Response.json(
+        { ok: false, error: `unknown adapter "${key}"` },
+        { status: 400 }
+      );
     }
 
-    // Mode B: list and sample-enrich some hits
-    const hits = await adapter.getIndex(body.pageCount); // one arg only
-    const sample: TestHit[] = [];
-    for (const h of hits.slice(0, body.limit)) {
+    
+    // Config + defaults
+    const cfg = (body.adapter_config ?? {}) as AdapterConfig;
+    const pageCount = Number(body.pageCount ?? cfg.pageCount ?? 2) || 2;
+    // cap preview to avoid hammering the site
+    const limit = Math.max(
+      1,
+      Math.min(Number(body.limit ?? cfg.limit ?? 20) || 20, 50)
+    );
+
+    // 1) Index
+    const hits = await callGetIndex(adapter, pageCount, cfg);
+
+    // 2) Enrich a small sample
+    const sample: Array<{ url: string; title?: string }> = [];
+    for (const h of hits.slice(0, limit)) {
       try {
-        const meta = await adapter.getArticle(normalizeUrl(h.url)); // one arg only
-        sample.push({
-          url: meta.url,
-          title: meta.title,
-          publishedAt: meta.publishedAt ?? null,
-        });
+        const art = await callGetArticle(adapter, h.url, cfg);
+        sample.push({ url: art.url, title: art.title });
       } catch {
-        // skip bad ones to let the UI see others
+        // skip bad URL, keep preview resilient
       }
     }
 
-    return NextResponse.json({
+    return Response.json({
       ok: true,
-      mode: "index",
       totalFound: hits.length,
       sampleCount: sample.length,
       sample,
     });
-  } catch (err) {
-    const msg =
-      err instanceof z.ZodError
-        ? err.issues.map((i) => i.message).join(", ")
-        : err instanceof Error
-        ? err.message
-        : "unknown_error";
-    return NextResponse.json({ ok: false, error: msg }, { status: 400 });
+  } catch (e: any) {
+    return Response.json(
+      { ok: false, error: e?.message ?? "invalid_input" },
+      { status: 400 }
+    );
   }
 }

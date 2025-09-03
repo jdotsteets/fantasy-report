@@ -1,111 +1,65 @@
-// app/api/admin/ingest/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { ingestAllSources, ingestSourceById, type UpsertResult } from "@/lib/ingest";
-import {
-  getSourcesHealth,
-  getSourceErrorDigests,
-  type HealthSummary,
-  type IngestTalliesBySource,
-} from "@/lib/adminHealth";
+import { createJob, appendEvent, setProgress, finishJobSuccess, failJob } from "@/lib/jobs";
+import { runIngestOnce } from "@/lib/ingestRunner";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+type Body = {
+  sourceId?: number | string;
+  limit?: number | string;
+  debug?: boolean | string;
+  sport?: string | null;
+};
 
-function okKey(req: NextRequest): boolean {
-  const want = process.env.ADMIN_KEY ?? "";
-  const got = req.headers.get("x-admin-key") ?? "";
-  return Boolean(want && got && got === want);
-}
-
-// small helpers
-function toNumber(input: unknown, fallback: number): number {
-  if (typeof input === "number" && Number.isFinite(input)) return input;
-  if (typeof input === "string" && input.trim() !== "") {
-    const n = Number(input);
-    if (Number.isFinite(n)) return n;
+function toInt(val: number | string | undefined): number | undefined {
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (typeof val === "string" && val.trim() !== "") {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : undefined;
   }
-  return fallback;
+  return undefined;
 }
-function toBool(input: unknown, fallback = false): boolean {
-  if (typeof input === "boolean") return input;
-  if (typeof input === "number") return input === 1;
-  if (typeof input === "string") {
-    const v = input.trim().toLowerCase();
-    return v === "1" || v === "true" || v === "yes";
+
+function toBool(val: boolean | string | undefined): boolean | undefined {
+  if (typeof val === "boolean") return val;
+  if (typeof val === "string") {
+    if (val.toLowerCase() === "true") return true;
+    if (val.toLowerCase() === "false") return false;
   }
-  return fallback;
-}
-function safeBody(obj: unknown): Record<string, unknown> {
-  return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
+  return undefined;
 }
 
 export async function POST(req: NextRequest) {
-  if (!okKey(req)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
-
-  const url = new URL(req.url);
-  const q = url.searchParams;
-
-  let parsed: unknown;
+  let body: Body;
   try {
-    parsed = await req.json();
+    body = (await req.json()) as Body;
   } catch {
-    parsed = undefined;
+    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
-  const body = safeBody(parsed);
 
-  const limit = toNumber(q.get("limit") ?? body.limit, 50);
-  const windowHours = Math.max(1, toNumber(q.get("windowHours") ?? body.windowHours, 72));
-  const includeHealth = toBool(q.get("includeHealth") ?? body.includeHealth, false);
-  const includeErrors = toBool(q.get("includeErrors") ?? body.includeErrors, false);
+  const sourceId = toInt(body.sourceId);
+  const limit = toInt(body.limit) ?? 50;
+  const debug = toBool(body.debug) ?? false;
+  const sport = typeof body.sport === "string" ? body.sport : null;
 
-  // Optional: run only one source
-  const sourceIdRaw = q.get("sourceId") ?? body.sourceId;
-  const sourceId = typeof sourceIdRaw === "string" ? Number(sourceIdRaw) : Number(sourceIdRaw);
-  const hasSingle = Number.isFinite(sourceId);
+  const job = await createJob("ingest", { sourceId, limit, debug, sport }, "admin");
 
   try {
-    let resultsArray: Array<{ source_id: number; result: UpsertResult }>;
+    await appendEvent(job.id, "info", "Ingest started", { sourceId, limit, debug, sport });
 
-    if (hasSingle) {
-      const singleResult = await ingestSourceById(Number(sourceId));
-      resultsArray = [{ source_id: Number(sourceId), result: singleResult }];
-    } else {
-      const all = await ingestAllSources(limit);
-      resultsArray = Array.isArray(all) ? all : [];
+    let processed = 0;
+    for await (const step of runIngestOnce({ sourceId, limit, debug, sport, jobId: job.id })) {
+      if (step.delta) {
+        processed += step.delta;
+        await setProgress(job.id, processed);
+      }
+      await appendEvent(job.id, step.level, step.message, step.meta);
     }
 
-    // Shape back into a record keyed by source_id
-    const res: Record<number, UpsertResult & { error?: string }> = Object.fromEntries(
-      resultsArray.map((x) => [x.source_id, x.result])
-    );
-
-    if (includeHealth) {
-      // ✅ FIX: provide lastAt so this matches IngestTalliesBySource
-      const tallies: IngestTalliesBySource = {};
-      for (const [k, v] of Object.entries(res)) {
-        const id = Number(k);
-        tallies[id] = {
-          inserted: v.inserted,
-          updated: v.updated,
-          skipped: v.skipped,
-          lastAt: null, // if you later track per-source “lastAt” during this run, fill it here
-        };
-      }
-
-      const summary: HealthSummary = await getSourcesHealth(windowHours, tallies);
-      if (includeErrors) {
-        summary.errors = await getSourceErrorDigests(windowHours);
-      }
-      return NextResponse.json({ ok: true, task: "ingest", res, summary });
-    }
-
-    return NextResponse.json({ ok: true, task: "ingest", res });
+    await finishJobSuccess(job.id, "Ingest finished");
+    return NextResponse.json({ ok: true, job_id: job.id });
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[/api/admin/ingest] error:", err);
-    return NextResponse.json({ ok: false, error: "ingest_failed" }, { status: 500 });
+    const message = err instanceof Error ? err.message : "unknown error";
+    await appendEvent(job.id, "error", "Ingest failed", { error: message });
+    await failJob(job.id, message);
+    return NextResponse.json({ ok: false, job_id: job.id, error: message }, { status: 500 });
   }
 }
