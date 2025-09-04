@@ -90,11 +90,15 @@ export type FeedItem = {
   source_id?: number | null;
 };
 
+
+
+
 export type SourceConfig = {
   id: number;
   homepage_url: string | null;
   rss_url: string | null;
+  sitemap_url: string | null;
   scrape_selector: string | null;
-  adapter: string | null; // from adapter_config->>'adapter'
+  adapter: string | null;
+  fetch_mode: "auto" | "rss" | "sitemap" | "html" | null; // keep 'html' for future
 };
-

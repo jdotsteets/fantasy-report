@@ -16,7 +16,9 @@ export type IngestReason =
   | "upsert_skipped"
   | "ok_insert"
   | "ok_update"
-  | "filtered_out";
+  | "filtered_out"
+  | "section_captured"
+  | "static_detected";
 
 /**
  * Unified logger. Safe: will never throw up the call chain.

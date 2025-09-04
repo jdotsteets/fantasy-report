@@ -15,7 +15,7 @@ import { ADAPTERS, fetchFromSitemap } from "./adapters";
 import { enrichWithOG } from "./helpers";
 import { allowItem as coreAllowItem} from "@/lib/contentFilter";
 import { httpGet } from "./shared";
-import { FeedItem, SourceConfig } from "./types";
+import { FeedItem, SourceConfig } from "./types"; 
 import { dbQuery } from "../db";
 
 
@@ -326,25 +326,82 @@ function dedupe(items: ProbeArticle[]): ProbeArticle[] {
 
 
 async function loadSourceConfig(sourceId: number): Promise<SourceConfig | null> {
-  const res = await dbQuery<{
-    id: number;
-    homepage_url: string | null;
-    rss_url: string | null;
-    scrape_selector: string | null;
-    adapter: string | null;
-  }>(
+  const res = await dbQuery<SourceConfig>(
     `
     SELECT
-      id, homepage_url, rss_url, scrape_selector,
-      COALESCE(adapter_config->>'adapter', NULL) AS adapter
+      id,
+      homepage_url,
+      rss_url,
+      sitemap_url,
+      scrape_selector,
+      COALESCE(adapter_config->>'adapter', NULL) AS adapter,
+      COALESCE(fetch_mode, 'auto') AS fetch_mode
     FROM sources
     WHERE id = $1::int
     `,
     [sourceId]
   );
-  const row = res.rows[0];
+
+  const row = Array.isArray(res) ? (res as any)[0] : (res as any).rows?.[0];
   if (!row) return null;
-  return row;
+
+  return {
+    id: row.id,
+    homepage_url: row.homepage_url ?? null,
+    rss_url: row.rss_url ?? null,
+    sitemap_url: row.sitemap_url ?? null,
+    scrape_selector: row.scrape_selector ?? null,
+    adapter: row.adapter ?? null,
+    fetch_mode: (row.fetch_mode ?? "auto") as SourceConfig["fetch_mode"],
+  };
+}
+
+/**
+ * Tiny RSS parser (no external deps).
+ * Extracts title, link, description, pubDate from <item> blocks.
+ */
+async function fetchRssItems(rssUrl: string, limit = 50): Promise<FeedItem[]> {
+  const res = await fetch(rssUrl, { next: { revalidate: 0 } });
+  if (!res.ok) return [];
+
+  const xml = await res.text();
+
+  const blocks = xml
+    .split(/<item[\s>]/i)
+    .slice(1)
+    .map((chunk) => "<item " + chunk.split(/<\/item>/i)[0] + "</item>");
+
+  const get = (rx: RegExp, s: string) => {
+    const m = s.match(rx);
+    return m ? m[1] : "";
+  };
+  const clean = (s: string) =>
+    s.replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, "").trim();
+
+  const items: FeedItem[] = [];
+  for (const block of blocks) {
+    // Prefer <link>, fallback to guid if it looks like a URL
+    const rawLink = get(/<link[^>]*>([\s\S]*?)<\/link>/i, block) ||
+      get(/<guid[^>]*>([\s\S]*?)<\/guid>/i, block);
+
+    const link = clean(rawLink);
+    if (!/^https?:\/\//i.test(link)) continue;
+
+    const title = clean(get(/<title[^>]*>([\s\S]*?)<\/title>/i, block));
+    const description = clean(get(/<description[^>]*>([\s\S]*?)<\/description>/i, block));
+    const pubDate = clean(get(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i, block));
+
+    items.push({
+      title,
+      link,
+      description,
+      publishedAt: pubDate ? new Date(pubDate).toISOString() : null,
+    } as FeedItem);
+
+    if (items.length >= limit) break;
+  }
+
+  return items;
 }
 
 export async function fetchItemsForSource(
@@ -354,18 +411,25 @@ export async function fetchItemsForSource(
   const cfg = await loadSourceConfig(sourceId);
   if (!cfg) return [];
 
-  const homepage = cfg.homepage_url ?? "";
-  const adapter = (cfg.adapter ?? "").toLowerCase();
+  const mode = (cfg.fetch_mode ?? "auto").toLowerCase() as SourceConfig["fetch_mode"];
 
-  // Expand here later: 'rss', 'jsonld-list', 'scrape', etc.
-  if (adapter === "sitemap-generic" && homepage) {
-    return fetchFromSitemap(homepage, limit);
+  // Explicit modes take priority
+  if (mode === "rss" && cfg.rss_url) {
+    return fetchRssItems(cfg.rss_url, limit);
+  }
+  if (mode === "sitemap" && cfg.sitemap_url) {
+    return fetchFromSitemap(cfg.sitemap_url, limit);
+  }
+  // (mode === 'html') would go here when you add a homepage crawler.
+
+  // AUTO: prefer RSS, then SITEMAP, then give up
+  if (cfg.rss_url) {
+    return fetchRssItems(cfg.rss_url, limit);
+  }
+  if (cfg.sitemap_url) {
+    return fetchFromSitemap(cfg.sitemap_url, limit);
   }
 
-  // Fallback: try sitemap if we at least have a homepage
-  if (homepage) {
-    return fetchFromSitemap(homepage, limit);
-  }
-
+  // No usable source
   return [];
 }

@@ -1,8 +1,6 @@
-// components/admin/JobRunner.tsx
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
 
 type JobStatus = "queued" | "running" | "success" | "error";
 type Job = {
@@ -13,7 +11,91 @@ type Job = {
   last_message: string | null;
   error_detail: string | null;
 };
-type EventRow = { id: number; ts: string; level: "info" | "warn" | "error" | "debug"; message: string };
+
+type EventRow = {
+  id: number;
+  ts: string;
+  level: "info" | "warn" | "error" | "debug";
+  message: string;
+  meta?: Record<string, unknown> | null;
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+function isJobStatus(v: unknown): v is JobStatus {
+  return v === "queued" || v === "running" || v === "success" || v === "error";
+}
+function isNullableString(v: unknown): v is string | null {
+  return v === null || typeof v === "string";
+}
+function isNullableNumber(v: unknown): v is number | null {
+  return v === null || (typeof v === "number" && Number.isFinite(v));
+}
+function isJob(v: unknown): v is Job {
+  if (!isRecord(v)) return false;
+  return (
+    typeof v.id === "string" &&
+    isJobStatus(v.status) &&
+    typeof v.progress_current === "number" &&
+    isNullableNumber(v.progress_total) &&
+    isNullableString(v.last_message) &&
+    isNullableString(v.error_detail)
+  );
+}
+function parseJobEnvelope(raw: unknown): Job | null {
+  if (!isRecord(raw)) return null;
+  const maybeJob = (raw as Record<string, unknown>).job;
+  return isJob(maybeJob) ? maybeJob : null;
+}
+
+function coerceId(val: unknown): number | null {
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (typeof val === "string") {
+    const n = Number(val);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function parseEventsEnvelope(raw: unknown): EventRow[] {
+  if (!isRecord(raw)) return [];
+  const ev = (raw as Record<string, unknown>).events;
+  if (!Array.isArray(ev)) return [];
+
+  const out: EventRow[] = [];
+  for (const e of ev) {
+    if (!isRecord(e)) continue;
+    const id = coerceId((e as any).id);
+    const level = String((e as any).level ?? "");
+    if (
+      id !== null &&
+      typeof e.ts === "string" &&
+      typeof e.message === "string" &&
+      (level === "info" || level === "warn" || level === "error" || level === "debug")
+    ) {
+      const meta = isRecord((e as any).meta) ? ((e as any).meta as Record<string, unknown>) : null;
+      out.push({
+        id,
+        ts: e.ts,
+        level: level as EventRow["level"],
+        message: e.message,
+        meta,
+      });
+    }
+  }
+  return out;
+}
+
+async function safeJson(res: Response): Promise<unknown | null> {
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) return null;
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 export default function JobRunner() {
   const [job, setJob] = useState<Job | null>(null);
@@ -31,40 +113,64 @@ export default function JobRunner() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sourceId, limit, debug }),
     });
-    const data = (await res.json()) as { ok: boolean; job_id?: string; error?: string };
-    if (!data.ok || !data.job_id) {
+
+    const data = (await safeJson(res)) as { ok?: boolean; job_id?: string; error?: string } | null;
+
+    if (!data?.ok || !data.job_id) {
       setBusy(false);
-      throw new Error(data.error ?? "Failed to start ingest");
+      throw new Error((data && data.error) || "Failed to start ingest");
     }
-    setJob({ id: data.job_id, status: "running", progress_current: 0, progress_total: null, last_message: null, error_detail: null });
+
+    setJob({
+      id: data.job_id,
+      status: "running",
+      progress_current: 0,
+      progress_total: null,
+      last_message: null,
+      error_detail: null,
+    });
   }, []);
 
   // poll job status
   useEffect(() => {
     if (!job?.id) return;
     const t = setInterval(async () => {
-      const res = await fetch(`/api/admin/jobs/${job.id}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as { job: Job };
-      setJob(data.job);
-      if (["success", "error"].includes(data.job.status)) {
-        setBusy(false);
+      try {
+        const res = await fetch(`/api/admin/jobs/${job.id}`);
+        if (!res.ok) return;
+        const parsed = parseJobEnvelope(await safeJson(res));
+        if (!parsed) return;
+        setJob(parsed);
+        if (parsed.status === "success" || parsed.status === "error") {
+          setBusy(false);
+        }
+      } catch {
+        /* ignore transient errors */
       }
     }, 1000);
     return () => clearInterval(t);
   }, [job?.id]);
 
-  // poll events incrementally
+  // poll events incrementally (dedupe on id)
   useEffect(() => {
     if (!job?.id) return;
     const t = setInterval(async () => {
-      const after = lastEventIdRef.current > 0 ? `?after=${lastEventIdRef.current}` : "";
-      const res = await fetch(`/api/admin/jobs/${job.id}/events${after}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as { events: EventRow[] };
-      if (data.events.length > 0) {
-        lastEventIdRef.current = data.events[data.events.length - 1].id;
-        setEvents((prev) => [...prev, ...data.events]);
+      try {
+        const after = lastEventIdRef.current > 0 ? `?after=${lastEventIdRef.current}` : "";
+        const res = await fetch(`/api/admin/jobs/${job.id}/events${after}`);
+        if (!res.ok) return;
+        const evs = parseEventsEnvelope(await safeJson(res));
+        if (evs.length > 0) {
+          lastEventIdRef.current = evs[evs.length - 1].id;
+          setEvents((prev) => {
+            const seen = new Set(prev.map((p) => p.id));
+            const merged = [...prev];
+            for (const e of evs) if (!seen.has(e.id)) merged.push(e);
+            return merged;
+          });
+        }
+      } catch {
+        /* ignore */
       }
     }, 800);
     return () => clearInterval(t);
@@ -104,7 +210,9 @@ export default function JobRunner() {
       {job && (
         <div className="rounded border p-3">
           <div className="flex items-center justify-between">
-            <div className="font-medium">Job {job.id.slice(0, 8)} • {job.status}</div>
+            <div className="font-medium">
+              Job {job.id.slice(0, 8)} • {job.status}
+            </div>
             <div className="text-sm text-gray-600">
               {job.progress_total
                 ? `${job.progress_current}/${job.progress_total}`
@@ -112,20 +220,35 @@ export default function JobRunner() {
             </div>
           </div>
 
-          <div className="mt-3 h-48 overflow-auto rounded bg-gray-50 p-2 text-sm font-mono">
-            {events.map((e) => (
-              <div key={e.id}>
-                <span className="text-gray-500 mr-2">{new Date(e.ts).toLocaleTimeString()}</span>
-                <span className={
-                  e.level === "error" ? "text-red-600" :
-                  e.level === "warn" ? "text-yellow-700" :
-                  e.level === "debug" ? "text-purple-700" : "text-gray-900"
-                }>
-                  {e.level.toUpperCase()}
-                </span>
-                <span className="ml-2">{e.message}</span>
-              </div>
-            ))}
+          <div className="mt-3 h-56 overflow-auto rounded bg-gray-50 p-2 text-sm font-mono">
+            {events.length === 0 ? (
+              <div className="text-gray-500">No events yet…</div>
+            ) : (
+              events.map((e) => (
+                <div key={e.id} className="mb-1">
+                  <span className="text-gray-500 mr-2">{new Date(e.ts).toLocaleTimeString()}</span>
+                  <span
+                    className={
+                      e.level === "error"
+                        ? "text-red-600"
+                        : e.level === "warn"
+                        ? "text-yellow-700"
+                        : e.level === "debug"
+                        ? "text-purple-700"
+                        : "text-gray-900"
+                    }
+                  >
+                    {e.level.toUpperCase()}
+                  </span>
+                  <span className="ml-2">{e.message}</span>
+                  {e.meta && Object.keys(e.meta).length > 0 && (
+                    <pre className="ml-2 mt-1 inline-block align-top rounded bg-white/70 px-2 py-1 text-xs text-gray-600">
+                      {JSON.stringify(e.meta, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              ))
+            )}
           </div>
 
           {job.status === "error" && job.error_detail && (

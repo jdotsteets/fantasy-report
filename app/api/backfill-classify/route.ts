@@ -1,190 +1,135 @@
 // app/api/backfill-classify/route.ts
-import { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
-import { classifyArticle } from "@/lib/classify";
+import { classifyUrl } from "@/lib/contentFilter";
 
-export const runtime = "nodejs";         // ensure Node runtime (not edge)
-export const dynamic = "force-dynamic";  // NEVER prerender this route
-export const revalidate = 0;             // disable caching for the route
-
-export const maxDuration = 60;
-
-/** Section tags we control (and legacy aliases we want to strip). */
-const SECTION_TAGS = new Set([
-  "waiver", "waiver-wire",
-  "rankings",
-  "start_sit", "start-sit",
-  "injury",
-  "dfs",
-  "advice",
-  "news",   // legacy / not used as a topic anymore
-  "trade",  // legacy; mapped into advice already
-]);
-
-/** Normalize legacy aliases to canonical section slugs used across the app. */
-function normalizeSectionTag(t: string): string {
-  const k = t.toLowerCase();
-  if (k === "waiver") return "waiver-wire";
-  if (k === "start_sit") return "start-sit";
-  return k;
-}
+export const dynamic = "force-dynamic";
 
 type Row = {
   id: number;
-  title: string | null;           // coalesced cleaned_title/title (we still select url fields separately)
-  url: string | null;
-  canonical_url: string | null;
-  week: number | null;
-  source: string;                 // sources.name
-  topics: string[] | null;        // existing topics array
-  primary_topic: string | null;   // existing primary
-  secondary_topic: string | null; // existing secondary (nullable)
+  title: string | null;
+  url: string;
+  published_at: string | null;
+  discovered_at: string | null;
+  is_static: boolean | null;
 };
 
-// GET /api/backfill-classify?key=CRON_SECRET&batch=500&fromId=0&dryRun=1&debug=1
-export async function GET(req: NextRequest) {
+type Summary = {
+  scanned: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  params: {
+    days: number;
+    limit: number;
+    onlyUndated: boolean;
+    dryRun: boolean;
+  };
+};
+
+export async function POST(req: Request) {
+  // Query flags (all optional):
+  //   ?days=180        → look back this many days (default 365)
+  //   ?limit=500       → max rows to scan (default 500; hard max 2000)
+  //   ?onlyUndated=0   → include dated rows too (default true = only undated)
+  //   ?dryRun=1        → do not write, just report (default false)
   const url = new URL(req.url);
+  const days = clampInt(url.searchParams.get("days"), 1, 2000, 365);
+  const limit = clampInt(url.searchParams.get("limit"), 1, 2000, 500);
+  const onlyUndated = !isFalsey(url.searchParams.get("onlyUndated")); // default true
+  const dryRun = isTruthy(url.searchParams.get("dryRun"));
 
-  // --- AUTH (same approach as ingest) ---
-  const secret = process.env.CRON_SECRET;
-  const authHeader = req.headers.get("authorization") || "";
-  const urlKey = url.searchParams.get("key") || "";
-  if (secret && authHeader !== `Bearer ${secret}` && urlKey !== secret) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  // Build candidate set: recent, non-static; prefer undated unless onlyUndated=0
+  const dateFilter = onlyUndated ? "AND a.published_at IS NULL" : "";
+  const { rows } = await dbQuery<Row>(
+    `
+    SELECT
+      a.id,
+      COALESCE(a.cleaned_title, a.title) AS title,
+      a.url,
+      a.published_at,
+      a.discovered_at,
+      a.is_static
+    FROM articles a
+    WHERE
+      a.is_static IS NOT TRUE
+      AND a.discovered_at >= NOW() - ($1 || ' days')::interval
+      ${dateFilter}
+    ORDER BY (a.published_at IS NULL) DESC, a.discovered_at DESC, a.id DESC
+    LIMIT $2
+    `,
+    [String(days), limit]
+  );
 
-  // --- Controls ---
-  const dryRun = url.searchParams.get("dryRun") === "1";
-  const debug = url.searchParams.get("debug") === "1";
-
-  const batchRaw = Number(url.searchParams.get("batch") ?? 500);
-  const batch = Math.max(50, Math.min(1000, Number.isFinite(batchRaw) ? batchRaw : 500));
-
-  const fromIdRaw = Number(url.searchParams.get("fromId") ?? 0);
-  let cursor = Number.isFinite(fromIdRaw) ? fromIdRaw : 0; // id > cursor
-
-  let processed = 0;
+  let scanned = 0;
   let updated = 0;
-  const stats: Array<{
-    id: number;
-    beforeTopics?: string[] | null;
-    beforePrimary?: string | null;
-    beforeSecondary?: string | null;
-    afterTopics?: string[];
-    afterPrimary?: string | null;
-    afterSecondary?: string | null;
-  }> = [];
+  let skipped = 0;
+  let errors = 0;
 
-  while (true) {
-    // Keyset-pagination by id
-    const { rows } = await dbQuery<Row>(
-      `
-      SELECT
-        a.id,
-        COALESCE(a.cleaned_title, a.title) AS title,
-        a.url,
-        a.canonical_url,
-        a.week,
-        s.name AS source,
-        a.topics,
-        a.primary_topic,
-        a.secondary_topic
-      FROM articles a
-      JOIN sources s ON s.id = a.source_id
-      WHERE a.id > $1
-      ORDER BY a.id
-      LIMIT $2
-      `,
-      [cursor, batch]
-    );
+  for (const r of rows) {
+    scanned += 1;
 
-    if (rows.length === 0) break;
-
-    for (const r of rows) {
-      processed++;
-      cursor = r.id;
-
-      const title = (r.title ?? "").trim();
-      // Augment the classify text with URL bits so URL keywords (sleeper, waiver, start/sit, etc.) are considered.
-      // This works even if classifyArticle's Input type doesn't expose url fields.
-      const augmentedTitle =
-        [title, r.canonical_url ?? "", r.url ?? ""].filter(Boolean).join("\n");
-
-      // NEW classifier shape (primary/secondary/topics/week)
-      const { primary, secondary, topics: freshTopics, week } = classifyArticle({
-        title: augmentedTitle,
-        summary: null,
-        sourceName: r.source,
-        week: r.week,
+    try {
+      const cls = classifyUrl(r.url, r.title, {
+        hasPublishedMeta: r.published_at !== null,
+        hasArticleSchema: false,
       });
 
-      // Merge topics:
-      // 1) start from existing
-      const existing = Array.isArray(r.topics) ? r.topics : [];
+      if (cls.decision !== "include_static") {
+        skipped += 1;
+        continue;
+      }
 
-      // 2) strip any section tags (old or new) so we re-add cleanly
-      const preserved = existing
-        .map(normalizeSectionTag)
-        .filter((t) => !SECTION_TAGS.has(t));
-
-      // 3) include classifier's topics (already canonical, but normalize anyway)
-      const normalizedFresh = (freshTopics ?? []).map(normalizeSectionTag);
-
-      // 4) re-add canonical primary/secondary tags (if present)
-      const toAdd: string[] = [];
-      if (primary) toAdd.push(primary);
-      if (secondary && secondary !== primary) toAdd.push(secondary);
-
-      const mergedSet = new Set<string>([...preserved, ...normalizedFresh, ...toAdd]);
-      const merged = Array.from(mergedSet);
-
-      // Decide if anything changed (topics / primary / secondary / week)
-      const beforeSet = new Set(existing.map(normalizeSectionTag));
-      const topicsChanged =
-        merged.length !== beforeSet.size ||
-        merged.some((t) => !beforeSet.has(t)) ||
-        [...beforeSet].some((t) => !mergedSet.has(t));
-
-      const primaryChanged = (r.primary_topic ?? null) !== (primary ?? null);
-      const secondaryChanged = (r.secondary_topic ?? null) !== (secondary ?? null);
-
-      if ((topicsChanged || primaryChanged || secondaryChanged) && !dryRun) {
+      // Mark as static (idempotent); stickiness is handled in your upsert, but we
+      // also guard here to avoid needless writes.
+      if (!dryRun) {
         await dbQuery(
-          `UPDATE articles
-           SET topics = $1,
-               primary_topic = $2,
-               secondary_topic = $3,
-               week = COALESCE(week, $4) -- keep existing week; fill if classifier extracted one
-           WHERE id = $5`,
-          [merged, primary ?? null, secondary ?? null, week ?? null, r.id]
+          `UPDATE articles SET is_static = TRUE WHERE id = $1 AND is_static IS DISTINCT FROM TRUE`,
+          [r.id]
         );
-        updated++;
-      } else if ((topicsChanged || primaryChanged || secondaryChanged) && dryRun) {
-        updated++; // count how many *would* change
       }
-
-      if (debug) {
-        stats.push({
-          id: r.id,
-          beforeTopics: r.topics,
-          beforePrimary: r.primary_topic,
-          beforeSecondary: r.secondary_topic,
-          afterTopics: merged,
-          afterPrimary: primary ?? null,
-          afterSecondary: secondary ?? null,
-        });
-      }
+      updated += 1;
+    } catch {
+      errors += 1;
     }
-
-    if (rows.length < batch) break; // end
   }
 
-  return new Response(
-    JSON.stringify(
-      { ok: true, processed, updated, dryRun, ...(debug ? { stats } : {}) },
-      null,
-      2
-    ),
-    { status: 200, headers: { "content-type": "application/json" } }
-  );
+  const summary: Summary = {
+    scanned,
+    updated,
+    skipped,
+    errors,
+    params: { days, limit, onlyUndated, dryRun },
+  };
+
+  return NextResponse.json(summary, { status: 200 });
+}
+
+/* ───────────────────────── helpers ───────────────────────── */
+
+function clampInt(
+  raw: string | null,
+  min: number,
+  max: number,
+  fallback: number
+): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const i = Math.trunc(n);
+  if (i < min) return min;
+  if (i > max) return max;
+  return i;
+}
+
+function isTruthy(v: string | null): boolean {
+  if (!v) return false;
+  const s = v.toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}
+
+function isFalsey(v: string | null): boolean {
+  if (!v) return false;
+  const s = v.toLowerCase();
+  return s === "0" || s === "false" || s === "no";
 }

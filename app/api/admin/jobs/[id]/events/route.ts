@@ -1,26 +1,35 @@
+// app/api/admin/jobs/[id]/events/route.ts
 import { NextResponse } from "next/server";
 import { getEventsSince } from "@/lib/jobs";
 
-export async function GET(req: Request, context: any) {
-  const url = new URL(req.url);
-  const afterRaw = url.searchParams.get("after");
-  const after = afterRaw == null ? undefined : Number(afterRaw);
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  if (afterRaw != null && Number.isNaN(after)) {
-    return NextResponse.json(
-      { error: "invalid 'after' query param" },
-      { status: 400 }
-    );
-  }
+type Params = { id: string | string[] };
 
-  // context.params.id can be string | string[]
-  const idRaw = context?.params?.id;
+export async function GET(
+  req: Request,
+  context: { params: Promise<Params> } // 👈 Next 15: params is a Promise
+) {
+  const { id: idRaw } = await context.params;               // 👈 await it
   const id = Array.isArray(idRaw) ? idRaw[0] : idRaw;
 
-  if (typeof id !== "string" || !id) {
-    return NextResponse.json({ error: "missing id param" }, { status: 400 });
+  if (!id || typeof id !== "string") {
+    return NextResponse.json({ error: "Missing id" }, { status: 400 });
   }
 
-  const events = await getEventsSince(id, after);
-  return NextResponse.json({ events });
+  const afterParam = new URL(req.url).searchParams.get("after");
+  const after = afterParam != null ? Number(afterParam) : undefined;
+  const afterSafe = Number.isFinite(after as number) ? (after as number) : undefined;
+
+  try {
+    const events = await getEventsSince(id, afterSafe);
+    // Shape your UI can read directly
+    return NextResponse.json({ events }, { status: 200 });
+  } catch (err) {
+    return NextResponse.json(
+      { error: "DB error", detail: String(err) },
+      { status: 500 }
+    );
+  }
 }

@@ -1,9 +1,7 @@
 // lib/HomeData.ts
 import { dbQuery } from "@/lib/db";
-// at top of lib/HomeData.ts
 import { pickBestImage } from "@/lib/images.server"; // server-only helper
 import { isWeakArticleImage } from "@/lib/images";   // safe favicon/placeholder detector
-
 
 type IdList = number[];
 
@@ -70,8 +68,6 @@ function normalizeTopic(t: string | null | undefined): CanonTopic | null {
   if (!t) return null;
   const v = t.toLowerCase().replace(/_/g, "-");
   if (v === "waiver") return "waiver-wire";
-  if (v === "start-sit" || v === "start-sit" || v === "start-sit" || v === "start-sit") return "start-sit"; // keep lenient
-  if (v === "start-sit" || v === "start-sit") return "start-sit";
   if (v === "start-sit" || v === "start_sit") return "start-sit";
   switch (v) {
     case "rankings":
@@ -132,6 +128,7 @@ const toDbRow = (r: PoolRow): DbRow => ({
 /* ───────────────────── SQL (recent pool) ───────────────────── */
 
 function buildPoolSql(): string {
+  // NOTE: exclude static pages from the main pool
   return `
     WITH base AS (
       SELECT
@@ -154,6 +151,7 @@ function buildPoolSql(): string {
       WHERE
         (a.published_at >= NOW() - ($1 || ' days')::interval
          OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+        AND a.is_static IS NOT TRUE
         AND a.is_player_page IS NOT TRUE
         AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
         AND (
@@ -183,7 +181,7 @@ function buildPoolSql(): string {
   `;
 }
 
-// Topic-targeted fetch used when a bucket is underfilled
+// Topic-targeted fetch used when a bucket is underfilled (also excludes static)
 async function fetchMoreByTopic(
   topic: CanonTopic,
   days: number,
@@ -212,6 +210,7 @@ async function fetchMoreByTopic(
       WHERE
         (a.published_at >= NOW() - ($1 || ' days')::interval
          OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+        AND a.is_static IS NOT TRUE
         AND a.is_player_page IS NOT TRUE
         AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
         AND (
@@ -237,6 +236,45 @@ async function fetchMoreByTopic(
   return rows;
 }
 
+// Static rankings: prefer is_static=true (and static_type if present)
+async function fetchStaticRankings(days: number, limit: number): Promise<DbRow[]> {
+  const { rows } = await dbQuery<DbRow>(
+    `
+    SELECT
+      a.id,
+      COALESCE(a.cleaned_title, a.title) AS title,
+      a.url,
+      a.canonical_url,
+      a.domain,
+      a.image_url,
+      a.published_at,
+      a.discovered_at,
+      a.week,
+      a.topics,
+      s.name AS source
+    FROM articles a
+    JOIN sources s ON s.id = a.source_id
+    WHERE
+      a.is_static IS TRUE
+      AND (a.static_type = 'rankings' OR a.static_type IS NULL)           -- be inclusive
+      AND (a.published_at >= NOW() - ($1 || ' days')::interval
+           OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+      AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
+      AND (
+        a.source_id NOT IN (3135,3138,3141) OR
+        COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%' OR
+        a.url ILIKE '%nfl%' OR
+        COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
+        a.url ILIKE '%fantasy%football%'
+      )
+    ORDER BY a.discovered_at DESC NULLS LAST, a.id DESC
+    LIMIT $2
+    `,
+    [String(days), limit]
+  );
+  return rows;
+}
+
 async function fetchPool(days: number, poolLimit: number): Promise<PoolRow[]> {
   const { rows } = await dbQuery<PoolRow>(buildPoolSql(), [String(days), poolLimit]);
   return rows;
@@ -256,7 +294,10 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     limitDFS + limitWaivers + limitInjuries;
   const poolSize = Math.max(sum * 3, 400);
 
-  const poolRaw = await fetchPool(days, poolSize);
+  const [poolRaw, staticRankingsRaw] = await Promise.all([
+    fetchPool(days, poolSize),
+    fetchStaticRankings(days, limitRankings * 2), // fetch a little extra, we’ll trim by cap
+  ]);
 
   // Normalize rows & derive missing primary from topics if needed
   const pool = poolRaw.map((r) => {
@@ -291,7 +332,15 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
 
   const wantWeek = (r: PoolRow) => week == null || r.week === week;
 
-  // 1) Primary pass (recency order)
+  // 0) Seed Rankings with static pages first (not in pool because is_static=true)
+  for (const r of staticRankingsRaw) {
+    if (rankings.length >= limitRankings) break;
+    if (placed.has(r.id)) continue;
+    rankings.push(r);
+    placed.add(r.id);
+  }
+
+  // 1) Primary pass (recency order from dynamic pool)
   for (const r of pool) {
     switch (r.primary_topic) {
       case "rankings":    if (tryAssign(rankings, limitRankings, r)) continue; break;
@@ -317,7 +366,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     }
   };
 
-  // Rankings by secondary
+  // Rankings by secondary (keeps dynamic rankings if cap not reached after static)
   topUp(rankings, limitRankings, (r) => r.secondary_topic === "rankings");
 
   // Start/Sit by secondary, topics, or keywords (sleepers/start-sit)
@@ -373,7 +422,6 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   await guaranteeFill(waivers,  limitWaivers,  "waiver-wire", week ?? null);
 
   // 3) Image enhancement (server-side) for each bucket, in parallel.
-  //    We keep array identity (splice) so downstream references stay intact.
   async function enhanceBucket(items: DbRow[], topic: CanonTopic | null) {
     if (items.length === 0) return;
     const enhanced = await Promise.all(
@@ -385,7 +433,6 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
               articleImage: it.image_url ?? null,
               domain: it.domain,
               topic,
-              // playerKeys: [] // (optional) wire in later if you extract players
             });
         return { ...it, image_url: chosen };
       })
@@ -402,7 +449,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     enhanceBucket(injuries, "injury"),
   ]);
 
-  // 4) News & Updates: most recent leftovers from the pool (ensures it's never blank)
+  // 4) News & Updates: most recent leftovers from the pool (dynamic only)
   for (const r of leftovers) {
     if (latest.length >= limitNews) break;
     if (!placed.has(r.id)) {
@@ -410,7 +457,6 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
       placed.add(r.id);
     }
   }
-  // Enhance images for latest too (so hero picks from improved thumbnails)
   await enhanceBucket(latest, null);
 
   const heroCandidates = latest.slice(0, limitHero);

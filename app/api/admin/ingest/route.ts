@@ -1,3 +1,4 @@
+//app/api/admin/ingest/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createJob, appendEvent, setProgress, finishJobSuccess, failJob } from "@/lib/jobs";
 import { runIngestOnce } from "@/lib/ingestRunner";

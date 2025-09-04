@@ -7,9 +7,10 @@ export type AdapterConfig = {
   limit?: number;
   daysBack?: number;
   pageCount?: number;
-  // Add site-specific fields here if you need later:
-  // headers?: Record<string, string>;
+  headers?: Record<string, string>;
+  adapter?: string; // NEW: allow explicit adapter via config
 };
+
 
 type Props = {
   initial?: AdapterConfig | null;

@@ -1,18 +1,26 @@
 // /types/sources.ts
+
+
 export type SourceRow = {
   id: number;
-  name: string;
+  name: string | null;
   homepage_url: string | null;
   rss_url: string | null;
   sitemap_url: string | null;
   favicon_url: string | null;
   allowed: boolean | null;
   priority: number | null;
-  created_at: string | null; // ISO string if fetched via pg driver/Next.js
+  created_at: string | null;
   category: string | null;
+  sport: string | null;
+  notes: string | null;
+  scrape_path: string | null;
+  scrape_selector: string | null;
+  paywall: boolean | null;
+  scraper_key?: string | null; // explicit adapter key (legacy map)
+  adapter_config?: Record<string, unknown> | null; // may include { adapter?: string, pageCount?, daysBack?, limit?, headers? }
+  fetch_mode?: "auto" | "rss" | "adapter" | null;
 };
-
-
 
 // 
 export type SearchResult = {

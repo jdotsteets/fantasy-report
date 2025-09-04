@@ -2,6 +2,52 @@
 import * as cheerio from "cheerio";
 import type { ProbeArticle } from "./types";
 import { httpGet } from "./shared";
+import { classifyUrl, PageSignals, UrlClassification } from "@/lib/contentFilter";
+
+
+/* ── Narrow the union members we care about ───────────────────────── */
+
+type ArticleCls = Extract<UrlClassification, { decision: "include_article" }>;
+type StaticCls  = Extract<UrlClassification, { decision: "include_static" }>;
+type SectionCls = Extract<UrlClassification, { decision: "capture_section" }>;
+
+export type ArticleCategory = ArticleCls["category"];
+export type StaticType      = NonNullable<StaticCls["staticType"]>;
+export type SectionType     = NonNullable<SectionCls["sectionType"]>;
+
+/* ── Public result type for ingest routing ────────────────────────── */
+
+export type IngestDecision =
+  | { kind: "skip"; reason: string }
+  | { kind: "article"; category: ArticleCategory }
+  | { kind: "static";  staticType: StaticType }
+  | { kind: "section"; sectionType: SectionType };
+
+/* ── Router: classify + map to ingest actions ─────────────────────── */
+
+export function routeByUrl(
+  url: string,
+  title: string | null,
+  signals?: Partial<PageSignals>
+): IngestDecision {
+  const cls = classifyUrl(url, title, {
+    hasPublishedMeta: Boolean(signals?.hasPublishedMeta),
+    hasArticleSchema: Boolean(signals?.hasArticleSchema),
+  });
+
+  switch (cls.decision) {
+    case "discard":
+      return { kind: "skip", reason: cls.reason };
+    case "include_article":
+      // `cls` is narrowed to ArticleCls here; explicit cast keeps VS Code happy.
+      return { kind: "article", category: cls.category as ArticleCategory };
+    case "include_static":
+      return { kind: "static", staticType: (cls.staticType ?? "other") as StaticType };
+    case "capture_section":
+    default:
+      return { kind: "section", sectionType: (cls.sectionType ?? "other") as SectionType };
+  }
+}
 
 export async function fetchText(url: string): Promise<string> {
   const r = await fetch(url, { redirect: "follow" });
@@ -91,24 +137,36 @@ export async function enrichWithOG(urls: string[], sourceHost: string) {
   return out.filter((a) => (seen.has(a.url) ? false : (seen.add(a.url), true)));
 }
 
-/** Find sitemap URLs via robots.txt and common paths. */
+
+// lib/sources/helpers.ts
+
 export async function discoverSitemaps(origin: string): Promise<string[]> {
   const candidates = new Set<string>([
     `${origin}/sitemap.xml`,
     `${origin}/sitemap_index.xml`,
     `${origin}/sitemap-index.xml`,
   ]);
+
+  // Try robots.txt and collect declared Sitemap: entries
   try {
-    const robots = await httpGet(`${origin}/robots.txt`, { retries: 1, timeoutMs: 7000 });
-    robots.split(/\r?\n/).forEach(line => {
-      const m = /^sitemap:\s*(\S+)/i.exec(line);
-      if (m) {
-        try {
-          const u = new URL(m[1], origin).toString();
-          candidates.add(u);
-        } catch { /* ignore */ }
+    const res = await fetch(`${origin}/robots.txt`, { redirect: "follow", cache: "no-store" });
+    if (res.ok) {
+      const text = await res.text();
+      for (const line of text.split(/\r?\n/)) {
+        const m = /^\s*Sitemap:\s*(\S+)\s*$/i.exec(line);
+        if (m) {
+          try {
+            const u = new URL(m[1], origin).toString();
+            candidates.add(u);
+          } catch {
+            // ignore bad URLs
+          }
+        }
       }
-    });
-  } catch { /* no robots is fine */ }
+    }
+  } catch {
+    // robots.txt missing is fine
+  }
+
   return Array.from(candidates);
 }

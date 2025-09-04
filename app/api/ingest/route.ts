@@ -12,8 +12,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function parseLimit(v: string | null): number {
-  const n = v ? Number(v) : NaN;
+function parseLimit(v: string | number | null | undefined): number {
+  const n = typeof v === "number" ? v : v ? Number(v) : NaN;
   if (!Number.isFinite(n)) return 50;
   return Math.max(1, Math.min(n, 200));
 }
@@ -31,11 +31,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       if (!Number.isFinite(sourceId)) {
         return NextResponse.json({ error: "Invalid sourceId" }, { status: 400 });
       }
-      const result = await ingestSourceById(sourceId);
+      // ingestSourceById expects { limit }
+      const result = await ingestSourceById(sourceId, { limit });
       return NextResponse.json({ sourceId, limit, result });
     }
 
-    const results = await ingestAllSources(limit);
+    // ingestAllSources expects { perSourceLimit }
+    const results = await ingestAllSources({ perSourceLimit: limit });
     return NextResponse.json({ limit, results });
   } catch (err) {
     console.error("[/api/ingest GET] error:", err);
@@ -54,7 +56,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       windowHours?: number;
     };
 
-    const limit = Number.isFinite(body?.limit) ? Math.max(1, Math.min(Number(body.limit), 200)) : 50;
+    const limit = parseLimit(body?.limit);
     const windowHours = Number.isFinite(body?.windowHours)
       ? Math.max(1, Math.min(Number(body.windowHours), 24 * 30))
       : 72;
@@ -62,21 +64,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Ingest
     let payload: { result?: unknown; results?: unknown };
     if (Number.isFinite(body?.sourceId)) {
-      const result = await ingestSourceById(Number(body!.sourceId));
+      const sourceId = Number(body!.sourceId);
+      // ingestSourceById expects { limit }
+      const result = await ingestSourceById(sourceId, { limit });
       payload = { result };
     } else {
-      const results = await ingestAllSources(limit);
+      // ingestAllSources expects { perSourceLimit }
+      const results = await ingestAllSources({ perSourceLimit: limit });
       payload = { results };
     }
 
-    // Optional health summary
+    // Optional health snapshot
     let summary: HealthSummary | undefined;
     if (body?.includeHealth) {
-      // getIngestTallies returns the correct IngestTalliesBySource shape (includes lastAt)
       const { bySource } = await getIngestTallies(windowHours);
       const tallies: IngestTalliesBySource = bySource;
       summary = await getSourcesHealth(windowHours, tallies);
-      // If you ever want to omit errors based on includeErrors:
       // if (body?.includeErrors === false) summary.errors = [];
     }
 
