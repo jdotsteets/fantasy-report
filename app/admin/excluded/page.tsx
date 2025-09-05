@@ -64,7 +64,7 @@ async function runIngest(formData: FormData) {
   redirect("/admin/excluded?notice=" + encodeURIComponent("Ingest triggered."));
 }
 
-export async function runBackfill(formData: FormData) {
+async function runBackfill(formData: FormData) {
   "use server";
 
   const envSecret = process.env.CRON_SECRET;
