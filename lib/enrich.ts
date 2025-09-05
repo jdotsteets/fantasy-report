@@ -1,6 +1,9 @@
 // lib/enrich.ts
 import crypto from "crypto";
 import slugify from "slugify";
+import { getSafeImageUrl, isLikelyFavicon, extractLikelyNameFromTitle } from "@/lib/images";
+import { findArticleImage } from "@/lib/scrape-image";
+import { findWikipediaHeadshot } from "@/lib/wiki";
 
 /** Minimal feed item we get from rss-parser (etc.), extended with media fields */
 export type RawItem = {
@@ -72,6 +75,102 @@ export type Enriched = {
   fingerprint: string;
   image_url: string | null;
 };
+
+
+// ——— tiny helpers (no `any`) ———
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+}
+
+function urlString(v: unknown): string | null {
+  return typeof v === "string" && /^https?:\/\//i.test(v) ? v : null;
+}
+
+function firstUrlFrom(value: unknown): string | null {
+  // handles string | {url} | {href} | Array<...> | null
+  if (urlString(value)) return value as string;
+
+  const obj = asRecord(value);
+  if (obj) {
+    if (urlString(obj.url)) return obj.url as string;
+    if (urlString(obj.href)) return obj.href as string;
+    // RSS libraries often put content in arrays
+    const arrLike = (k: string) => {
+      const v = obj[k];
+      if (Array.isArray(v)) {
+        for (const el of v) {
+          const u = firstUrlFrom(el);
+          if (u) return u;
+        }
+      }
+      return null;
+    };
+    const viaContent = arrLike("content");
+    if (viaContent) return viaContent;
+    const viaThumbnail = arrLike("thumbnail");
+    if (viaThumbnail) return viaThumbnail;
+  }
+
+  if (Array.isArray(value)) {
+    for (const el of value) {
+      const u = firstUrlFrom(el);
+      if (u) return u;
+    }
+  }
+  return null;
+}
+
+/** enclosure / "rss:enclosure" / "enclosures" */
+function imageFromEnclosure(item: unknown): string | null {
+  const rec = asRecord(item);
+  if (!rec) return null;
+
+  const candidates: Array<unknown> = [
+    rec.enclosure,
+    rec["rss:enclosure"],
+    rec.enclosures,
+  ].filter((v) => v != null);
+
+  for (const c of candidates) {
+    const u = firstUrlFrom(c);
+    if (u) return u;
+  }
+  return null;
+}
+
+/** media:content / media:thumbnail / media.group / image / image_url */
+function imageFromMedia(item: unknown): string | null {
+  const rec = asRecord(item);
+  if (!rec) return null;
+
+  // direct keys commonly emitted by feed parsers
+  const directKeys = [
+    "media:content",
+    "media:thumbnail",
+    "media:group",
+    "image",
+    "image_url",
+    "og:image",
+    "twitter:image",
+  ] as const;
+
+  for (const k of directKeys) {
+    const u = firstUrlFrom(rec[k]);
+    if (u) return u;
+  }
+
+  // nested "media" object
+  const media = asRecord(rec.media);
+  if (media) {
+    const u =
+      firstUrlFrom(media.content) ??
+      firstUrlFrom(media.thumbnail) ??
+      firstUrlFrom(media.group);
+    if (u) return u;
+  }
+  return null;
+}
+
 
 /* -----------------------
    image capture (improved)
@@ -323,25 +422,51 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const slug         = makeSlug(sourceName, cleaned, canonical);
   const fp           = fingerprint(canonical, cleaned);
 
-  // 1) Try direct media from the feed
-  const directFromEnclosure = item.enclosure?.url ?? null;
-  const mc = item["media:content"];
-  const directFromMedia =
-    Array.isArray(mc) ? (mc.find((m) => m?.url)?.url ?? null) : (mc?.url ?? null);
+ // 1) candidates coming directly from the feed
+const directFromEnclosure = imageFromEnclosure(item);
+const directFromMedia = imageFromMedia(item);
 
-  let image_url = directFromEnclosure || directFromMedia || null;
 
-  // 2) Fall back to og:image (and friends)
-  if (!image_url) {
-    try {
-      image_url = await fetchOgImage(canonical);
-    } catch {
-      /* non-fatal */
-    }
+const feedCandidates: Array<string> = [];
+if (directFromEnclosure) feedCandidates.push(directFromEnclosure);
+if (directFromMedia) feedCandidates.push(directFromMedia);
+
+// helper to take the first safe, non-favicon candidate
+function firstSafe(cands: ReadonlyArray<string>): string | null {
+  for (const c of cands) {
+    const safe = getSafeImageUrl(c);
+    if (safe && !isLikelyFavicon(safe)) return safe;
   }
+  return null;
+}
 
-  // 3) Favicon fallback
-  if (!image_url) image_url = faviconFor(domain);
+let image_url: string | null = firstSafe(feedCandidates);
+
+// 2) OpenGraph / Twitter meta (best-effort)
+if (!image_url) {
+  const og = await fetchOgImage(canonical).catch(() => null);
+  image_url = getSafeImageUrl(og);
+}
+
+// 3) Lightweight HTML scrape (meta/JSON-LD/body)
+if (!image_url) {
+  const scraped = await findArticleImage(canonical).catch(() => null);
+  image_url = getSafeImageUrl(scraped);
+}
+
+// 4) Wikipedia headshot heuristic for likely player pages
+if (!image_url) {
+  const name = extractLikelyNameFromTitle(cleaned); // from lib/images.ts
+  if (name) {
+    const wiki = await findWikipediaHeadshot(name).catch(() => null);
+    image_url = getSafeImageUrl(wiki?.src ?? null);
+  }
+}
+
+// final guard
+if (image_url && isLikelyFavicon(image_url)) {
+  image_url = null;
+}
 
   return {
     url,

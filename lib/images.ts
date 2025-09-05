@@ -41,21 +41,30 @@ export function getSafeImageUrl(input?: string | null): string | null {
 }
 
 /** Heuristic for weak/likely-bad article images. */
+/** Very conservative "junk" detector — do NOT exclude OG/hero images. */
 export function isWeakArticleImage(url?: string | null): boolean {
-  if (!url) return true;
+  if (!url) return false;
   try {
-    const u = new URL(url);
-    const p = u.pathname.toLowerCase();
+    const { pathname } = new URL(url);
+    const p = pathname.toLowerCase();
+
+    // Only exclude true boilerplate
     if (p === "/favicon.ico") return true;
     if (p.includes("favicon")) return true;
     if (p.includes("apple-touch-icon")) return true;
-    if (p.includes("sprite") || p.includes("logo")) return true;
-    if (p.includes("stock") || p.includes("placeholder")) return true;
+    if (p.endsWith(".svg")) return true;
+
+    // Keep "logo" / "placeholder" unless it's the *entire* image path name
+    // or the file name is obviously a sprite sheet.
+    const file = p.split("/").pop() ?? "";
+    if (file.includes("sprite")) return true;
+
     return false;
   } catch {
-    return true;
+    return false;
   }
 }
+
 
 /** Extracts a likely person name from a headline (best-effort). */
 const STOP_WORDS = new Set([

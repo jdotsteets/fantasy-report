@@ -12,6 +12,8 @@ import SourceRowEditor from "@/components/admin/SourceRowEditor";
 import { absFetch } from "@/lib/absFetch";
 import ProbePanel from "@/components/admin/ProbePanel";
 import AttentionTable from "@/components/admin/AttentionTable";
+import SourceLevelSummaryTable from "@/components/admin/SourceLevelSummaryTable";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,21 +98,30 @@ export default async function AdminSourcesPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
+
   const windowParam =
     (Array.isArray(sp?.window) ? sp?.window?.[0] : sp?.window) || "72";
   const windowHours = Math.max(1, Math.min(Number(windowParam) || 1, 720));
   const windowMs = windowHours * 60 * 60 * 1000;
 
+  // new: sorting & filter controls from query
+  const sort = (Array.isArray(sp?.sort) ? sp?.sort[0] : sp?.sort) || "lastAt";
+  const dir = ((Array.isArray(sp?.dir) ? sp?.dir[0] : sp?.dir) === "asc" ? "asc" : "desc") as
+    | "asc"
+    | "desc";
+  const hideTeams =
+    (Array.isArray(sp?.hideTeams) ? sp?.hideTeams[0] : sp?.hideTeams) === "1" ||
+    (Array.isArray(sp?.hideTeams) ? sp?.hideTeams[0] : sp?.hideTeams) === "true";
+
   const summary = await getSourcesHealth(windowHours);
 
-  // Safer item types (avoid T[] | undefined indexing)
+  // Safer item types
   type PerSourceItem = NonNullable<HealthSummary["perSource"]>[number] & {
-    // Optional enhanced signals if your backend provides them:
-    siteMaxPublishedAt?: string | null; // latest article time visible on site
-    lastArticleAt?: string | null;       // latest article time we stored
-    canSeeSite?: boolean | null;         // explicit connectivity/visibility flag
-    via?: string | null;                 // e.g., "rss" / "scrape"
-    category?: string | null;            // for team filtering
+    siteMaxPublishedAt?: string | null;
+    lastArticleAt?: string | null;
+    canSeeSite?: boolean | null;
+    via?: string | null;
+    category?: string | null;
   };
   type ErrorItem = NonNullable<HealthSummary["errors"]>[number];
 
@@ -135,27 +146,29 @@ export default async function AdminSourcesPage({
     errorById.set(e.source_id, e);
   }
 
-  // 5 minutes tolerance for "we have the latest"
+  // map id -> category so we can filter teams in the source-level table
+  const catById = new Map<number, string | null>();
+  for (const p of (summary.perSource ?? []) as PerSourceItem[]) {
+    catById.set(p.id, p.category ?? null);
+  }
+
   const STALENESS_TOLERANCE_MS = 5 * 60 * 1000;
 
   function deriveStatus(s: PerSourceItem, err?: ErrorItem): AttentionRow["status"] {
-    // Hard failures / visibility blockers
     if (err?.lastStatus && err.lastStatus >= 400) return "error";
     if (s.canSeeSite === false) return "error";
 
-    // If we know what the site shows as the latest article time, compare it to what we saved.
     const siteMaxTs = s.siteMaxPublishedAt ? Date.parse(s.siteMaxPublishedAt) : 0;
     const dbMaxTs   = s.lastArticleAt       ? Date.parse(s.lastArticleAt)       : 0;
 
     if (siteMaxTs) {
       if (dbMaxTs && dbMaxTs >= siteMaxTs - STALENESS_TOLERANCE_MS) {
-        return "ok";    // DB keeps up with site
+        return "ok";
       } else {
-        return "stale"; // site has newer content than our DB
+        return "stale";
       }
     }
 
-    // Fallback to activity/time-window heuristic
     const lastSeenTs = s.lastDiscovered ? Date.parse(s.lastDiscovered) : 0;
     const fresh = lastSeenTs && Date.now() - lastSeenTs < windowMs;
 
@@ -165,7 +178,7 @@ export default async function AdminSourcesPage({
   }
 
   const attention: AttentionRow[] = (summary.perSource ?? [])
-    .filter((s) => (s.allowed ?? true)) // ignore disabled
+    .filter((s) => (s.allowed ?? true))
     .map((raw) => {
       const s = raw as PerSourceItem;
       const err = errorById.get(s.id);
@@ -197,7 +210,6 @@ export default async function AdminSourcesPage({
     })
     .filter((r) => r.status !== "ok")
     .sort((a, b) => {
-      // show the worst first: nothing in window, oldest seen, 404s first
       if (a.articlesInWindow !== b.articlesInWindow)
         return a.articlesInWindow - b.articlesInWindow;
       const ad = a.lastDiscovered ? Date.parse(a.lastDiscovered) : 0;
@@ -208,11 +220,19 @@ export default async function AdminSourcesPage({
       return b404 - a404;
     });
 
+  // enrich per-source ingest rows with category for filtering
+  const perSourceIngest =
+    (summary.perSourceIngest ?? []).map((r) => ({
+      ...r,
+      category: (r as any).category ?? catById.get(r.source_id) ?? null,
+    })) as Array<
+      NonNullable<HealthSummary["perSourceIngest"]>[number] & { category?: string | null }
+    >;
+
   return (
     <main className="mx-auto max-w-[1100px] space-y-8 px-4 py-8">
-      <QuickAddSource />
-      <ProbePanel />
       <AdminNav active="sources" />
+      <ProbePanel />
 
       <h1 className="text-2xl font-bold">Sources Admin</h1>
 
@@ -235,6 +255,10 @@ export default async function AdminSourcesPage({
                 </option>
               ))}
             </select>
+            {/* preserve sort + filter when changing window */}
+            <input type="hidden" name="sort" value={sort} />
+            <input type="hidden" name="dir" value={dir} />
+            {hideTeams ? <input type="hidden" name="hideTeams" value="1" /> : null}
             <button className="h-8 rounded border px-3 text-sm hover:bg-zinc-50">
               Refresh
             </button>
@@ -270,12 +294,32 @@ export default async function AdminSourcesPage({
 
       {/* Source-level Summary */}
       <section className="rounded-xl border p-4">
-        <h2 className="mb-3 text-lg font-semibold">
-          Source-level Summary (last {summary.windowHours}h)
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">
+            Source-level Summary (last {summary.windowHours}h)
+          </h2>
+          {/* Hide-team filter (GET form so we stay SSR) */}
+          <form method="GET" className="flex items-center gap-3 text-sm">
+            <input type="hidden" name="window" value={String(windowHours)} />
+            <input type="hidden" name="sort" value={sort} />
+            <input type="hidden" name="dir" value={dir} />
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                name="hideTeams"
+                value="1"
+                defaultChecked={hideTeams}
+              />
+              Hide team sources
+            </label>
+            <button className="h-8 rounded border px-3 hover:bg-zinc-50">Apply</button>
+          </form>
+        </div>
+
         <SourceLevelSummaryTable
-          rows={summary.perSourceIngest ?? []}
+          rows={perSourceIngest}
           windowHours={summary.windowHours}
+
         />
         <p className="mt-3 text-xs text-zinc-500">
           Same metrics as the overall summary, broken out by source for this window.
@@ -333,85 +377,3 @@ function SummaryTile({
   );
 }
 
-function SourceLevelSummaryTable({
-  rows,
-  windowHours,
-}: {
-  rows: NonNullable<HealthSummary["perSourceIngest"]>;
-  windowHours: number;
-}) {
-  const active = rows.filter((r) => r.inserted + r.updated + r.skipped > 0);
-  if (active.length === 0) {
-    return (
-      <div className="rounded border p-3 text-sm text-zinc-600">
-        No source activity in the last {windowHours} hours.
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead className="bg-zinc-50">
-          <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left">
-            <th>source</th>
-            <th>inserted</th>
-            <th>updated</th>
-            <th>skipped</th>
-            <th>last seen</th>
-            <th>links</th>
-          </tr>
-        </thead>
-        <tbody>
-          {active.map((r) => (
-            <tr key={r.source_id} className="border-t">
-              <td className="px-3 py-2">
-                <a
-                  href={`/admin/sources#source-${r.source_id}`}
-                  className="text-emerald-700 underline"
-                >
-                  {r.source}
-                </a>
-                {!r.allowed ? (
-                  <span className="ml-2 rounded bg-zinc-200 px-1.5 text-xs text-zinc-700">
-                    disabled
-                  </span>
-                ) : null}
-              </td>
-              <td className="px-3 py-2">{r.inserted}</td>
-              <td className="px-3 py-2">{r.updated}</td>
-              <td className="px-3 py-2">{r.skipped}</td>
-              <td className="px-3 py-2">
-                {r.lastAt ? new Date(r.lastAt).toLocaleString() : "—"}
-              </td>
-              <td className="px-3 py-2">
-                <div className="flex flex-wrap gap-2">
-                  {r.homepage_url ? (
-                    <a
-                      className="text-blue-700 underline"
-                      href={r.homepage_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      homepage
-                    </a>
-                  ) : null}
-                  {r.rss_url ? (
-                    <a
-                      className="text-blue-700 underline"
-                      href={r.rss_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      rss
-                    </a>
-                  ) : null}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
