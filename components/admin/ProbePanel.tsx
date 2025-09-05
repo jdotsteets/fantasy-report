@@ -1,19 +1,52 @@
 // components/admin/ProbePanel.tsx
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type {
   ProbeResult,
   ProbeMethod,
   FeedCandidate,
   ScrapeCandidate,
+  CommitPayload,
 } from "@/lib/sources/types";
+
+type Progress = { discovered: number; upserts: number; errors: number; done: boolean };
+type TailLine = { t: string; msg: string };
 
 export default function ProbePanel() {
   const [url, setUrl] = useState("");
   const [data, setData] = useState<ProbeResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // create vs update + editable fields
+  const [mode, setMode] = useState<"create" | "update">("create");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [sport, setSport] = useState("");
+  const [allowed, setAllowed] = useState(true);
+  const [paywall, setPaywall] = useState<boolean | null>(null);
+  const [priority, setPriority] = useState<number | "">("");
+
+  // ✨ ingest tracking UI state
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<Progress>({
+    discovered: 0,
+    upserts: 0,
+    errors: 0,
+    done: false,
+  });
+  const [tail, setTail] = useState<TailLine[]>([]);
+
+  useEffect(() => {
+    if (data?.existingSource) {
+      setMode("update");
+      setName(data.existingSource.name ?? "");
+    } else {
+      setMode("create");
+      setName("");
+    }
+  }, [data]);
 
   async function probe() {
     setLoading(true);
@@ -75,10 +108,60 @@ export default function ProbePanel() {
       : "rounded border px-3 py-2 text-sm hover:bg-zinc-50";
   }
 
+  // ✨ poll summary + logs while jobId is set
+  useEffect(() => {
+    if (!jobId) return;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const tick = async () => {
+      try {
+        const [s, l] = await Promise.all([
+          fetch(`/api/admin/ingest/summary?jobId=${encodeURIComponent(jobId)}`).then((r) =>
+            r.json() as Promise<Progress & { lastAt?: string | null }>
+          ),
+          fetch(`/api/admin/ingest/logs?jobId=${encodeURIComponent(jobId)}&limit=30`).then((r) =>
+            r.json() as Promise<{
+              logs: Array<{
+                created_at?: string;
+                event?: string | null;
+                message?: string | null;
+                detail?: string | null;
+                reason?: string | null;
+              }>;
+            }>
+          ),
+        ]);
+
+        setProgress({ discovered: s.discovered, upserts: s.upserts, errors: s.errors, done: s.done });
+
+        const lines: TailLine[] = (l.logs ?? []).map((x) => {
+          const msg = x.message ?? x.detail ?? (x.reason ? String(x.reason) : "");
+          const ev = x.event ? `${x.event}: ` : "";
+          return { t: x.created_at ?? "", msg: `${ev}${msg}`.trim() };
+        });
+        setTail(lines.reverse());
+
+        if (s.done && timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      } catch {
+        // swallow; keep polling
+      }
+    };
+
+    tick();
+    timer = setInterval(tick, 2000);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [jobId]);
+
   async function commit(method: ProbeMethod) {
     if (!data) return;
 
     const commitUrl = data.recommended.suggestedUrl ?? url;
+
     const nameHint = (() => {
       try {
         return new URL(commitUrl).host;
@@ -87,20 +170,27 @@ export default function ProbePanel() {
       }
     })();
 
-    const body: {
-      url: string;
-      method: ProbeMethod;
-      feedUrl?: string | null;
-      selector?: string | null;
-      nameHint?: string | null;
-      adapterKey?: string | null;
-    } = {
+    const sourceId = mode === "update" ? data.existingSource?.id : undefined;
+
+    // Build updates: only include fields that are set (avoid clobbering with empty strings)
+    const updates: NonNullable<CommitPayload["updates"]> = { homepage_url: commitUrl };
+    if (name.trim()) updates.name = name.trim();
+    if (category.trim()) updates.category = category.trim();
+    if (sport.trim()) updates.sport = sport.trim();
+    if (allowed !== null) updates.allowed = allowed;
+    if (paywall !== null) updates.paywall = paywall;
+    if (priority !== "") updates.priority = Number(priority);
+
+    const body: CommitPayload = {
       url: commitUrl,
       method,
       feedUrl: null,
       selector: null,
       nameHint,
       adapterKey: null,
+      sourceId,
+      upsert: true,
+      updates,
     };
 
     if (method === "rss") {
@@ -113,18 +203,27 @@ export default function ProbePanel() {
       body.adapterKey = derived.bestAdapter?.key ?? null;
     }
 
-      const r = await fetch("/api/admin/source-probe/commit", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const j = (await r.json().catch(() => ({}) as { error?: string })) as { error?: string };
-        alert(`Commit failed: ${j.error ?? r.statusText}`);
-        return;
-      }
-      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; sourceId?: number };
-      alert(j?.sourceId ? `Saved! Source #${j.sourceId}` : "Saved!");
+    const r = await fetch("/api/admin/source-probe/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) {
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      alert(`Commit failed: ${j.error ?? r.statusText}`);
+      return;
+    }
+
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; sourceId?: number; jobId?: string };
+    if (j?.sourceId) {
+      alert(`Saved! Source #${j.sourceId}`);
+    } else {
+      alert("Saved!");
+    }
+    if (j?.jobId) {
+      setJobId(j.jobId); // ✨ start polling
+    }
   }
 
   return (
@@ -141,6 +240,81 @@ export default function ProbePanel() {
           {loading ? "Probing…" : "Probe"}
         </button>
       </div>
+
+      {/* Existing-source controls */}
+      {data?.existingSource ? (
+        <div className="mt-4 rounded-xl border p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-semibold">Existing source found: #{data.existingSource.id}</div>
+              <div className="text-sm text-zinc-600">{data.existingSource.name ?? "(unnamed)"}</div>
+            </div>
+            <div className="flex gap-6">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" checked={mode === "update"} onChange={() => setMode("update")} />
+                Update existing
+              </label>
+              <label className="flex items-center gap-2 text-sm opacity-50">
+                <input
+                  type="radio"
+                  disabled={!!data?.existingSource}
+                  checked={mode === "create"}
+                  onChange={() => setMode("create")}
+                />
+                Create new
+              </label>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input
+              className="rounded border p-2"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Source name"
+            />
+            <input
+              className="rounded border p-2"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Category (e.g., news)"
+            />
+            <input
+              className="rounded border p-2"
+              value={sport}
+              onChange={(e) => setSport(e.target.value)}
+              placeholder="Sport (e.g., nfl)"
+            />
+            <input
+              className="rounded border p-2"
+              type="number"
+              value={priority === "" ? "" : String(priority)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPriority(v === "" ? "" : Number(v));
+              }}
+              placeholder="Priority (int)"
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={allowed ?? false}
+                onChange={(e) => setAllowed(e.target.checked)}
+              />
+              Allowed
+            </label>
+            <select
+              className="rounded border p-2"
+              value={paywall === null ? "" : paywall ? "yes" : "no"}
+              onChange={(e) => setPaywall(e.target.value === "" ? null : e.target.value === "yes")}
+            >
+              <option value="">Paywall: unknown</option>
+              <option value="no">Paywall: no</option>
+              <option value="yes">Paywall: yes</option>
+            </select>
+          </div>
+        </div>
+      ) : null}
 
       {err ? <div className="mt-3 text-sm text-rose-700">Error: {err}</div> : null}
 
@@ -171,8 +345,7 @@ export default function ProbePanel() {
             <ul className="list-disc pl-5">
               {data.feeds.map((f) => (
                 <li key={f.feedUrl}>
-                  {f.ok ? "✅" : "❌"} {f.feedUrl}{" "}
-                  {f.ok ? `(${f.itemCount})` : f.error ? `— ${f.error}` : ""}
+                  {f.ok ? "✅" : "❌"} {f.feedUrl} {f.ok ? `(${f.itemCount})` : f.error ? `— ${f.error}` : ""}
                 </li>
               ))}
             </ul>
@@ -183,8 +356,7 @@ export default function ProbePanel() {
             <ul className="list-disc pl-5">
               {data.scrapes.map((s) => (
                 <li key={s.selectorTried}>
-                  {s.ok ? "✅" : "❌"} {s.selectorTried}{" "}
-                  {s.ok ? `(${s.linkCount})` : s.error ? `— ${s.error}` : ""}
+                  {s.ok ? "✅" : "❌"} {s.selectorTried} {s.ok ? `(${s.linkCount})` : s.error ? `— ${s.error}` : ""}
                 </li>
               ))}
             </ul>
@@ -195,8 +367,7 @@ export default function ProbePanel() {
             <ul className="list-disc pl-5">
               {data.adapters.map((a) => (
                 <li key={a.key}>
-                  {a.ok ? "✅" : "❌"} {a.label ?? a.key}{" "}
-                  {a.ok ? `(${a.itemCount})` : a.error ? `— ${a.error}` : ""}
+                  {a.ok ? "✅" : "❌"} {a.label ?? a.key} {a.ok ? `(${a.itemCount})` : a.error ? `— ${a.error}` : ""}
                 </li>
               ))}
             </ul>
@@ -225,11 +396,7 @@ export default function ProbePanel() {
               onClick={() => derived.canUseScrape && commit("scrape")}
               disabled={!derived.canUseScrape}
               className={btnClass("scrape", derived.canUseScrape)}
-              title={
-                derived.canUseScrape
-                  ? "Create source using the selected CSS selector"
-                  : "No viable selector found"
-              }
+              title={derived.canUseScrape ? "Create source using the selected CSS selector" : "No viable selector found"}
             >
               Use Scrape{derived.bestScrape ? ` (${derived.bestScrape.linkCount})` : ""}
             </button>
@@ -243,6 +410,35 @@ export default function ProbePanel() {
               Use Adapter{derived.bestAdapter ? ` (${derived.bestAdapter.itemCount})` : ""}
             </button>
           </div>
+
+          {/* ✨ Ingest progress / tail */}
+          {jobId ? (
+            <div className="mt-3 rounded border p-2 text-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <b>Ingest running</b> <span className="text-zinc-500">(job {jobId.slice(0, 8)}…)</span>
+                  <div className="mt-1 text-zinc-600">
+                    Discovered: {progress.discovered} · Upserts: {progress.upserts} · Errors: {progress.errors}
+                  </div>
+                </div>
+                <div
+                  className={`px-2 py-1 rounded ${
+                    progress.done ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {progress.done ? "Done" : "Working…"}
+                </div>
+              </div>
+              <div className="mt-2 max-h-36 overflow-auto font-mono text-xs">
+                {tail.map((x, i) => (
+                  <div key={`${i}-${x.t}`}>
+                    {x.t ? `${x.t} — ` : ""}
+                    {x.msg}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

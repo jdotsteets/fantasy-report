@@ -1,4 +1,42 @@
 // lib/sources/types.ts
+
+export type ExistingSourceLite = {
+  id: number;
+  name: string | null;
+  homepage_url: string | null;
+  rss_url: string | null;
+  sitemap_url: string | null;
+  scrape_selector: string | null;
+  scrape_path: string | null;
+  adapter_config: Record<string, unknown> | null;
+};
+
+export type CommitPayload = {
+  url: string;
+  method: ProbeMethod;
+  feedUrl?: string | null;
+  selector?: string | null;
+  adapterKey?: string | null;
+  nameHint?: string | null;
+  sourceId?: number;     // when updating an existing source
+  upsert?: boolean;      // allow update if a match is found
+  updates?: {
+    name?: string;
+    homepage_url?: string | null;
+    rss_url?: string | null;
+    sitemap_url?: string | null;
+    scrape_selector?: string | null;
+    scrape_path?: string | null;
+    adapter_config?: Record<string, unknown> | null;
+    allowed?: boolean | null;
+    paywall?: boolean | null;
+    category?: string | null;
+    sport?: string | null;
+    priority?: number | null;
+  };
+};
+
+
 export type ProbeRequest = {
   url: string;
   windowHours?: number; // for future use
@@ -42,6 +80,17 @@ export type AdapterCandidate = {
   label?: string;
 };
 
+export type ExistingSource = {
+  id: number;
+  name: string | null;
+  homepage_url: string | null;
+  rss_url: string | null;
+  sitemap_url: string | null;
+  scrape_selector: string | null;
+  scrape_path: string | null;
+  adapter_config: Record<string, unknown> | null; // jsonb
+};
+
 export type ProbeResult = {
   baseUrl: string;
   feeds: FeedCandidate[];
@@ -49,6 +98,7 @@ export type ProbeResult = {
   adapters: AdapterCandidate[];
   preview: ProbeArticle[]; // deduped + normalized
   recommended: Recommendation;
+  existingSource?: ExistingSource | null;
 };
 
 

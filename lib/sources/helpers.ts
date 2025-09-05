@@ -170,3 +170,21 @@ export async function discoverSitemaps(origin: string): Promise<string[]> {
 
   return Array.from(candidates);
 }
+
+
+// ✨ ADD these utilities (non-breaking)
+export function normalizeHost(u: string | null): string | null {
+  if (!u) return null;
+  try {
+    const host = new URL(u).host;
+    return host.replace(/^www\./i, "");
+  } catch {
+    return null;
+  }
+}
+
+export function sameHost(a: string | null, b: string | null): boolean {
+  const na = normalizeHost(a);
+  const nb = normalizeHost(b);
+  return !!na && !!nb && na === nb;
+}

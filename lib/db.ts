@@ -1,52 +1,81 @@
 // lib/db.ts
 import { Pool, PoolConfig, QueryResult, QueryResultRow } from "pg";
 
-/** Reuse the Pool across hot reloads/serverless invocations */
+/** Reuse the Pool across hot reloads/serverless invocations. */
 declare global {
   // eslint-disable-next-line no-var
   var __pgPool: Pool | undefined;
 }
 
-/** Choose pooled URL if available (e.g., Supabase pgbouncer/Neon pooler). */
+/** Prefer pooled connection string when available. */
 function getConnectionString(): string {
   const url = process.env.DATABASE_URL_POOLER || process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error("Missing DATABASE_URL (or DATABASE_URL_POOLER)");
-  }
+  if (!url) throw new Error("Missing DATABASE_URL (or DATABASE_URL_POOLER)");
   return url;
 }
 
-/** Decide whether to require SSL (default true except for localhost). */
-function shouldUseSSL(connectionString: string): boolean {
+/** Decide whether to require SSL (true unless localhost or DB_SSL=false). */
+function shouldUseSSL(cs: string): boolean {
   if (process.env.DB_SSL?.toLowerCase() === "false") return false;
   if (process.env.DB_SSL?.toLowerCase() === "true") return true;
-  return !/localhost|127\.0\.0\.1/.test(connectionString);
+  return !/localhost|127\.0\.0\.1/.test(cs);
 }
+
+type PoolConfigExtended = PoolConfig & {
+  keepAliveInitialDelayMillis?: number;
+  maxUses?: number;
+  allowExitOnIdle?: boolean;
+};
 
 function makePool(): Pool {
   const connectionString = getConnectionString();
-  const cfg: PoolConfig = {
+
+  const cfg: PoolConfigExtended = {
     connectionString,
     ssl: shouldUseSSL(connectionString) ? { rejectUnauthorized: false } : undefined,
-    max: 5,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 12_000,
+    max: Number(process.env.PG_MAX ?? 10), // cap concurrency
+    idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS ?? 30_000),
+    connectionTimeoutMillis: Number(process.env.PG_CONN_TIMEOUT_MS ?? 12_000),
     keepAlive: true,
+    keepAliveInitialDelayMillis: Number(process.env.PG_KEEPALIVE_DELAY_MS ?? 10_000),
+    maxUses: Number(process.env.PG_MAX_USES ?? 7_500), // rotate long-lived conns
+    allowExitOnIdle: true,
   };
 
   const p = new Pool(cfg);
 
+  // Per-connection session settings (timeouts protect from runaway queries)
   p.on("connect", (client) => {
     void client
       .query(
-        `SET statement_timeout = '15s';
-         SET idle_in_transaction_session_timeout = '10s';`
+        `
+        SET application_name = 'fantasy-report';
+        SET statement_timeout = '15s';
+        SET idle_in_transaction_session_timeout = '10s';
+        `
       )
-      .catch(() => {});
+      .catch(() => {
+        /* best effort */
+      });
   });
 
+  // Quiet expected server-initiated closes on *idle* clients (e.g., restarts).
   p.on("error", (err) => {
-    console.error("[pg] idle client error:", err);
+    const code = (err as { code?: string } | undefined)?.code;
+    const msg = String((err as { message?: string } | undefined)?.message ?? "").toLowerCase();
+
+    const benign =
+      code === "XX000" || // some poolers emit XX000 for db_termination
+      code === "57P01" || // admin_shutdown
+      /db_termination/.test(msg) ||
+      /server closed the connection/i.test(msg) ||
+      /terminat/.test(msg);
+
+    if (benign) {
+      console.warn("[pg] idle client closed (ignored)", { code });
+      return;
+    }
+    console.error("[pg] pool error", err);
   });
 
   return p;
@@ -56,58 +85,64 @@ export const pool: Pool = global.__pgPool ?? (global.__pgPool = makePool());
 
 type NodeErr = Error & { code?: string };
 
-/** Transient errors worth retrying. */
+/** Transient/connection errors worth retrying. */
 function isTransient(err: NodeErr): boolean {
-  const pgCodes =  new Set([
+  const pgCodes = new Set([
     "57P01", // admin_shutdown
     "57P02", // crash_shutdown
     "57P03", // cannot_connect_now
     "53300", // too_many_connections
     "08006", // connection_failure
     "08003", // connection_does_not_exist
-    "XX000", // unspecified error (poolers sometimes emit with db_termination)
+    "XX000", // unspecified/server terminated
   ]);
   const nodeCodes = new Set(["ETIMEDOUT", "ECONNRESET", "EPIPE"]);
-  if (err.code && (pgCodes.has(err.code) || nodeCodes.has(err.code))) return true;
-
-  const msg = err.message.toLowerCase();
-  const looksTerminated =
-    msg.includes("db_termination") ||
-    msg.includes("terminated") ||
-    msg.includes("server closed the connection") ||
-    msg.includes("timeout");
-
-  return pgCodes.has(err.code ?? "") || nodeCodes.has((err as { code?: string }).code ?? "") || looksTerminated;
+  const msg = (err.message || "").toLowerCase();
+  return (
+    (err.code !== undefined && (pgCodes.has(err.code) || nodeCodes.has(err.code))) ||
+    /db_termination|server closed the connection|timeout/.test(msg)
+  );
 }
 
-/** Exponential backoff: 300ms, 600ms, 1200ms... */
+/** Exponential backoff with mild jitter: 300ms, 600ms, 1200ms… */
 function backoff(n: number): Promise<void> {
-  const ms = 300 * 2 ** n;
-  return new Promise((r) => setTimeout(r, ms));
+  const base = 300 * 2 ** n;
+  const jitter = Math.floor(Math.random() * 75);
+  return new Promise((r) => setTimeout(r, base + jitter));
 }
 
 /**
  * Typed query helper.
- * Returns the native pg shape so callers can keep using `result.rows`.
+ * Returns the native pg shape so existing callers can keep using `result.rows`.
  */
 export async function dbQuery<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown> = [],
-  attempts = 3
+  attempts = Number(process.env.PG_QUERY_ATTEMPTS ?? 3)
 ): Promise<QueryResult<T>> {
   let attempt = 0;
+  // Make params mutable because pg mutates arrays internally in some paths.
+  const values: unknown[] = Array.from(params);
+
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      const values: unknown[] = Array.from(params); // ← make it mutable
       return await pool.query<T>(text, values);
     } catch (e) {
-      const err = e as Error & { code?: string };
+      const err = e as NodeErr;
       if (attempt + 1 < attempts && isTransient(err)) {
-        await backoff(attempt);
-        attempt += 1;
+        await backoff(attempt++);
         continue;
       }
       throw err;
     }
+  }
+}
+
+/** Graceful shutdown helper for tests/scripts. */
+export async function closePool(): Promise<void> {
+  if (global.__pgPool) {
+    await global.__pgPool.end().catch(() => {});
+    global.__pgPool = undefined;
   }
 }

@@ -6,7 +6,7 @@ import {
   getIngestLogs,
   type IngestLogRow,
 } from "@/lib/excludedData";
-import { headers } from "next/headers";
+import { headers as nextHeaders } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { PendingFieldset, RunIngestButton } from "@/components/admin/RunIngestControls";
@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
 import { absFetch } from "@/lib/absFetch"; // ✅ adjust path if lib/absFetch.ts is under app/lib
 // app/admin/excluded/page.tsx (or wherever your admin page is)
 import JobRunner from "@/components/admin/JobRunner";
+import { headers } from "next/headers";
 
 
 
@@ -63,59 +64,109 @@ async function runIngest(formData: FormData) {
   redirect("/admin/excluded?notice=" + encodeURIComponent("Ingest triggered."));
 }
 
-async function runBackfill(formData: FormData) {
+export async function runBackfill(formData: FormData) {
   "use server";
 
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
+  const envSecret = process.env.CRON_SECRET;
+  if (!envSecret) {
     console.error("[/admin/excluded] Missing CRON_SECRET env var");
     redirect("/admin/excluded?notice=" + encodeURIComponent("CRON_SECRET is not set"));
+    return; // helps TS understand nothing below runs without a secret
   }
+  const secret: string = envSecret; // now typed as string
 
-  const h = await headers();
+  const h = await nextHeaders();
   const proto = h.get("x-forwarded-proto") ?? "http";
-  const host =
-    h.get("x-forwarded-host") ??
-    h.get("host") ??
-    process.env.VERCEL_URL ??
-    "localhost:3000";
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? process.env.VERCEL_URL ?? "localhost:3000";
   const base = `${proto}://${host}`;
 
-  const batch = Number((formData.get("batch") as string) || 500);
+  const batch  = Number((formData.get("batch")  as string) || 500);
   const fromId = Number((formData.get("fromId") as string) || 0);
   const dryRun = (formData.get("dryRun") as string | null) === "on";
-  const debug = (formData.get("debug") as string | null) === "on";
+  const debug  = (formData.get("debug") as string | null) === "on";
 
   const qs = new URLSearchParams({
-    key: secret!,
+    key: secret,                 // legacy GET support
     batch: String(batch),
     fromId: String(fromId),
     dryRun: dryRun ? "1" : "0",
-    debug: debug ? "1" : "0",
+    debug:  debug  ? "1" : "0",
   });
 
-  let notice = "Backfill started.";
-  try {
-    const res = await absFetch(`${base}/api/backfill-classify?${qs.toString()}`, {
-      method: "GET",
-      cache: "no-store",
-    });
+  const url = `${base}/api/backfill-classify?${qs.toString()}`;
 
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      notice = `Backfill failed: HTTP ${res.status}${txt ? ` – ${txt.slice(0, 200)}` : ""}`;
-    } else {
-      const j = (await res.json()) as {
-        processed?: number;
-        updated?: number;
-        dryRun?: boolean;
-      };
-      notice = `Backfill ${j.dryRun ? "(dry-run) " : ""}ok – processed ${j.processed ?? 0}, updated ${j.updated ?? 0}.`;
+  // --- Build typed headers safely
+  const buildHeaders = (isPost = false): Headers => {
+    const hd = new Headers();
+    if (isPost) hd.set("content-type", "application/json");
+    hd.set("authorization", `Bearer ${secret}`);
+    hd.set("x-cron-key", secret);
+    return hd;
+  };
+
+  // --- timeout + retries
+  async function requestWithRetries(): Promise<{ ok: boolean; status: number; text: string }> {
+    let last = { ok: false, status: 0, text: "" };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 20_000);
+      try {
+        // Try POST first
+        let res = await fetch(url, {
+          method: "POST",
+          headers: buildHeaders(true),
+          cache: "no-store",
+          signal: controller.signal,
+          body: JSON.stringify({}),
+        });
+
+        // Fallback to GET if server only allows GET
+        if (res.status === 405) {
+          res = await fetch(url, {
+            method: "GET",
+            headers: buildHeaders(false),
+            cache: "no-store",
+            signal: controller.signal,
+          });
+        }
+
+        const text = await res.text();
+        clearTimeout(t);
+        last = { ok: res.ok, status: res.status, text };
+
+        if (res.ok || (res.status >= 400 && res.status < 500)) return last;
+        await new Promise(r => setTimeout(r, attempt * 400));
+      } catch {
+        clearTimeout(t);
+        await new Promise(r => setTimeout(r, attempt * 400));
+      }
     }
-  } catch (e) {
-    notice = "Backfill error (network)";
-    console.error("[/admin/excluded] backfill GET failed:", e);
+    return last;
   }
+
+  let notice = "Backfill started.";
+  const result = await requestWithRetries();
+
+  if (!result.ok) {
+    const snippet = result.text ? ` – ${result.text.slice(0, 200)}` : "";
+    notice = `Backfill failed: HTTP ${result.status || "???"}${snippet}`;
+    return redirect("/admin/excluded?notice=" + encodeURIComponent(notice));
+  }
+
+  let data: any = null;
+  try { data = result.text ? JSON.parse(result.text) : null; } catch {}
+
+  const processed =
+    data?.scanned ?? data?.processed ?? data?.count ?? 0;
+  const updatedTopics = data?.updatedTopics ?? 0;
+  const updatedStatic = data?.updatedStatic ?? 0;
+  const updated = (updatedTopics + updatedStatic) || data?.updated || 0;
+  const wasDry = data?.params?.dryRun ?? data?.dryRun ?? dryRun;
+
+  notice =
+    `Backfill ${wasDry ? "(dry-run) " : ""}ok – scanned ${processed}, updated ${updated}` +
+    (updatedTopics || updatedStatic ? ` (topics: ${updatedTopics}, static: ${updatedStatic})` : "") +
+    ".";
 
   redirect("/admin/excluded?notice=" + encodeURIComponent(notice));
 }

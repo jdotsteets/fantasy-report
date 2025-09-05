@@ -2,7 +2,7 @@
 import { allowItem } from "@/lib/contentFilter";
 import { upsertArticle } from "@/lib/ingest";
 import { fetchItemsForSource } from "./sources";
-import type { FeedItem as AdapterFeedItem } from "./sources/types";
+import type { FeedItem as AdapterFeedItem, ProbeMethod } from "./sources/types";
 
 export type IngestYield = {
   level: "info" | "warn" | "error" | "debug";
@@ -15,6 +15,7 @@ export type IngestParams = {
   sourceId?: number;
   limit: number;
   debug: boolean;
+  method?: ProbeMethod;
   jobId?: string;
   sport?: string | null;
 };
@@ -86,7 +87,7 @@ function isUtilityUrl(u: string): boolean {
 export async function* runIngestOnce(
   params: IngestParams
 ): AsyncGenerator<IngestYield, void, unknown> {
-  const { sourceId, limit, debug, jobId, sport } = params;
+  const { sourceId, limit, debug, method, jobId, sport } = params;
 
   yield { level: "info", message: "Fetching candidate items", delta: 0, meta: { limit, sourceId, sport } };
   const feedItems = await fetchFeedItems(sourceId, limit);

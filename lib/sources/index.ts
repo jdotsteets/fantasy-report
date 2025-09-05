@@ -15,7 +15,7 @@ import { ADAPTERS, fetchFromSitemap } from "./adapters";
 import { enrichWithOG } from "./helpers";
 import { allowItem as coreAllowItem} from "@/lib/contentFilter";
 import { httpGet } from "./shared";
-import { FeedItem, SourceConfig } from "./types"; 
+import { FeedItem, ExistingSourceLite, ProbeMethod, SourceConfig } from "./types"; 
 import { dbQuery } from "../db";
 
 
@@ -45,6 +45,148 @@ export async function runProbe(req: ProbeRequest): Promise<ProbeResult> {
     recommended,
   };
 }
+
+
+/** Create or update a source and switch to the selected ingestion method. Returns source id. */
+export async function saveSourceWithMethod(args: {
+  url: string;
+  method: ProbeMethod;
+  feedUrl?: string | null;
+  selector?: string | null;
+  adapterKey?: string | null;
+  nameHint?: string | null;
+  sourceId?: number;
+  updates?: {
+    name?: string;
+    homepage_url?: string | null;
+    rss_url?: string | null;
+    sitemap_url?: string | null;
+    scrape_selector?: string | null;
+    scrape_path?: string | null;
+    adapter_config?: Record<string, unknown> | null;
+    allowed?: boolean | null;
+    paywall?: boolean | null;
+    category?: string | null;
+    sport?: string | null;
+    priority?: number | null;
+  };
+}): Promise<number> {
+  const {
+    url, method, feedUrl = null, selector = null, adapterKey = null,
+    nameHint = null, sourceId, updates = {}
+  } = args;
+
+    // Canonical homepage: scheme + host + trailing slash
+  const homepageOrigin = (() => {
+      try { return new URL(url).origin + "/"; } catch { return url; }
+    })();
+
+  // Prepare a baseline update object from the method
+  const u: Record<string, unknown> = {
+    homepage_url: updates.homepage_url ?? homepageOrigin,
+    // clear mutually exclusive fields
+    rss_url: null,
+    sitemap_url: updates.sitemap_url ?? null,
+    scrape_selector: null,
+    scrape_path: null,
+    adapter_config: null,
+    // passthrough optional updates
+    name: updates.name ?? null,
+    allowed: updates.allowed ?? null,
+    paywall: updates.paywall ?? null,
+    category: updates.category ?? null,
+    sport: updates.sport ?? null,
+    priority: updates.priority ?? null,
+  };
+
+  if (method === "rss") {
+    u.rss_url = updates.rss_url ?? feedUrl ?? null;
+  } else if (method === "scrape") {
+    u.scrape_selector = updates.scrape_selector ?? selector ?? null;
+    try { u.scrape_path = updates.scrape_path ?? new URL(url).pathname; } catch { u.scrape_path = updates.scrape_path ?? null; }
+  } else if (method === "adapter") {
+    u.adapter_config = updates.adapter_config ?? (adapterKey ? { key: adapterKey } : null);
+  }
+
+    const assignIf = <T>(key: string, val: T | undefined) => {
+    if (val !== undefined) (u as Record<string, unknown>)[key] = val;
+  };
+  assignIf("name", updates.name);
+  assignIf("allowed", updates.allowed);
+  assignIf("paywall", updates.paywall);
+  assignIf("category", updates.category);
+  assignIf("sport", updates.sport);
+  assignIf("priority", updates.priority);
+
+
+  if (typeof sourceId === "number") {
+    // UPDATE
+    const fields = Object.keys(u).filter((k) => u[k] !== undefined);
+    const setSql = fields.map((k, i) => `${k} = $${i + 2}`).join(", ");
+    const sql = `update sources set ${setSql} where id = $1 returning id;`;
+    const params = [sourceId, ...fields.map((k) => u[k])];
+    const { rows } = await dbQuery<{ id: number }>(sql, params);
+    return rows[0].id;
+  }
+
+  // INSERT
+  if (updates.name === undefined && nameHint) {
+  (u as Record<string, unknown>).name = nameHint;
+  }
+
+
+
+  const cols = Object.keys(u);
+  const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+  const sql = `insert into sources (${cols.join(", ")}) values (${placeholders}) returning id;`;
+  const params = cols.map((k) => u[k]);
+  const { rows } = await dbQuery<{ id: number }>(sql, params);
+  const insertSql = `insert into sources (${cols.join(", ")}) values (${placeholders}) returning id;`;
+  const insertParams = cols.map((k) => u[k]);
+
+  try {
+    const { rows } = await dbQuery<{ id: number }>(insertSql, insertParams);
+    return rows[0].id;
+  } catch (e) {
+    // If homepage_url is unique and already exists, switch to UPDATE instead of failing.
+    const err = e as { code?: string };
+    if (err?.code === "23505") {
+      const existing = await findExistingSourceByUrl(url);
+      if (!existing) throw e;
+
+      const fields = Object.keys(u).filter((k) => u[k] !== undefined);
+      const setSql = fields.map((k, i) => `${k} = $${i + 2}`).join(", ");
+      const updateSql = `update sources set ${setSql} where id = $1 returning id;`;
+      const params = [existing.id, ...fields.map((k) => u[k])];
+      const { rows } = await dbQuery<{ id: number }>(updateSql, params);
+      return rows[0].id;
+    }
+    throw e;
+  }
+}
+
+export async function findExistingSourceByUrl(inputUrl: string): Promise<ExistingSourceLite | null> {
+  let host: string | null = null;
+  try { host = new URL(inputUrl).host.replace(/^www\./i, ""); } catch { host = null; }
+  if (!host) return null;
+
+  // Extract hostname from a URL string in SQL:
+  //   substring(url from '^(?:https?://)?(?:www\.)?([^/]+)') -> host
+  // Then strip leading 'www.' if present, and compare to $1.
+  const sql = `
+    select id, name, homepage_url, rss_url, sitemap_url, scrape_selector, scrape_path, adapter_config
+    from sources
+    where
+      lower(regexp_replace(substring(homepage_url from '^(?:https?://)?(?:www\\.)?([^/]+)'), '^www\\.', '', 'i')) = lower($1)
+      or lower(regexp_replace(substring(rss_url      from '^(?:https?://)?(?:www\\.)?([^/]+)'), '^www\\.', '', 'i')) = lower($1)
+      or lower(regexp_replace(substring(sitemap_url  from '^(?:https?://)?(?:www\\.)?([^/]+)'), '^www\\.', '', 'i')) = lower($1)
+    order by id asc
+    limit 1;
+  `;
+  const { rows } = await dbQuery<ExistingSourceLite>(sql, [host]);
+  return rows[0] ?? null;
+}
+
 
 /* ---------------- Recommendation ---------------- */
 
@@ -324,6 +466,74 @@ function dedupe(items: ProbeArticle[]): ProbeArticle[] {
   return items.filter((i) => (seen.has(i.url) ? false : (seen.add(i.url), true))).slice(0, 50);
 }
 
+function sameHost(a: string, b: string) {
+  try {
+    const ha = new URL(a).hostname.replace(/^www\./i, "");
+    const hb = new URL(b).hostname.replace(/^www\./i, "");
+    return ha === hb;
+  } catch { return false; }
+}
+
+
+
+const BAD_SCHEMES = /^(javascript:|mailto:|tel:)/i;
+
+async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedItem[]> {
+  if (!cfg.homepage_url) return [];
+  const base = new URL(cfg.homepage_url);
+  const html = await httpGet(base.toString());
+  const $ = cheerio.load(html);
+
+  // prefer user-provided selector; otherwise generic set
+  const selector = (cfg.scrape_selector && cfg.scrape_selector.trim())
+    ? cfg.scrape_selector
+    : "article a[href], h2 a[href], h3 a[href], main a[href]";
+
+  const seen = new Set<string>();
+  const out: FeedItem[] = [];
+
+  $(selector).each((_i, el) => {
+    const raw = ($(el).attr("href") || "").trim();
+    if (!raw) return;
+    let abs: string;
+    try { abs = new URL(raw, base).toString(); } catch { return; }
+    if (BAD_SCHEMES.test(abs)) return;
+    if (!sameHost(abs, base.toString())) return;
+
+    const text = (($(el).text() || "") as string).trim();
+    const title = text || slugTitle(abs);
+    if (!title) return;
+
+    // run through your content filter
+    if (!coreAllowItem({ title, link: abs }, abs)) return;
+
+    if (!seen.has(abs)) {
+      seen.add(abs);
+      out.push({ title, link: abs, publishedAt: null });
+    }
+  });
+
+  // If we scraped nothing, try to enrich homepage links via OG as last resort
+  if (out.length === 0) {
+    try {
+      const enriched = await enrichWithOG([cfg.homepage_url], base.host); // returns articles for discovered links
+      for (const a of enriched) {
+        if (!a.url || !sameHost(a.url, base.toString())) continue;
+        const title = a.title || slugTitle(a.url);
+        if (!title) continue;
+        if (!coreAllowItem({ title, link: a.url }, a.url)) continue;
+        if (!seen.has(a.url)) {
+          seen.add(a.url);
+        const publishedAt = a.publishedAt ? new Date(a.publishedAt) : null;
+              out.push({ title, link: a.url, publishedAt } as FeedItem);
+        }
+        if (out.length >= limit) break;
+      }
+    } catch { /* ignore */ }
+  }
+
+  return out.slice(0, limit);
+}
 
 async function loadSourceConfig(sourceId: number): Promise<SourceConfig | null> {
   const res = await dbQuery<SourceConfig>(
@@ -341,10 +551,8 @@ async function loadSourceConfig(sourceId: number): Promise<SourceConfig | null> 
     `,
     [sourceId]
   );
-
   const row = Array.isArray(res) ? (res as any)[0] : (res as any).rows?.[0];
   if (!row) return null;
-
   return {
     id: row.id,
     homepage_url: row.homepage_url ?? null,
@@ -404,32 +612,58 @@ async function fetchRssItems(rssUrl: string, limit = 50): Promise<FeedItem[]> {
   return items;
 }
 
-export async function fetchItemsForSource(
-  sourceId: number,
-  limit: number
-): Promise<FeedItem[]> {
+export async function fetchItemsForSource(sourceId: number, limit: number): Promise<FeedItem[]> {
   const cfg = await loadSourceConfig(sourceId);
   if (!cfg) return [];
 
   const mode = (cfg.fetch_mode ?? "auto").toLowerCase() as SourceConfig["fetch_mode"];
 
-  // Explicit modes take priority
-  if (mode === "rss" && cfg.rss_url) {
-    return fetchRssItems(cfg.rss_url, limit);
+  // 0) If an explicit adapter is configured, prefer it first.
+  if (cfg.adapter) {
+    const base = cfg.homepage_url ? new URL(cfg.homepage_url) : null;
+    const adapter = ADAPTERS.find((a) => a.key === cfg.adapter);
+    if (adapter && base) {
+      try {
+        const arts = await adapter.probePreview(base);
+        const items = arts
+          .filter((a) => coreAllowItem({ title: a.title, link: a.url }, a.url))
+          .map((a) => ({ title: a.title, link: a.url, publishedAt: a.publishedAt ? new Date(a.publishedAt) : null}));
+        if (items.length) return items.slice(0, limit);
+      } catch { /* fall through */ }
+    }
   }
-  if (mode === "sitemap" && cfg.sitemap_url) {
-    return fetchFromSitemap(cfg.sitemap_url, limit);
-  }
-  // (mode === 'html') would go here when you add a homepage crawler.
 
-  // AUTO: prefer RSS, then SITEMAP, then give up
+  // 1) Explicit modes
+  if (mode === "rss"     && cfg.rss_url)     return fetchRssItems(cfg.rss_url, limit);
+  if (mode === "sitemap" && cfg.sitemap_url) return fetchFromSitemap(cfg.sitemap_url, limit);
+
+  // 2) AUTO: if site gives us RSS, use it; otherwise SCRAPE; finally sitemap.
   if (cfg.rss_url) {
-    return fetchRssItems(cfg.rss_url, limit);
-  }
-  if (cfg.sitemap_url) {
-    return fetchFromSitemap(cfg.sitemap_url, limit);
+    const items = await fetchRssItems(cfg.rss_url, limit);
+    if (items.length) return items;
   }
 
-  // No usable source
+  // ← THIS IS THE NEW BEHAVIOR YOU WANTED
+  if (cfg.homepage_url) {
+    const items = await scrapeHomepage(cfg, limit);
+    if (items.length) return items;
+  }
+
+  if (cfg.sitemap_url) {
+    const items = await fetchFromSitemap(cfg.sitemap_url, limit);
+    if (items.length) return items;
+  }
+
+  // 3) As last resort, try discovering RSS off homepage (auto-discover)
+  if (cfg.homepage_url) {
+    try {
+      const candidates = await discoverFeedUrls(new URL(cfg.homepage_url));
+      for (const u of candidates) {
+        const items = await fetchRssItems(u, limit);
+        if (items.length) return items;
+      }
+    } catch { /* ignore */ }
+  }
+
   return [];
 }
