@@ -56,11 +56,35 @@ export type Enriched = {
 // /types.sources.ts
 export type Article = {
   id: number;
+  source_id?: number | null;
   title: string;
   url: string;
+  author?: string | null;
   canonical_url: string | null;
   domain: string | null;
   published_at: string | null;
-  source: string;
+  source: string | null;
   image_url?: string | null;
+  discovered_at?: string | null;
+  summary?: string | null;
+  topics?: [];
+  players?: [];
+  sport?: string | null;
+  Article?: string | null;
+  season?: number | null;
+  week?: number | null;
+  score?: number | null;
+  slug?: string | null;
+  fingerprint?: string | null;
+  cleaned_title?: string | null;
+  popularity_score?: number | null;
+  popularity?: number | null;
+  image_source?: string | null;
+  image_checked_at?: string | null;
+  primary_topic?: string | null;
+  is_player_page?: boolean | null;
+  secondary_topic?: string | null;
+  is_static?: boolean | null;
+  static_type?: string | null;
+
 };

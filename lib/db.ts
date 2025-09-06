@@ -14,11 +14,53 @@ function getConnectionString(): string {
   return url;
 }
 
-/** Decide whether to require SSL (true unless localhost or DB_SSL=false). */
-function shouldUseSSL(cs: string): boolean {
-  if (process.env.DB_SSL?.toLowerCase() === "false") return false;
-  if (process.env.DB_SSL?.toLowerCase() === "true") return true;
-  return !/localhost|127\.0\.0\.1/.test(cs);
+/**
+ * Decide SSL behavior using (in order):
+ *   1) DB_SSL ('true' | 'false')
+ *   2) sslmode in DATABASE_URL or PGSSLMODE/DB_SSLMODE env
+ *   3) localhost heuristic (no TLS on localhost by default)
+ *   4) NODE_ENV: production => verify; otherwise allow self-signed
+ *
+ * Notes:
+ *   - node-postgres does NOT natively parse sslmode semantics, so we map them.
+ *   - rejectUnauthorized:false is DEV-ONLY; Prod stays strict.
+ */
+function getSSLConfig(cs: string): PoolConfig["ssl"] | undefined {
+  // (1) Hard override via DB_SSL
+  const dbSSL = process.env.DB_SSL?.toLowerCase();
+  if (dbSSL === "false") return undefined;
+  if (dbSSL === "true") return { rejectUnauthorized: true };
+
+  // (2) sslmode (URL or env)
+  let sslmode: string | null = null;
+  try {
+    const u = new URL(cs);
+    sslmode = u.searchParams.get("sslmode");
+  } catch {
+    /* ignore parse issues */
+  }
+  sslmode = (process.env.PGSSLMODE || process.env.DB_SSLMODE || sslmode || "").toLowerCase() || null;
+
+  // Map common sslmode variants to pg SSL config
+  // disable         -> no TLS
+  // allow/prefer    -> TLS if available; we approximate with TLS w/o verification for dev convenience
+  // require         -> TLS w/ verification
+  // verify-ca/full  -> TLS w/ verification (you’d supply CA via PGSSLROOTCERT if needed)
+  if (sslmode === "disable") return undefined;
+  if (sslmode === "no-verify" || sslmode === "allow" || sslmode === "prefer") {
+    return { rejectUnauthorized: false };
+  }
+  if (sslmode === "require" || sslmode === "verify-ca" || sslmode === "verify-full") {
+    return { rejectUnauthorized: true };
+  }
+
+  // (3) Localhost heuristic
+  const isLocal = /(?:^|@)(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(cs);
+  if (isLocal) return undefined;
+
+  // (4) Environment default
+  const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+  return isProd ? { rejectUnauthorized: true } : { rejectUnauthorized: false };
 }
 
 type PoolConfigExtended = PoolConfig & {
@@ -32,7 +74,7 @@ function makePool(): Pool {
 
   const cfg: PoolConfigExtended = {
     connectionString,
-    ssl: shouldUseSSL(connectionString) ? { rejectUnauthorized: false } : undefined,
+    ssl: getSSLConfig(connectionString),
     max: Number(process.env.PG_MAX ?? 10), // cap concurrency
     idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS ?? 30_000),
     connectionTimeoutMillis: Number(process.env.PG_CONN_TIMEOUT_MS ?? 12_000),
@@ -77,6 +119,12 @@ function makePool(): Pool {
     }
     console.error("[pg] pool error", err);
   });
+
+  // In dev, warn loudly if we’re allowing self-signed TLS (helps avoid surprises)
+  if ((cfg.ssl as any)?.rejectUnauthorized === false) {
+    // eslint-disable-next-line no-console
+    console.warn("[pg] SSL: rejectUnauthorized=false (dev-only relaxed TLS)");
+  }
 
   return p;
 }

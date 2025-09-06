@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { STATIC_TYPES, staticTypeLabel, type StaticType } from "@/lib/staticTypes";
 
 /* ───────────── Types ───────────── */
 
@@ -17,7 +18,7 @@ type ExistingArticle = {
   published_at: string | null; // ISO
   domain: string | null;
   is_static: boolean | null;
-  static_type: string | null;
+  static_type: StaticType | null;
 };
 
 type ProbeArticle = {
@@ -59,8 +60,6 @@ export default function ArticleProbePanel() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const [staticTypes, setStaticTypes] = useState<string[]>([]);
-
   // last probe payload
   const [probe, setProbe] = useState<ProbeArticle | null>(null);
 
@@ -72,20 +71,7 @@ export default function ArticleProbePanel() {
   const [publishedAt, setPublishedAt] = useState(""); // datetime-local
   const [canonicalUrl, setCanonicalUrl] = useState("");
   const [isStatic, setIsStatic] = useState(true);
-  const [staticType, setStaticType] = useState<string>("");
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/admin/article-probe/static-types", { cache: "no-store" });
-        if (!r.ok) return;
-        const j = (await r.json()) as { values: string[] };
-        setStaticTypes(j.values || []);
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
+  const [staticType, setStaticType] = useState<StaticType | "">("");
 
   function hydrateEditor(p: ProbeArticle) {
     // if existing, prefer DB values; else use probed values
@@ -97,8 +83,7 @@ export default function ArticleProbePanel() {
       setAuthor(e.author ?? "");
       setPublishedAt(e.published_at ? toLocalDT(e.published_at) : "");
       setCanonicalUrl(e.canonical_url ?? "");
-      const st = e.is_static ?? true;
-      setIsStatic(st);
+      setIsStatic(e.is_static ?? true);
       setStaticType(e.static_type ?? "");
     } else {
       setExistingId(null);
@@ -120,7 +105,7 @@ export default function ArticleProbePanel() {
       const r = await fetch("/api/admin/article-probe", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: url.trim() }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as ProbeArticle;
@@ -149,7 +134,7 @@ export default function ArticleProbePanel() {
       published_at: fromLocalDT(publishedAt),
       source_id: typeof sourceId === "number" ? sourceId : Number(sourceId) || null,
       is_static: isStatic,
-      static_type: isStatic ? staticType || null : null,
+      static_type: isStatic ? (staticType || null) : null,
       domain: probe.domain ?? null,
       // Also send probed canonical so server can double-check duplicates
       probed_canonical: probe.canonical_url ?? null,
@@ -168,7 +153,6 @@ export default function ArticleProbePanel() {
     }
 
     alert(`${j.action === "updated" ? "Updated" : "Inserted"} article #${j.id}`);
-    // refresh probe state to reflect new/updated id
     setExistingId(j.id);
   }
 
@@ -271,7 +255,11 @@ export default function ArticleProbePanel() {
               <input
                 type="checkbox"
                 checked={isStatic}
-                onChange={(e) => setIsStatic(e.target.checked)}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setIsStatic(checked);
+                  if (!checked) setStaticType("");
+                }}
               />
               Mark as static
             </label>
@@ -281,13 +269,13 @@ export default function ArticleProbePanel() {
               <select
                 className="w-full rounded border p-2"
                 disabled={!isStatic}
-                value={staticType}
-                onChange={(e) => setStaticType(e.target.value)}
+                value={staticType ?? ""}
+                onChange={(e) => setStaticType((e.target.value as StaticType) || "")}
               >
                 <option value="">— choose —</option>
-                {staticTypes.map((t) => (
+                {STATIC_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t}
+                    {staticTypeLabel(t)}
                   </option>
                 ))}
               </select>
