@@ -78,6 +78,35 @@ export type Enriched = {
 
 
 // ——— tiny helpers (no `any`) ———
+
+// add near the other helpers
+const URL_YMD = /\/(20\d{2})\/([01]?\d)\/([0-3]?\d)(?:\/|$)/; // /YYYY/MM/DD/
+const URL_YEAR = /\/(20\d{2})(?:\/|$)/;                        // /YYYY/
+
+function inferDateFromUrl(u: string): string | null {
+  try {
+    const url = new URL(u);
+    const p = url.pathname;
+    const m1 = p.match(URL_YMD);
+    if (m1) {
+      const y = +m1[1], m = +m1[2], d = +m1[3];
+      if (y >= 2005 && y <= new Date().getFullYear() + 1 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return new Date(Date.UTC(y, m - 1, d)).toISOString();
+      }
+    }
+    const m2 = p.match(URL_YEAR);
+    if (m2) {
+      const y = +m2[1];
+      if (y >= 2005 && y <= new Date().getFullYear() + 1) {
+        // assume Jan 1 for ordering purposes
+        return new Date(Date.UTC(y, 0, 1)).toISOString();
+      }
+    }
+  } catch {}
+  return null;
+}
+
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
 }
@@ -462,7 +491,10 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const cleaned      = cleanTitleForSource(sourceName, item.title || canonical);
   const topics       = classify(cleaned, canonical);          // 👈 include URL hints
   const week         = inferWeek(cleaned, new Date(), canonical); // 👈 URL can hint week too
-  const published_at = parseDate(item.isoDate, true);
+  const published_at =
+  parseDate(item.isoDate, false) ??
+  inferDateFromUrl(canonical) ??
+  null;
   const slug         = makeSlug(sourceName, cleaned, canonical);
   const fp           = fingerprint(canonical, cleaned);
 

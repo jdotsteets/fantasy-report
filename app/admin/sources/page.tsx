@@ -13,6 +13,7 @@ import { absFetch } from "@/lib/absFetch";
 import ProbePanel from "@/components/admin/ProbePanel";
 import AttentionTable from "@/components/admin/AttentionTable";
 import SourceLevelSummaryTable from "@/components/admin/SourceLevelSummaryTable";
+import ArticleProbePanel from "@/components/admin/ArticleProbePanel";
 
 
 export const runtime = "nodejs";
@@ -233,7 +234,8 @@ export default async function AdminSourcesPage({
     <main className="mx-auto max-w-[1100px] space-y-8 px-4 py-8">
       <AdminNav active="sources" />
       <ProbePanel />
-
+      {/* NEW */}
+      <ArticleProbePanel />
       <h1 className="text-2xl font-bold">Sources Admin</h1>
 
       <RunIngestControls action={runIngestAction} className="mb-6" />

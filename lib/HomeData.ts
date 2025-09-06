@@ -155,8 +155,13 @@ function buildPoolSql(): string {
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE
-        (a.published_at >= NOW() - ($1 || ' days')::interval
-         OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+        (
+          (a.published_at IS NOT NULL
+            AND a.published_at >= NOW() - ($1 || ' days')::interval)
+          OR
+          (a.published_at IS NULL
+            AND a.discovered_at >= NOW() - ($1 || ' days')::interval)
+        )
         AND a.is_static IS NOT TRUE
         AND a.is_player_page IS NOT TRUE
         AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
@@ -214,8 +219,13 @@ async function fetchMoreByTopic(
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE
-        (a.published_at >= NOW() - ($1 || ' days')::interval
-         OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+        (
+          (a.published_at IS NOT NULL
+            AND a.published_at >= NOW() - ($1 || ' days')::interval)
+          OR
+          (a.published_at IS NULL
+            AND a.discovered_at >= NOW() - ($1 || ' days')::interval)
+        )
         AND a.is_static IS NOT TRUE
         AND a.is_player_page IS NOT TRUE
         AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
