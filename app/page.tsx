@@ -8,6 +8,7 @@ import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import ImageToggle from "@/components/ImageToggle";
 import { getHomeData, type DbRow } from "@/lib/HomeData";
+import LoadMoreSection from "@/components/LoadMoreSection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -144,87 +145,110 @@ export default async function Page({
         </div>
 
         {/* If a filter is active, render a centered single column */}
-        {selected ? (
-          <div className="mx-auto w-full max-w-3xl space-y-4">
-            {selected === "rankings" && (
-              <Section title="Rankings">
-                <ArticleList items={rankingsFiltered} />
-              </Section>
-            )}
-            {selected === "start-sit" && (
-              <Section title="Start/Sit & Sleepers">
-                <ArticleList items={startSitFiltered} />
-              </Section>
-            )}
-            {selected === "waivers" && (
-              <Section title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}>
-                <ArticleList items={waiversFiltered} />
-              </Section>
-            )}
-            {selected === "news" && (
-              <Section title="News & Updates">
-                <ArticleList items={latestFiltered} />
-              </Section>
-            )}
-            {selected === "dfs" && (
-              <Section title="DFS">
-                <ArticleList items={dfsFiltered} />
-              </Section>
-            )}
-            {selected === "advice" && (
-              <Section title="Advice">
-                <ArticleList items={adviceFiltered} />
-              </Section>
-            )}
-            {selected === "injury" && (
-              <Section title="Injuries">
-                <ArticleList items={injuriesFiltered} />
-              </Section>
-            )}
-          </div>
-        ) : (
-          // Otherwise, keep the original 3-column grid
-          <div className="grid grid-cols-1 gap-1.5 md:grid-cols-[1fr_1.25fr_1fr] md:gap-2">
-            {/* Left column */}
-            <div className="order-2 md:order-1 space-y-4">
-              <Section title="Rankings">
-                <ArticleList items={rankingsFiltered} />
-              </Section>
+{selected ? (
+  <div className="mx-auto w-full max-w-3xl space-y-4">
+    {selected === "rankings" && (
+      <LoadMoreSection
+        title="Rankings"
+        sectionKey="rankings"
+        initialItems={rankingsFiltered}
+        days={45}
+      />
+    )}
+    {selected === "start-sit" && (
+      <LoadMoreSection
+        title="Start/Sit & Sleepers"
+        sectionKey="start-sit"
+        initialItems={startSitFiltered}
+        days={45}
+      />
+    )}
+    {selected === "waivers" && (
+      <LoadMoreSection
+        title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}
+        sectionKey="waiver-wire"
+        initialItems={waiversFiltered}
+        days={45}
+        week={CURRENT_WEEK}
+      />
+    )}
+    {selected === "news" && (
+      <LoadMoreSection
+        title="News & Updates"
+        sectionKey="news"
+        initialItems={latestFiltered}
+        days={45}
+      />
+    )}
+    {selected === "dfs" && (
+      <LoadMoreSection
+        title="DFS"
+        sectionKey="dfs"
+        initialItems={dfsFiltered}
+        days={45}
+      />
+    )}
+    {selected === "advice" && (
+      <LoadMoreSection
+        title="Advice"
+        sectionKey="advice"
+        initialItems={adviceFiltered}
+        days={45}
+      />
+    )}
+    {selected === "injury" && (
+      <LoadMoreSection
+        title="Injuries"
+        sectionKey="injury"
+        initialItems={injuriesFiltered}
+        days={45}
+      />
+    )}
+  </div>
+) : (
+  // 3-column view
+  <div className="grid grid-cols-1 gap-1.5 md:grid-cols-[1fr_1.25fr_1fr] md:gap-2">
+    {/* Left column */}
+    <div className="order-2 md:order-1 space-y-4">
+      <LoadMoreSection
+        title="Rankings"
+        sectionKey="rankings"
+        initialItems={rankingsFiltered}
+      />
+      <LoadMoreSection
+        title="Start/Sit & Sleepers"
+        sectionKey="start-sit"
+        initialItems={startSitFiltered}
+      />
+      <LoadMoreSection
+        title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}
+        sectionKey="waiver-wire"
+        initialItems={waiversFiltered}
+        week={CURRENT_WEEK}
+      />
+    </div>
 
-              <Section title="Start/Sit & Sleepers">
-                <ArticleList items={startSitFiltered} />
-              </Section>
+    {/* Middle column */}
+    <div className="order-1 md:order-2 space-y-4">
+      <LoadMoreSection
+        title="News & Updates"
+        sectionKey="news"
+        initialItems={latestFiltered}
+      />
+    </div>
 
-              <Section title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}>
-                <ArticleList items={waiversFiltered} />
-              </Section>
-            </div>
-
-            {/* Middle column */}
-            <div className="order-1 md:order-2 space-y-4">
-              <Section title="News & Updates">
-                <ArticleList items={latestFiltered} />
-              </Section>
-            </div>
-
-            {/* Right column */}
-            <div className="order-3 md:order-3 space-y-4">
-              <Section title="DFS">
-                <ArticleList items={dfsFiltered} />
-              </Section>
-              <Section title="Advice">
-                <ArticleList items={adviceFiltered} />
-              </Section>
-              <Section title="Injuries">
-                <ArticleList items={injuriesFiltered} />
-              </Section>
-
-              <Section title="Sites">
-                <FantasyLinks />
-              </Section>
-            </div>
-          </div>
-        )}
+    {/* Right column */}
+    <div className="order-3 md:order-3 space-y-4">
+      <LoadMoreSection title="DFS" sectionKey="dfs" initialItems={dfsFiltered} />
+      <LoadMoreSection title="Advice" sectionKey="advice" initialItems={adviceFiltered} />
+      <LoadMoreSection title="Injuries" sectionKey="injury" initialItems={injuriesFiltered} />
+      <Section title="Sites">
+        <FantasyLinks />
+      </Section>
+    </div>
+  </div>
+)}
+        
       </main>
     </Suspense>
   );

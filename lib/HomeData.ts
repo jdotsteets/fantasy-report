@@ -19,6 +19,10 @@ export type HomeParams = {
   limitWaivers: number;
   limitInjuries: number;
   limitHero: number;
+
+  /** Optional: show a dedicated Static section (excluded from all other sections). */
+  staticSectionLimit?: number;       // default 0 (off)
+  staticTypes?: string[] | null;     // e.g. ["rankings"]. null/undefined => any static_type
 };
 
 export type DbRow = {
@@ -51,6 +55,8 @@ export type HomePayload = {
     waivers: DbRow[];
     injuries: DbRow[];
     heroCandidates: DbRow[];
+    /** Present only when staticSectionLimit > 0 */
+    staticItems?: DbRow[];
   };
 };
 
@@ -236,8 +242,12 @@ async function fetchMoreByTopic(
   return rows;
 }
 
-// Static rankings: prefer is_static=true (and static_type if present)
-async function fetchStaticRankings(days: number, limit: number): Promise<DbRow[]> {
+// Dedicated static-page fetch (for the optional static section)
+async function fetchStaticPages(
+  days: number,
+  limit: number,
+  types: string[] | null | undefined
+): Promise<DbRow[]> {
   const { rows } = await dbQuery<DbRow>(
     `
     SELECT
@@ -256,7 +266,6 @@ async function fetchStaticRankings(days: number, limit: number): Promise<DbRow[]
     JOIN sources s ON s.id = a.source_id
     WHERE
       a.is_static IS TRUE
-      AND (a.static_type = 'rankings' OR a.static_type IS NULL)           -- be inclusive
       AND (a.published_at >= NOW() - ($1 || ' days')::interval
            OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
       AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
@@ -267,10 +276,14 @@ async function fetchStaticRankings(days: number, limit: number): Promise<DbRow[]
         COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
         a.url ILIKE '%fantasy%football%'
       )
-    ORDER BY a.discovered_at DESC NULLS LAST, a.id DESC
-    LIMIT $2
+      AND (
+        $2::text[] IS NULL
+        OR a.static_type = ANY($2::text[])
+      )
+    ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
+    LIMIT $3
     `,
-    [String(days), limit]
+    [String(days), types && types.length ? types : null, limit]
   );
   return rows;
 }
@@ -286,6 +299,8 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const {
     days, week,
     limitNews, limitRankings, limitStartSit, limitAdvice, limitDFS, limitWaivers, limitInjuries, limitHero,
+    staticSectionLimit = 0,
+    staticTypes = null,
   } = p;
 
   // Plenty of headroom so "latest" can still fill even when primaries hit caps
@@ -294,9 +309,9 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     limitDFS + limitWaivers + limitInjuries;
   const poolSize = Math.max(sum * 3, 400);
 
-  const [poolRaw, staticRankingsRaw] = await Promise.all([
+  const [poolRaw, staticRaw] = await Promise.all([
     fetchPool(days, poolSize),
-    fetchStaticRankings(days, limitRankings * 2), // fetch a little extra, we’ll trim by cap
+    staticSectionLimit > 0 ? fetchStaticPages(days, staticSectionLimit * 2, staticTypes) : Promise.resolve([] as DbRow[]),
   ]);
 
   // Normalize rows & derive missing primary from topics if needed
@@ -319,36 +334,48 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const dfs: DbRow[]      = [];
   const waivers: DbRow[]  = [];
   const injuries: DbRow[] = [];
+  const staticItems: DbRow[] = [];
 
-  const placed = new Set<number>(); // global de-dupe
+  const placed = new Set<number>(); // global de-dupe across sections
 
-  const tryAssign = (bucket: DbRow[], cap: number, r: PoolRow) => {
+  // ── per-source caps to avoid one site dominating ─────────────
+  const PER_SOURCE_CAP: Record<CanonTopic, number> = {
+    rankings: 2,
+    "start-sit": 2,
+    "waiver-wire": 2,
+    dfs: 2,
+    injury: 2,
+    advice: 2,
+  };
+  const perSource: Record<CanonTopic, Record<string, number>> = {
+    rankings: {}, "start-sit": {}, "waiver-wire": {}, dfs: {}, injury: {}, advice: {},
+  };
+  const canTakeFrom = (topic: CanonTopic, source: string) =>
+    (perSource[topic][source] ?? 0) < (PER_SOURCE_CAP[topic] ?? 99);
+  const inc = (topic: CanonTopic, source: string) =>
+    (perSource[topic][source] = (perSource[topic][source] ?? 0) + 1);
+
+  const tryAssign = (topic: CanonTopic, bucket: DbRow[], cap: number, r: PoolRow) => {
     if (bucket.length >= cap) return false;
     if (placed.has(r.id)) return false;
+    if (!canTakeFrom(topic, r.source)) return false;
     bucket.push(toDbRow(r));
     placed.add(r.id);
+    inc(topic, r.source);
     return true;
   };
 
   const wantWeek = (r: PoolRow) => week == null || r.week === week;
 
-  // 0) Seed Rankings with static pages first (not in pool because is_static=true)
-  for (const r of staticRankingsRaw) {
-    if (rankings.length >= limitRankings) break;
-    if (placed.has(r.id)) continue;
-    rankings.push(r);
-    placed.add(r.id);
-  }
-
   // 1) Primary pass (recency order from dynamic pool)
   for (const r of pool) {
     switch (r.primary_topic) {
-      case "rankings":    if (tryAssign(rankings, limitRankings, r)) continue; break;
-      case "start-sit":   if (tryAssign(startSit,  limitStartSit,  r)) continue; break;
-      case "waiver-wire": if (wantWeek(r) && tryAssign(waivers,    limitWaivers, r)) continue; break;
-      case "dfs":         if (tryAssign(dfs,      limitDFS,      r)) continue; break;
-      case "injury":      if (tryAssign(injuries, limitInjuries, r)) continue; break;
-      case "advice":      if (tryAssign(advice,   limitAdvice,   r)) continue; break;
+      case "rankings":    if (tryAssign("rankings", rankings, limitRankings, r)) continue; break;
+      case "start-sit":   if (tryAssign("start-sit", startSit,  limitStartSit,  r)) continue; break;
+      case "waiver-wire": if (wantWeek(r) && tryAssign("waiver-wire", waivers, limitWaivers, r)) continue; break;
+      case "dfs":         if (tryAssign("dfs",      dfs,      limitDFS,      r)) continue; break;
+      case "injury":      if (tryAssign("injury",   injuries, limitInjuries, r)) continue; break;
+      case "advice":      if (tryAssign("advice",   advice,   limitAdvice,   r)) continue; break;
       default:            break;
     }
   }
@@ -356,21 +383,25 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   // 2) Secondary / overflow top-ups (leftovers only)
   const leftovers = pool.filter((r) => !placed.has(r.id));
 
-  const topUp = (bucket: DbRow[], cap: number, pred: (r: PoolRow) => boolean) => {
+  const topUp = (topic: CanonTopic, bucket: DbRow[], cap: number, pred: (r: PoolRow) => boolean) => {
     if (bucket.length >= cap) return;
     for (const r of leftovers) {
       if (bucket.length >= cap) break;
       if (placed.has(r.id)) continue;
       if (!pred(r)) continue;
-      tryAssign(bucket, cap, r);
+      if (!canTakeFrom(topic, r.source)) continue;
+      bucket.push(toDbRow(r));
+      placed.add(r.id);
+      inc(topic, r.source);
     }
   };
 
-  // Rankings by secondary (keeps dynamic rankings if cap not reached after static)
-  topUp(rankings, limitRankings, (r) => r.secondary_topic === "rankings");
+  // Rankings by secondary (keeps dynamic rankings)
+  topUp("rankings", rankings, limitRankings, (r) => r.secondary_topic === "rankings");
 
   // Start/Sit by secondary, topics, or keywords (sleepers/start-sit)
   topUp(
+    "start-sit",
     startSit,
     limitStartSit,
     (r) =>
@@ -381,6 +412,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
 
   // Waivers by secondary, topics, or keywords (still respect week)
   topUp(
+    "waiver-wire",
     waivers,
     limitWaivers,
     (r) =>
@@ -391,12 +423,13 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   );
 
   // DFS, Injuries, Advice by secondary
-  topUp(dfs,      limitDFS,      (r) => r.secondary_topic === "dfs");
-  topUp(injuries, limitInjuries, (r) => r.secondary_topic === "injury");
-  topUp(advice,   limitAdvice,   (r) => r.secondary_topic === "advice");
+  topUp("dfs",      dfs,      limitDFS,      (r) => r.secondary_topic === "dfs");
+  topUp("injury",   injuries, limitInjuries, (r) => r.secondary_topic === "injury");
+  topUp("advice",   advice,   limitAdvice,   (r) => r.secondary_topic === "advice");
 
   /* 2b) Guaranteed fill: if any bucket is still short, fetch directly by topic. */
   async function guaranteeFill(
+    bucketTopic: CanonTopic,
     bucket: DbRow[],
     cap: number,
     topic: CanonTopic,
@@ -405,21 +438,23 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     if (bucket.length >= cap) return;
     const needed = cap - bucket.length;
     const excludeIds = Array.from(placed);
-    const more = await fetchMoreByTopic(topic, days, needed, excludeIds, weekForTopic);
+    const more = await fetchMoreByTopic(topic, days, needed * 2, excludeIds, weekForTopic);
     for (const r of more) {
       if (bucket.length >= cap) break;
       if (placed.has(r.id)) continue;
+      if (!canTakeFrom(bucketTopic, r.source)) continue;
       bucket.push(r);
       placed.add(r.id);
+      inc(bucketTopic, r.source);
     }
   }
 
-  await guaranteeFill(rankings, limitRankings, "rankings");
-  await guaranteeFill(startSit, limitStartSit, "start-sit");
-  await guaranteeFill(dfs,      limitDFS,      "dfs");
-  await guaranteeFill(injuries, limitInjuries, "injury");
-  await guaranteeFill(advice,   limitAdvice,   "advice");
-  await guaranteeFill(waivers,  limitWaivers,  "waiver-wire", week ?? null);
+  await guaranteeFill("rankings", rankings, limitRankings, "rankings");
+  await guaranteeFill("start-sit", startSit, limitStartSit, "start-sit");
+  await guaranteeFill("dfs",      dfs,      limitDFS,      "dfs");
+  await guaranteeFill("injury",   injuries, limitInjuries, "injury");
+  await guaranteeFill("advice",   advice,   limitAdvice,   "advice");
+  await guaranteeFill("waiver-wire", waivers, limitWaivers, "waiver-wire", week ?? null);
 
   // 3) Image enhancement (server-side) for each bucket, in parallel.
   async function enhanceBucket(items: DbRow[], topic: CanonTopic | null) {
@@ -459,9 +494,21 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   }
   await enhanceBucket(latest, null);
 
+  // 5) Optional Static section: strictly is_static=true, never used elsewhere here
+  if (staticSectionLimit > 0 && staticRaw.length > 0) {
+    // de-dupe against anything already placed by id just in case
+    for (const r of staticRaw) {
+      if (staticItems.length >= staticSectionLimit) break;
+      if (placed.has(r.id)) continue;
+      staticItems.push(r);
+      placed.add(r.id);
+    }
+    await enhanceBucket(staticItems, null);
+  }
+
   const heroCandidates = latest.slice(0, limitHero);
 
-  return {
+  const payload: HomePayload = {
     items: {
       latest,
       rankings,
@@ -471,6 +518,9 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
       waivers,
       injuries,
       heroCandidates,
+      ...(staticSectionLimit > 0 ? { staticItems } : {}),
     },
   };
+
+  return payload;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -28,43 +28,71 @@ type RecentItem = {
   published_at?: string | null;
 };
 
-/* ───────────────────────── Utils ───────────────────────── */
+/* ───────────────────────── Guards / Utils ───────────────────────── */
+
+function isObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
+}
+
+function looksLikeSourceRow(x: unknown): x is SourceRow {
+  if (!isObject(x)) return false;
+  return typeof x.id === "number";
+}
+
+function looksLikeRecentItem(x: unknown): x is RecentItem {
+  if (!isObject(x)) return false;
+  // allow minimal shape; strings or nulls
+  const t = x.title; const u = x.url; const d = x.discovered_at;
+  return (
+    (t == null || typeof t === "string") &&
+    (u == null || typeof u === "string") &&
+    (d == null || typeof d === "string")
+  );
+}
 
 function normalizeList(payload: unknown): SourceRow[] {
-  if (Array.isArray(payload)) return payload as SourceRow[];
-  if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>;
-    if (Array.isArray(obj.rows)) return obj.rows as SourceRow[];
-    if (Array.isArray(obj.items)) return obj.items as SourceRow[];
-    if (Array.isArray(obj.sources)) return obj.sources as SourceRow[];
-    if (obj.ok === false) return [];
-    const values = Object.values(obj);
-    if (values.length && values.every((v) => v && typeof v === "object" && (v as any).id != null)) {
-      return values as SourceRow[];
+  if (Array.isArray(payload)) return payload.filter(looksLikeSourceRow);
+
+  if (isObject(payload)) {
+    const rows = (Array.isArray(payload.rows) ? payload.rows :
+                  Array.isArray(payload.items) ? payload.items :
+                  Array.isArray(payload.sources) ? payload.sources :
+                  null) as unknown[] | null;
+
+    if (rows) return rows.filter(looksLikeSourceRow) as SourceRow[];
+
+    // API error envelope: { ok: false, ... }
+    if ("ok" in payload && payload.ok === false) return [];
+
+    // Sometimes the API returns an object keyed by id
+    const values = Object.values(payload);
+    if (values.length && values.every(isObject) && values.some(looksLikeSourceRow)) {
+      return values.filter(looksLikeSourceRow) as SourceRow[];
     }
   }
+
   return [];
 }
 
 function normalizeRecent(payload: unknown): RecentItem[] {
-  if (!payload || typeof payload !== "object") return [];
-  const obj = payload as Record<string, unknown>;
+  if (!isObject(payload)) return [];
   const arr =
-    (Array.isArray(obj.items) ? obj.items :
-     Array.isArray(obj.rows) ? obj.rows :
-     Array.isArray(obj.articles) ? obj.articles :
-     []) as any[];
+    (Array.isArray(payload.items) ? payload.items :
+     Array.isArray(payload.rows) ? payload.rows :
+     Array.isArray(payload.articles) ? payload.articles :
+     []) as unknown[];
 
-  return arr.map((x) => ({
-    title: typeof x?.title === "string" ? x.title : null,
-    url: typeof x?.url === "string" ? x.url : null,
-    discovered_at: typeof x?.discovered_at === "string" ? x.discovered_at : null,
-    published_at: typeof x?.published_at === "string" ? x.published_at : null,
-  }));
+  return arr
+    .filter(looksLikeRecentItem)
+    .map((x) => ({
+      title: (isObject(x) && typeof x.title === "string") ? x.title : null,
+      url: (isObject(x) && typeof x.url === "string") ? x.url : null,
+      discovered_at: (isObject(x) && typeof x.discovered_at === "string") ? x.discovered_at : null,
+      published_at: (isObject(x) && typeof x.published_at === "string") ? x.published_at : null,
+    }));
 }
 
-const fmtDT = (s: string | null | undefined) =>
-  s ? new Date(s).toLocaleString() : "—";
+const fmtDT = (s: string | null | undefined) => (s ? new Date(s).toLocaleString() : "—");
 
 /* ───────────────────────── Component ───────────────────────── */
 
@@ -80,10 +108,9 @@ export default function SourcesTable() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   // “last 10” inline expand state, per source id
-  const [open, setOpen] = useState<Record<
-    number,
-    { loading: boolean; error: string | null; items: RecentItem[] | null }
-  >>({});
+  const [open, setOpen] = useState<
+    Record<number, { loading: boolean; error: string | null; items: RecentItem[] | null }>
+  >({});
 
   useEffect(() => {
     (async () => {
@@ -91,27 +118,36 @@ export default function SourcesTable() {
       setFetchErr(null);
       try {
         const res = await fetch("/api/admin/sources", { cache: "no-store" });
-        let bodyText = "";
+
         let json: unknown = null;
+        let bodyText = "";
         try {
           json = await res.json();
         } catch {
-          try { bodyText = await res.text(); } catch {}
+          try { bodyText = await res.text(); } catch { /* ignore */ }
         }
+
         if (!res.ok) {
           setRows([]);
-          setFetchErr(
-            (json as any)?.error || (json as any)?.message || bodyText || `HTTP ${res.status}`
-          );
+          const msg =
+            (isObject(json) && typeof json.error === "string" && json.error) ||
+            (isObject(json) && typeof json.message === "string" && json.message) ||
+            bodyText ||
+            `HTTP ${res.status}`;
+          setFetchErr(msg);
           return;
         }
+
         const list = normalizeList(json);
-        if (!list.length && (json as any)?.ok === false) {
-          setFetchErr((json as any)?.error || "API returned ok=false");
+        if (!list.length && isObject(json) && json.ok === false) {
+          const msg =
+            (typeof json.error === "string" && json.error) || "API returned ok=false";
+          setFetchErr(msg);
         }
         setRows(list);
       } catch (e) {
-        setFetchErr((e as Error).message);
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        setFetchErr(msg);
         setRows([]);
       } finally {
         setLoading(false);
@@ -147,12 +183,16 @@ export default function SourcesTable() {
       if (sortKey === "method") return methodOf(a).localeCompare(methodOf(b)) * dir;
       return (a.name ?? "").localeCompare(b.name ?? "") * dir;
     });
+
     return out;
   }, [rows, q, hideTeams, sortKey, sortDir]);
 
   function toggleSort(k: "name" | "method" | "id") {
     if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(k); setSortDir("asc"); }
+    else {
+      setSortKey(k);
+      setSortDir("asc");
+    }
   }
 
   function openEditor(id: number) {
@@ -165,31 +205,38 @@ export default function SourcesTable() {
     try {
       const s = JSON.stringify(c);
       return s.length > 24 ? s.slice(0, 24) + "…" : s;
-    } catch { return "{}"; }
+    } catch {
+      return "{}";
+    }
   };
 
   async function loadRecent(id: number) {
     setOpen((m) => ({ ...m, [id]: { loading: true, error: null, items: m[id]?.items ?? null } }));
     try {
-      const res = await fetch(`/api/admin/sources/recent?sourceId=${id}&limit=10`, { cache: "no-store" });
+      const res = await fetch(`/api/admin/sources/recent?sourceId=${id}&limit=10`, {
+        cache: "no-store",
+      });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((json as any)?.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const msg =
+          isObject(json) && typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
       const items = normalizeRecent(json);
       setOpen((m) => ({ ...m, [id]: { loading: false, error: null, items } }));
     } catch (e) {
-      setOpen((m) => ({ ...m, [id]: { loading: false, error: (e as Error).message, items: null } }));
+      const msg = e instanceof Error ? e.message : "Failed to load";
+      setOpen((m) => ({ ...m, [id]: { loading: false, error: msg, items: null } }));
     }
   }
 
   function toggleRecent(id: number) {
     const state = open[id];
     if (state) {
-      // collapse
-      const { [id]: _, ...rest } = open;
+      const { [id]: _omit, ...rest } = open;
       setOpen(rest);
     } else {
-      // expand + fetch
-      loadRecent(id);
+      void loadRecent(id);
     }
   }
 
@@ -214,11 +261,13 @@ export default function SourcesTable() {
           />
           Hide team pages
         </label>
-        <span className="text-xs text-zinc-500">{filtered.length} / {rows.length}</span>
+        <span className="text-xs text-zinc-500">
+          {filtered.length} / {rows.length}
+        </span>
       </div>
 
       {/* table */}
-      <div className="overflow-x-visible"> {/* let cells wrap; avoid forced horizontal scroll */}
+      <div className="overflow-x-visible">
         {loading ? (
           <div className="p-3 text-sm text-zinc-600">Loading…</div>
         ) : fetchErr ? (
@@ -239,49 +288,55 @@ export default function SourcesTable() {
                 <th className="cursor-pointer" onClick={() => toggleSort("name")}>
                   name {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : ""}
                 </th>
-                <th className="cursor-pointer" onClick={() => toggleSort("method")}>
+                <th className="cursor-pointer whitespace-nowrap" onClick={() => toggleSort("method")}>
                   method {sortKey === "method" ? (sortDir === "asc" ? "↑" : "↓") : ""}
                 </th>
                 <th>homepage</th>
                 <th>rss</th>
                 <th>adapter config</th>
                 <th>test</th>
-                <th>last 10</th>
+                <th className="whitespace-nowrap">last 10</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const isOpen = !!open[r.id];
+                const isOpen = Boolean(open[r.id]);
                 const state = open[r.id];
                 return (
-                  <>
-                    <tr key={r.id} className="border-t align-top">
+                  <Fragment key={r.id}>
+                    <tr className="border-t align-top">
                       <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
                       <td className="px-3 py-2 break-words">{r.name ?? "—"}</td>
-                      <td className="px-3 py-2">
-                        {r.fetch_mode === "rss"
-                          ? "RSS"
-                          : r.fetch_mode === "adapter" || r.scraper_key
-                          ? `Adapter${r.scraper_key ? ` (${r.scraper_key})` : ""}`
-                          : r.scrape_selector
-                          ? "Scrape"
-                          : "Auto"}
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {methodOf(r)}
                       </td>
                       <td className="px-3 py-2">
                         {r.homepage_url ? (
-                          <a className="text-blue-700 underline break-all"
-                             href={r.homepage_url} target="_blank" rel="noreferrer">
+                          <a
+                            className="text-blue-700 underline break-all"
+                            href={r.homepage_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
                             homepage
                           </a>
-                        ) : ("—")}
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         {r.rss_url ? (
-                          <a className="text-blue-700 underline break-all"
-                             href={r.rss_url} target="_blank" rel="noreferrer">
+                          <a
+                            className="text-blue-700 underline break-all"
+                            href={r.rss_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
                             rss
                           </a>
-                        ) : ("—")}
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <span className="inline-flex flex-wrap items-center gap-2">
@@ -314,16 +369,16 @@ export default function SourcesTable() {
                           Test
                         </a>
                       </td>
-                      <td className="px-3 py-2">
-                        <button
-                          className="rounded border px-2 py-0.5 text-xs hover:bg-zinc-50"
-                          onClick={() => toggleRecent(r.id)}
-                          aria-expanded={isOpen}
-                          aria-controls={`recent-${r.id}`}
-                        >
-                          {isOpen ? "Hide last 10" : "Show last 10"}
-                        </button>
-                      </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <button
+                            className="rounded border px-2 py-0.5 text-xs hover:bg-zinc-50 whitespace-nowrap"
+                            onClick={() => toggleRecent(r.id)}
+                            aria-expanded={isOpen}
+                            aria-controls={`recent-${r.id}`}
+                          >
+                            {isOpen ? "Hide last 10" : "Show last 10"}
+                          </button>
+                        </td>
                     </tr>
 
                     {isOpen && (
@@ -335,32 +390,47 @@ export default function SourcesTable() {
                             <div className="rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
                               Failed to load: {state.error}
                             </div>
-                          ) : (state?.items?.length ?? 0) === 0 ? (
+                          ) : !state?.items || state.items.length === 0 ? (
                             <div className="text-xs text-zinc-600">No recent items.</div>
                           ) : (
                             <ul className="space-y-1">
-                              {state!.items!.map((it, i) => (
-                                <li key={i} className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
-                                  <span className="font-medium">
-                                    {it.url ? (
-                                      <a className="underline text-emerald-700 break-words" href={it.url} target="_blank" rel="noreferrer">
-                                        {it.title || it.url}
-                                      </a>
-                                    ) : (
-                                      <span className="break-words">{it.title || "Untitled"}</span>
-                                    )}
-                                  </span>
-                                  <span className="text-xs text-zinc-500">
-                                    {fmtDT(it.discovered_at)}
-                                  </span>
-                                </li>
-                              ))}
+                              {state.items.map((it) => {
+                                const key = `${it.url ?? it.title ?? "untitled"}:${
+                                  it.discovered_at ?? it.published_at ?? ""
+                                }`;
+                                return (
+                                  <li
+                                    key={key}
+                                    className="flex flex-col sm:flex-row sm:items-center sm:gap-3"
+                                  >
+                                    <span className="font-medium">
+                                      {it.url ? (
+                                        <a
+                                          className="underline text-emerald-700 break-words"
+                                          href={it.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          {it.title || it.url}
+                                        </a>
+                                      ) : (
+                                        <span className="break-words">
+                                          {it.title || "Untitled"}
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className="text-xs text-zinc-500">
+                                      {fmtDT(it.discovered_at)}
+                                    </span>
+                                  </li>
+                                );
+                              })}
                             </ul>
                           )}
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

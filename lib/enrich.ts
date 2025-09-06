@@ -308,10 +308,12 @@ export function cleanTitleForSource(source: string, title: string) {
    Week inference
 ------------------------ */
 
-const WEEK_RE = /\b(?:week|wk)\s*[-.]?\s*(\d{1,2})\b/i;
+// will also look in URL path if provided
+const WEEK_RE = /\b(?:week|wk)[\s\-._]*([0-9]{1,2})\b/i;
 
-export function inferWeek(title: string, now = new Date()): number | null {
-  const m = (title || "").match(WEEK_RE);
+export function inferWeek(title: string, now = new Date(), pageUrl?: string): number | null {
+  const hay = `${title || ""} ${pageUrl ? new URL(pageUrl, "https://x").pathname : ""}`;
+  const m = hay.match(WEEK_RE);
   if (m) {
     const n = parseInt(m[1], 10);
     return Math.min(18, Math.max(1, n));
@@ -325,7 +327,44 @@ export function inferWeek(title: string, now = new Date()): number | null {
    Topic classification
 ------------------------ */
 
-export function classify(title: string): string[] {
+// URL-aware hints (path and query only; hostname is used sparingly)
+function tagsFromUrl(pageUrl?: string | null): string[] {
+  if (!pageUrl) return [];
+  let u: URL | null = null;
+  try { u = new URL(pageUrl); } catch { return []; }
+
+  const path = `${u.pathname}`.toLowerCase();
+  const q = `${u.search}`.toLowerCase();
+  const host = u.hostname.replace(/^www\./, "").toLowerCase();
+
+  const tags: string[] = [];
+
+  const has = (re: RegExp) => re.test(path) || re.test(q);
+
+  if (has(/\binjur(y|ies)|inactives?|practice[-_]report|designation\b/)) tags.push("injury");
+  if (has(/\bwaiver[-_ ]?wire|waivers?|adds?|streamers?\b/)) tags.push("waiver-wire");
+  if (has(/\bstart[-_ ]?sit|sit[-_ ]?start|streamers?\b/)) tags.push("start-sit");
+  if (has(/\bdfs\b|draftkings|fan[-_ ]?duel|cash[-_ ]?game|gpp\b/)) tags.push("dfs");
+  if (has(/\brankings?\b|\btiers?\b|\becr\b/)) tags.push("rankings");
+  if (has(/\bmock[-_ ]?draft|draft[-_ ]?(kit|guide|strategy|plan|tips|targets|values)|\badp\b|cheat[-_ ]?sheet\b/)) {
+    if (!tags.includes("rankings") && has(/\badp|tiers?\b/)) tags.push("rankings");
+    tags.push("draft-prep");
+  }
+  if (has(/\btrade(s|)|buy[-_ ]?sell|sell[-_ ]?high|buy[-_ ]?low|risers[-_ ]?and[-_ ]?fallers|targets?\b/)) {
+    tags.push("advice");
+    if (!tags.includes("trade")) tags.push("trade");
+  }
+
+  // a few domain nudges (very light touch)
+  if (/rotowire\.com|fantasypros\.com|numberfire\.com/.test(host)) {
+    if (has(/\brankings?\b/)) tags.push("rankings");
+  }
+
+  return Array.from(new Set(tags));
+}
+
+/** Backward-compatible: still works with just (title), but can take (title, pageUrl). */
+export function classify(title: string, pageUrl?: string | null): string[] {
   const t = (title || "").toLowerCase().trim();
   const tags: string[] = [];
 
@@ -380,6 +419,11 @@ export function classify(title: string): string[] {
     tags.push("advice");
   }
 
+  // merge in URL-derived hints
+  for (const tag of tagsFromUrl(pageUrl)) {
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+
   if (tags.length === 0) tags.push("news");
   return tags;
 }
@@ -408,7 +452,7 @@ export function fingerprint(canonical: string, title: string): string {
 }
 
 /* -----------------------
-   Main enrichment (improved image selection)
+   Main enrichment (improved image selection + URL-aware topics)
 ------------------------ */
 
 export async function enrich(sourceName: string, item: RawItem): Promise<Enriched> {
@@ -416,57 +460,56 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const { url, canonical, domain } = normalizeUrl(rawUrl);
 
   const cleaned      = cleanTitleForSource(sourceName, item.title || canonical);
-  const topics       = classify(cleaned);
-  const week         = inferWeek(cleaned);
+  const topics       = classify(cleaned, canonical);          // 👈 include URL hints
+  const week         = inferWeek(cleaned, new Date(), canonical); // 👈 URL can hint week too
   const published_at = parseDate(item.isoDate, true);
   const slug         = makeSlug(sourceName, cleaned, canonical);
   const fp           = fingerprint(canonical, cleaned);
 
- // 1) candidates coming directly from the feed
-const directFromEnclosure = imageFromEnclosure(item);
-const directFromMedia = imageFromMedia(item);
+  // 1) candidates coming directly from the feed
+  const directFromEnclosure = imageFromEnclosure(item);
+  const directFromMedia = imageFromMedia(item);
 
+  const feedCandidates: Array<string> = [];
+  if (directFromEnclosure) feedCandidates.push(directFromEnclosure);
+  if (directFromMedia) feedCandidates.push(directFromMedia);
 
-const feedCandidates: Array<string> = [];
-if (directFromEnclosure) feedCandidates.push(directFromEnclosure);
-if (directFromMedia) feedCandidates.push(directFromMedia);
-
-// helper to take the first safe, non-favicon candidate
-function firstSafe(cands: ReadonlyArray<string>): string | null {
-  for (const c of cands) {
-    const safe = getSafeImageUrl(c);
-    if (safe && !isLikelyFavicon(safe)) return safe;
+  // helper to take the first safe, non-favicon candidate
+  function firstSafe(cands: ReadonlyArray<string>): string | null {
+    for (const c of cands) {
+      const safe = getSafeImageUrl(c);
+      if (safe && !isLikelyFavicon(safe)) return safe;
+    }
+    return null;
   }
-  return null;
-}
 
-let image_url: string | null = firstSafe(feedCandidates);
+  let image_url: string | null = firstSafe(feedCandidates);
 
-// 2) OpenGraph / Twitter meta (best-effort)
-if (!image_url) {
-  const og = await fetchOgImage(canonical).catch(() => null);
-  image_url = getSafeImageUrl(og);
-}
-
-// 3) Lightweight HTML scrape (meta/JSON-LD/body)
-if (!image_url) {
-  const scraped = await findArticleImage(canonical).catch(() => null);
-  image_url = getSafeImageUrl(scraped);
-}
-
-// 4) Wikipedia headshot heuristic for likely player pages
-if (!image_url) {
-  const name = extractLikelyNameFromTitle(cleaned); // from lib/images.ts
-  if (name) {
-    const wiki = await findWikipediaHeadshot(name).catch(() => null);
-    image_url = getSafeImageUrl(wiki?.src ?? null);
+  // 2) OpenGraph / Twitter meta (best-effort)
+  if (!image_url) {
+    const og = await fetchOgImage(canonical).catch(() => null);
+    image_url = getSafeImageUrl(og);
   }
-}
 
-// final guard
-if (image_url && isLikelyFavicon(image_url)) {
-  image_url = null;
-}
+  // 3) Lightweight HTML scrape (meta/JSON-LD/body)
+  if (!image_url) {
+    const scraped = await findArticleImage(canonical).catch(() => null);
+    image_url = getSafeImageUrl(scraped);
+  }
+
+  // 4) Wikipedia headshot heuristic for likely player pages
+  if (!image_url) {
+    const name = extractLikelyNameFromTitle(cleaned); // from lib/images.ts
+    if (name) {
+      const wiki = await findWikipediaHeadshot(name).catch(() => null);
+      image_url = getSafeImageUrl(wiki?.src ?? null);
+    }
+  }
+
+  // final guard
+  if (image_url && isLikelyFavicon(image_url)) {
+    image_url = null;
+  }
 
   return {
     url,
