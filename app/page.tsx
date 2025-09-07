@@ -13,6 +13,7 @@ import { getHomeData, type DbRow } from "@/lib/HomeData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 /* ───────────────────────── Types & constants ───────────────────────── */
 

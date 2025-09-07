@@ -6,6 +6,10 @@ import { normalizeTitle } from "@/lib/strings";
 
 type IdList = number[];
 
+const isProdBuild = process.env.NEXT_PHASE === 'phase-production-build';
+
+
+
 /* ───────────────────────── Types ───────────────────────── */
 
 export type HomeParams = {
