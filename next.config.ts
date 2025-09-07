@@ -2,87 +2,58 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  eslint: {
-    // Avoid failing the build on lint warnings/errors in CI
-    ignoreDuringBuilds: true,
-  },
+  eslint: { ignoreDuringBuilds: true },
 
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24, // 1 day
     dangerouslyAllowSVG: false,
 
-    // Applied only to the Next.js image optimizer fetches
+    // Keep this aligned with your app’s broader CSP (this only covers Next <Image> requests)
     contentSecurityPolicy:
       "default-src 'self'; script-src 'none'; style-src 'unsafe-inline'; img-src * data: blob: https: http:; media-src 'none'; connect-src 'self'",
 
-    // IMPORTANT: Keep these specific. Wildcards like "**" are invalid.
+    // ⚠️ If you want to be stricter, remove the broad ** catch-alls and rely on the specific patterns below.
     remotePatterns: [
-      // Supabase storage
-      {
-        protocol: "https",
-        hostname: "jziinxyvfngxvkjtltqp.supabase.co",
-        pathname: "/storage/v1/object/public/**",
-      },
+      // Your storage
+      { protocol: "https", hostname: "jziinxyvfngxvkjtltqp.supabase.co", pathname: "/storage/v1/object/public/**" },
+
+      // (Optional) Broad allow — comment these out if you prefer strict whitelisting
+      { protocol: "https", hostname: "**" },
+      { protocol: "http",  hostname: "**" },
 
       // WordPress / Jetpack CDN
-      { protocol: "https", hostname: "i0.wp.com", pathname: "/**" },
-      { protocol: "https", hostname: "i1.wp.com", pathname: "/**" },
-      { protocol: "https", hostname: "i2.wp.com", pathname: "/**" },
-      // If you truly encounter http images from those (rare), keep these:
-      { protocol: "http", hostname: "i0.wp.com", pathname: "/**" },
-      { protocol: "http", hostname: "i1.wp.com", pathname: "/**" },
-      { protocol: "http", hostname: "i2.wp.com", pathname: "/**" },
+      { protocol: "https", hostname: "i*.wp.com", pathname: "/**" },
+      { protocol: "http",  hostname: "i*.wp.com", pathname: "/**" },
 
-      // Rotoballer
-      { protocol: "https", hostname: "rotoballer.com", pathname: "/wp-content/**" },
-      { protocol: "https", hostname: "www.rotoballer.com", pathname: "/wp-content/**" },
-      { protocol: "http", hostname: "rotoballer.com", pathname: "/wp-content/**" },
-      { protocol: "http", hostname: "www.rotoballer.com", pathname: "/wp-content/**" },
+      // Major publishers/CDNs you use frequently
+      { protocol: "https", hostname: "*.espncdn.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.nbcsports.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.nbcsportsbayarea.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.nbcsportsboston.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.nbcsportsphiladelphia.com", pathname: "/**" },
 
-      // Major sports sources/CDNs
-      { protocol: "https", hostname: "s.yimg.com", pathname: "/**" },
-      { protocol: "https", hostname: "media.zenfs.com", pathname: "/**" },
-      { protocol: "https", hostname: "a.espncdn.com", pathname: "/**" },
-      { protocol: "https", hostname: "a1.espncdn.com", pathname: "/**" },
-      { protocol: "https", hostname: "a2.espncdn.com", pathname: "/**" },
-      { protocol: "https", hostname: "a3.espncdn.com", pathname: "/**" },
-      { protocol: "https", hostname: "a4.espncdn.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.fantasypros.com", pathname: "/**" },       // e.g. cdn.fantasypros.com
+      { protocol: "https", hostname: "*.yimg.com", pathname: "/**" },              // Yahoo
+      { protocol: "https", hostname: "*.zenfs.com", pathname: "/**" },             // Yahoo media
+      { protocol: "https", hostname: "*.usatoday.com", pathname: "/**" },          // e.g. soonerswire.usatoday.com
+      { protocol: "https", hostname: "*.theathletic.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.rotoballer.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.razzball.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.sharpfootballanalysis.com", pathname: "/**" },
+      { protocol: "https", hostname: "*.pff.com", pathname: "/**" },               // Pro Football Focus
+      { protocol: "https", hostname: "*.sportingnews.com", pathname: "/**" },      // e.g. library.sportingnews.com
+
+      // CBS images
       { protocol: "https", hostname: "sportshub.cbsistatic.com", pathname: "/**" },
-      { protocol: "https", hostname: "nbcsports.brightspotcdn.com", pathname: "/**" },
-      { protocol: "https", hostname: "media.nbcsportsbayarea.com", pathname: "/**" },
-      { protocol: "https", hostname: "media.nbcsportsboston.com", pathname: "/**" },
-      { protocol: "https", hostname: "media.nbcsportsphiladelphia.com", pathname: "/**" },
-      { protocol: "https", hostname: "media.pff.com", pathname: "/**" },
 
-      // Other CDNs you listed
-      { protocol: "https", hostname: "images.contentstack.io", pathname: "/**" },
-      { protocol: "https", hostname: "s26212.pcdn.co", pathname: "/**" },
-      { protocol: "https", hostname: "cdn.profootballrumors.com", pathname: "/**" },
+      // Generic CDNs you’re likely to encounter
+      { protocol: "https", hostname: "*.cloudfront.net", pathname: "/**" },
+      { protocol: "https", hostname: "*.imgix.net", pathname: "/**" },
+      { protocol: "https", hostname: "*.contentstack.io", pathname: "/**" },
 
-      // Your app domain (if you ever proxy/serve images yourself)
-      { protocol: "https", hostname: "fantasy-report.vercel.app", pathname: "/**" },
-
-      // Example generic CDNs (only keep if you truly use them)
-      { protocol: "https", hostname: "your-bucket.s3.amazonaws.com", pathname: "/**" },
-      { protocol: "https", hostname: "d1234abcd.cloudfront.net", pathname: "/**" },
-      { protocol: "https", hostname: "assets.imgix.net", pathname: "/**" },
-
-      // Fallback/stock
+      // Fallbacks
       { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
-
-      // Other publishers you mentioned (each needs a concrete hostname)
-      { protocol: "https", hostname: "media.bleacherreport.com", pathname: "/**" },
-      { protocol: "https", hostname: "rookiewire.usatoday.com", pathname: "/**" },
-      { protocol: "https", hostname: "www.usatoday.com", pathname: "/**" },
-      { protocol: "https", hostname: "theathletic.com", pathname: "/**" },
-      { protocol: "https", hostname: "www.theathletic.com", pathname: "/**" },
-      { protocol: "https", hostname: "www.razzball.com", pathname: "/**" },
-      { protocol: "https", hostname: "www.sharpfootballanalysis.com", pathname: "/**" },
-      { protocol: "https", hostname: "nbcsports.com", pathname: "/**" },
-      { protocol: "https", hostname: "www.nbcsports.com", pathname: "/**" },
-      { protocol: "https", hostname: "fantasypros.com", pathname: "/**" },
-      { protocol: "https", hostname: "www.fantasypros.com", pathname: "/**" },
     ],
   },
 };
