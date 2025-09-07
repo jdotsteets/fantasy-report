@@ -4,6 +4,7 @@ import slugify from "slugify";
 import { getSafeImageUrl, isLikelyFavicon, extractLikelyNameFromTitle } from "@/lib/images";
 import { findArticleImage } from "@/lib/scrape-image";
 import { findWikipediaHeadshot } from "@/lib/wiki";
+import { normalizeTitle } from "@/lib/strings"; 
 
 /** Minimal feed item we get from rss-parser (etc.), extended with media fields */
 export type RawItem = {
@@ -488,7 +489,10 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const rawUrl = item.link || "";
   const { url, canonical, domain } = normalizeUrl(rawUrl);
 
-  const cleaned      = cleanTitleForSource(sourceName, item.title || canonical);
+  const rawTitle = item.title || "";
+  const normalized = normalizeTitle(rawTitle);
+  const cleaned    = cleanTitleForSource(sourceName, normalized);
+
   const topics       = classify(cleaned, canonical);          // 👈 include URL hints
   const week         = inferWeek(cleaned, new Date(), canonical); // 👈 URL can hint week too
   const published_at =
@@ -547,7 +551,7 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
     url,
     canonical_url: canonical,
     domain,
-    title: item.title || "",
+    title: rawTitle || "",
     cleaned_title: cleaned,
     topics,
     week,

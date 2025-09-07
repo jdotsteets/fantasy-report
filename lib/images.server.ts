@@ -26,14 +26,14 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
 
   // 2) Player headshot
   if (playerKeys && playerKeys.length) {
-    const { rows } = await dbQuery<{ preferred_url: string }>(
-      `SELECT preferred_url
+    const { rows } = await dbQuery<{ url: string }>(
+      `SELECT url
          FROM player_images
-        WHERE player_key = ANY($1) AND preferred_url IS NOT NULL
+        WHERE key = ANY($1) AND url IS NOT NULL
         LIMIT 1`,
       [playerKeys]
     );
-    const p = normalize(rows[0]?.preferred_url);
+    const p = normalize(rows[0]?.url);
     if (await isUsable(p)) return p!;
   }
 

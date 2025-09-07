@@ -22,6 +22,7 @@ const upsertSchema = z.object({
   // misc
   category: z.string().optional().default(""),
   allowed: z.boolean().optional().default(true),
+  paywall: z.boolean().optional().default(false),   // <— NEW
   priority: z.number().int().min(0).max(9999).optional().default(0),
 
   // adapter bits
@@ -37,13 +38,11 @@ function toText(v: unknown): string | null {
 function toJsonb(v: unknown): string | null {
   if (v == null) return null;
   try {
-    // pg will parse text -> jsonb when cast with ::jsonb
-    return JSON.stringify(v);
+    return JSON.stringify(v); // pg will cast text -> jsonb
   } catch {
     return null;
   }
 }
-
 function getErrorMessage(err: unknown): string {
   if (err instanceof z.ZodError) return err.issues.map(i => i.message).join(", ");
   if (err && typeof err === "object" && "message" in err) {
@@ -59,7 +58,7 @@ export async function GET() {
   try {
     const r = await dbQuery(
       `select id, name, homepage_url, rss_url, favicon_url, sitemap_url,
-              scrape_path, scrape_selector, category, allowed, priority,
+              scrape_path, scrape_selector, category, allowed, paywall, priority,
               scraper_key, adapter_config, fetch_mode
          from sources
         order by id desc
@@ -79,31 +78,32 @@ export async function POST(req: Request) {
     const body = upsertSchema.parse(await req.json());
 
     const params = [
-      body.name,                                             // $1  ::text
-      toText(body.homepage_url),                             // $2  ::text
-      toText(body.rss_url),                                  // $3  ::text
-      toText(body.favicon_url),                              // $4  ::text
-      toText(body.sitemap_url),                              // $5  ::text
-      toText(body.scrape_path),                              // $6  ::text
-      toText(body.scrape_selector),                          // $7  ::text
-      toText(body.category),                                 // $8  ::text
-      !!body.allowed,                                        // $9  ::boolean
-      Number(body.priority) || 0,                            // $10 ::integer
-      toText(body.scraper_key),                              // $11 ::text
-      toJsonb(body.adapter_config),                          // $12 ::jsonb
-      body.fetch_mode,                                       // $13 ::text
+      body.name,                      // $1  ::text
+      toText(body.homepage_url),      // $2  ::text
+      toText(body.rss_url),           // $3  ::text
+      toText(body.favicon_url),       // $4  ::text
+      toText(body.sitemap_url),       // $5  ::text
+      toText(body.scrape_path),       // $6  ::text
+      toText(body.scrape_selector),   // $7  ::text
+      toText(body.category),          // $8  ::text
+      !!body.allowed,                 // $9  ::boolean
+      !!body.paywall,                 // $10 ::boolean   <-- NEW
+      Number(body.priority) || 0,     // $11 ::integer
+      toText(body.scraper_key),       // $12 ::text
+      toJsonb(body.adapter_config),   // $13 ::jsonb
+      body.fetch_mode,                // $14 ::text
     ];
 
     const sql = `
       insert into sources (
         name, homepage_url, rss_url, favicon_url, sitemap_url,
-        scrape_path, scrape_selector, category, allowed, priority,
+        scrape_path, scrape_selector, category, allowed, paywall, priority,
         scraper_key, adapter_config, fetch_mode
       )
       values (
         $1::text,  $2::text,  $3::text,  $4::text,  $5::text,
-        $6::text,  $7::text,  $8::text,  $9::boolean, $10::integer,
-        $11::text, $12::jsonb, $13::text
+        $6::text,  $7::text,  $8::text,  $9::boolean, COALESCE($10::boolean, false), $11::integer,
+        $12::text, $13::jsonb, $14::text
       )
       returning id
     `;
@@ -125,7 +125,6 @@ export async function PATCH(req: Request) {
       return Response.json({ ok: false, error: "invalid_id" }, { status: 400 });
     }
 
-    // Accept a subset; convert/normalize here
     const updates: Record<string, any> = {};
 
     if ("name" in raw) updates.name = toText(raw.name);
@@ -137,6 +136,7 @@ export async function PATCH(req: Request) {
     if ("scrape_selector" in raw) updates.scrape_selector = toText(raw.scrape_selector);
     if ("category" in raw) updates.category = toText(raw.category);
     if ("allowed" in raw) updates.allowed = !!raw.allowed;
+    if ("paywall" in raw) updates.paywall = !!raw.paywall;            // <— NEW
     if ("priority" in raw) updates.priority = Number(raw.priority) || 0;
     if ("scraper_key" in raw) updates.scraper_key = toText(raw.scraper_key);
     if ("adapter_config" in raw) updates.adapter_config = toJsonb(raw.adapter_config);
@@ -157,16 +157,14 @@ export async function PATCH(req: Request) {
       scrape_selector: "::text",
       category: "::text",
       allowed: "::boolean",
+      paywall: "::boolean",                 // <— NEW
       priority: "::integer",
       scraper_key: "::text",
       adapter_config: "::jsonb",
       fetch_mode: "::text",
     };
 
-    const setSql = fields
-      .map((k, i) => `${k} = $${i + 1}${casts[k] ?? ""}`)
-      .join(", ");
-
+    const setSql = fields.map((k, i) => `${k} = $${i + 1}${casts[k] ?? ""}`).join(", ");
     const params = fields.map(k => updates[k]);
     params.push(id);
 

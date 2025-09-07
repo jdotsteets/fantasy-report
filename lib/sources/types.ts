@@ -29,7 +29,7 @@ export type CommitPayload = {
     scrape_path?: string | null;
     adapter_config?: Record<string, unknown> | null;
     allowed?: boolean | null;
-    paywall?: boolean | null;
+    paywall?: boolean;
     category?: string | null;
     sport?: string | null;
     priority?: number | null;

@@ -93,7 +93,7 @@ export default async function Page({
     sport: SPORT,
     days: DAYS,
     week: CURRENT_WEEK, // only Waiver Wire uses this filter
-    limitNews: 30,
+    limitNews: 20,
     limitRankings: 10,
     limitStartSit: 12,
     limitAdvice: 10,

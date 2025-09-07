@@ -1,3 +1,5 @@
+//api/admin/image-probe/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { fetchOgImage } from "@/lib/enrich";
 import { findArticleImage } from "@/lib/scrape-image";

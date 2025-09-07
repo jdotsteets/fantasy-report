@@ -74,35 +74,111 @@ const STOP_WORDS = new Set([
   "listed","concussion","hamstring","ankle","knee","groin","back","fracture","tear",
 ]);
 
+
+const NAME_STOPWORDS = new Set([
+  // common fantasy/news words we don't want to treat as names
+  "report", "reports", "breaking", "trade", "rumor", "rumors", "injury",
+  "injuries", "waivers", "waiver", "week", "start", "sit", "ranks", "rankings",
+  "mock", "draft", "profile", "news", "notes", "updates", "update",
+  "highlights", "preview", "recap", "analysis", "projection", "projections",
+  "nfl", "mlb", "nba", "nhl",
+]);
+
+
+
+function toTitleCaseToken(tok: string): string {
+  if (!tok) return tok;
+  return tok.replace(/^[a-z]/, (m) => m.toUpperCase());
+}
+
+function isNameToken(tok: string): boolean {
+  // allow letters, apostrophes, and hyphens
+  if (!/^[a-z][a-z'-]*$/i.test(tok)) return false;
+  const lower = tok.toLowerCase();
+  if (NAME_STOPWORDS.has(lower)) return false;
+  // disallow extremely short tokens unless suffix like "jr" or roman numerals
+  if (lower.length <= 2 && !/^(jr|sr|ii|iii|iv|v)$/i.test(lower)) return false;
+  return true;
+}
+
+function looksLikeFullName(words: string[]): boolean {
+  if (words.length < 2) return false;
+  // First + Last, optionally suffix
+  const [first, last, maybeSfx] = words;
+  if (!isNameToken(first) || !isNameToken(last)) return false;
+  if (maybeSfx && !/^(jr|sr|ii|iii|iv|v)$/i.test(maybeSfx)) return false;
+  return true;
+}
+
+/** From the URL path, try to derive "First Last" (e.g., /nfl/players/patrick-mahomes-news). */
+export function extractNameFromUrlPath(u: string): string | null {
+  try {
+    const { pathname } = new URL(u);
+    // take the last 2-3 hyphen tokens that look like names
+    const seg = pathname.split("/").filter(Boolean).pop() || "";
+    const raw = seg.replace(/\.(html|htm|php)$/, "").split("?")[0];
+    const toks = raw.split("-").filter(Boolean);
+
+    // scan windows of 2 or 3 tokens to find a name-like combo
+    for (let w = 3; w >= 2; w--) {
+      for (let i = 0; i + w <= toks.length; i++) {
+        const slice = toks.slice(i, i + w);
+        if (looksLikeFullName(slice)) {
+          const titled = slice.map(toTitleCaseToken);
+          return titled.join(" ");
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function cleanPrefix(t: string) {
   return t.replace(/^[A-Za-z ]+:\s+/, ""); // “Report: …”
 }
+/** From a title, best-effort find a "First Last" (optionally + suffix). */
+export function extractLikelyNameFromTitle(title: string | null | undefined): string | null {
+  if (!title) return null;
 
-export function extractLikelyNameFromTitle(title: string): string | null {
-  const t = cleanPrefix(title).replace(/’/g, "'").replace(/'s\b/g, "");
-  const words = t.split(/\s+/);
-  const parts: string[] = [];
-
-  for (const raw of words) {
-    const w = raw.replace(/[^\w'-]/g, "");
-    if (!w) continue;
-    const lower = w.toLowerCase();
-
-    if (parts.length > 0 && (STOP_WORDS.has(lower) || ["-", "—"].includes(w))) break;
-
-    const isCap = /^[A-Z][a-z'-]*$/.test(w);
-    if (isCap) {
-      parts.push(w);
-      if (parts.length === 3) break;
-      continue;
+  // Heuristic: find two capitalized tokens next to each other, allow apostrophes/hyphens, optional suffix
+  // Examples: "Patrick Mahomes", "Ja'Marr Chase", "Amon-Ra St. Brown" (we'll catch "Amon-Ra Brown")
+  const rx = /\b([A-Z][a-z'’-]+)\s+([A-Z][a-z'’-]+)(?:\s+(Jr|Sr|II|III|IV|V))?\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(title))) {
+    const first = m[1], last = m[2];
+    const sfx = m[3] || "";
+    const parts = [first, last];
+    if (sfx) parts.push(sfx);
+    const candidate = parts.join(" ");
+    // filter false positives
+    const tokens = candidate.split(/\s+/);
+    if (looksLikeFullName(tokens.map(t => t.toLowerCase()))) {
+      return candidate;
     }
-    if (parts.length > 0) break;
   }
-
-  if (parts.length >= 2) return parts.join(" ");
-  if (parts.length === 1) return parts[0];
   return null;
 }
+
+/** New: prefer title, then URL; returns an array (future-proof) */
+export function extractPlayersFromTitleAndUrl(
+  title?: string | null,
+  url?: string | null
+): string[] | null {
+  const out = new Set<string>();
+
+  const t = extractLikelyNameFromTitle(title ?? undefined);
+  if (t) out.add(t);
+
+  if (url && out.size === 0) {
+    const u = extractNameFromUrlPath(url);
+    if (u) out.add(u);
+  }
+
+  return out.size ? Array.from(out) : null;
+}
+
 
 /** Favicon/low-value image detector. */
 export function isLikelyFavicon(url?: string | null): boolean {

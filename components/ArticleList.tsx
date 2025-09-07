@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
+import { normalizeTitle } from "@/lib/strings";
 
 type ImagesMode = "all" | "first" | "hero";
 const MODE_KEY = "ffa_images_mode";
@@ -30,7 +31,7 @@ function fmtDate(iso?: string | null) {
 function matchesSection(a: Article, section?: SectionKey): boolean {
   if (!section) return true;
 
-  const title = (a.title ?? "").toLowerCase();
+  const title = (normalizeTitle(a.title) ?? "").toLowerCase();
   const url = (a.canonical_url ?? a.url ?? "").toLowerCase();
   const has = (re: RegExp) => re.test(title) || re.test(url);
 
@@ -52,13 +53,6 @@ function matchesSection(a: Article, section?: SectionKey): boolean {
 
 /**
  * ▶︎ Font sizing controls
- * To adjust HEADLINE (article title) size, change the text utilities below.
- *    - Smaller example: "text-[12px] sm:text-[13px]"
- *    - Larger example:  "text-sm sm:text-base"
- *
- * To adjust SUBHEAD (date/source) size, tweak SUBHEADLINE_TEXT_CLS likewise.
- *    - Smaller example: "text-[10px] sm:text-[11px]"
- *    - Larger example:  "text-xs sm:text-sm"
  */
 const HEADLINE_TEXT_CLS =
   "mt-0 text-[12px] sm:text-[13px] leading-tight tracking-tight text-black hover:text-green-900";
@@ -107,6 +101,9 @@ export default function ArticleList({ items, title, className, filter }: Props) 
           {filtered.map((r, idx) => {
             const href = r.canonical_url ?? r.url;
 
+            // Clean the title for display (decodes &#039;, &amp;, etc.)
+            const displayTitle = normalizeTitle(r.title || "");
+
             let candidate = getSafeImageUrl(r.image_url);
             if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate)) {
               candidate = null;
@@ -134,12 +131,10 @@ export default function ArticleList({ items, title, className, filter }: Props) 
                 ) : null}
 
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-                  {/* HEADLINE — adjust via HEADLINE_TEXT_CLS above */}
-                  <h3 className={HEADLINE_TEXT_CLS} title={r.title}>
-                    {r.title}
+                  <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
+                    {displayTitle}
                   </h3>
 
-                  {/* SUB-HEAD (date • source) — adjust via SUBHEADLINE_TEXT_CLS above */}
                   <div className={SUBHEADLINE_TEXT_CLS}>
                     <span>{fmtDate(r.published_at)}</span>
                     <span>• {r.source}</span>

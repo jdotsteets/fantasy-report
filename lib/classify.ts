@@ -1,4 +1,6 @@
 // lib/classify.ts
+import { normalizeTitle } from "@/lib/strings"; 
+
 
 // Canonical section/topic tags we store in the DB
 export type Topic =
@@ -100,7 +102,7 @@ function extractWeek(text: string): number | null {
 }
 
 export function classifyArticle(input: Input): Classification {
-  const title = (input.title ?? "").trim();
+  const title = normalizeTitle(input.title ?? "").trim();
   const summary = (input.summary ?? "").trim();
   const rawUrl = (input.url ?? "").trim();
 

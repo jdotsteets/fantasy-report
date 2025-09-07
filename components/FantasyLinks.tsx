@@ -17,8 +17,20 @@ function catPriority(raw: string | null) {
   const c = norm(raw);
   // "Fantasy News" first
   if (c === "fantasy news") return 0;
-  // all other categories after
   return 1;
+}
+
+function domainFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function faviconUrl(domain: string | null): string | null {
+  return domain ? `https://icons.duckduckgo.com/ip3/${domain}.ico` : null;
 }
 
 export default async function FantasyLinks() {
@@ -44,44 +56,59 @@ export default async function FantasyLinks() {
     return allowed && !isTeam;
   });
 
-  // 2) Sort: Fantasy News category first, then other categories, then by name
+  // 2) Sort: Fantasy News category first, then by category, then name
   filtered.sort((a, b) => {
     const ap = catPriority(a.category);
     const bp = catPriority(b.category);
     if (ap !== bp) return ap - bp;
 
-    // group remaining by category (so “Fantasy News” block, then other categories grouped)
     const ac = norm(a.category);
     const bc = norm(b.category);
     if (ac !== bc) return ac.localeCompare(bc);
 
-    // then alphabetical by name
     return a.name.localeCompare(b.name);
   });
 
   return (
     <ul className="space-y-2">
-      {filtered.map((r) => (
-        <li key={r.id} className="flex items-start gap-2">
-          <span className="mt-[3px] inline-block h-2 w-2 rounded-full bg-zinc-300" />
-          <div className="min-w-0">
-            <a
-              href={r.homepage_url ?? "#"}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[13px] leading-tight text-black no-underline hover:text-green-900"
-              title={r.name}
-            >
-              {r.name}
-            </a>
-            {r.category ? (
-              <span className="ml-2 align-middle rounded-full bg-zinc-100 px-2 py-[2px] text-[11px] text-zinc-600">
-                {r.category}
-              </span>
-            ) : null}
-          </div>
-        </li>
-      ))}
+      {filtered.map((r) => {
+        const domain = domainFromUrl(r.homepage_url);
+        const ico = faviconUrl(domain);
+
+        return (
+          <li key={r.id} className="flex items-start gap-2">
+            {ico ? (
+              <img
+                src={ico}
+                alt=""
+                width={16}
+                height={16}
+                loading="lazy"
+                className="mt-[2px] h-4 w-4 shrink-0 rounded"
+              />
+            ) : (
+              <span className="mt-[4px] inline-block h-2 w-2 shrink-0 rounded-full bg-zinc-300" />
+            )}
+
+            <div className="min-w-0">
+              <a
+                href={r.homepage_url ?? "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[13px] leading-tight text-black no-underline hover:text-emerald-700 visited:text-emerald-800"
+                title={r.name}
+              >
+                {r.name}
+              </a>
+              {r.category ? (
+                <span className="ml-2 align-middle rounded-full bg-zinc-100 px-2 py-[2px] text-[11px] text-zinc-600">
+                  {r.category}
+                </span>
+              ) : null}
+            </div>
+          </li>
+        );
+      })}
     </ul>
   );
 }

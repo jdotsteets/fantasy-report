@@ -37,6 +37,21 @@ export async function POST(req: NextRequest) {
         ? await findExistingSourceByUrl(payload.url)
         : null;
 
+    const isCreate = !existing?.id;
+
+    // ---- Normalize updates --------------------------------------------------
+    // - If client provided paywall, coerce to boolean.
+    // - If creating and paywall is missing/undefined, default to false so INSERT never fails.
+    const incoming = payload.updates ?? {};
+    const normalized: typeof incoming & { paywall?: boolean } = { ...incoming };
+
+    if ("paywall" in incoming) {
+      normalized.paywall = !!(incoming as any).paywall;
+    } else if (isCreate) {
+      normalized.paywall = false;
+    }
+    // ------------------------------------------------------------------------
+
     // Create or update the source and switch to the selected method.
     const sourceId = await saveSourceWithMethod({
       url: payload.url,
@@ -44,9 +59,9 @@ export async function POST(req: NextRequest) {
       feedUrl: payload.feedUrl ?? null,
       selector: payload.selector ?? null,
       adapterKey: payload.adapterKey ?? undefined,
-      nameHint: payload.nameHint ?? null, // <- use nameHint as a friendly default on INSERT
+      nameHint: payload.nameHint ?? null, // friendly default on INSERT
       sourceId: existing?.id,
-      updates: payload.updates,
+      updates: normalized,
     });
 
     // Start an ingest run and return its tracking id.

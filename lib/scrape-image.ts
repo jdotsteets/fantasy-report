@@ -1,3 +1,6 @@
+//lib/scrape-image.ts
+
+
 /** Normalize raw image URL against the page URL and fix protocol-relative links. */
 function resolveImageUrl(raw: string | null | undefined, pageUrl: string): string | null {
   if (!raw) return null;

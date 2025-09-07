@@ -2,6 +2,7 @@
 import { dbQuery } from "@/lib/db";
 import { pickBestImage } from "@/lib/images.server"; // server-only helper
 import { isWeakArticleImage } from "@/lib/images";   // safe favicon/placeholder detector
+import { normalizeTitle } from "@/lib/strings";
 
 type IdList = number[];
 
@@ -36,6 +37,7 @@ export type DbRow = {
   discovered_at: string | null;
   week: number | null;
   topics: string[] | null;
+  players: string[] | null;
   source: string;
 };
 
@@ -106,6 +108,46 @@ function derivePrimaryFromTopics(topics: string[]): CanonTopic | null {
   return null;
 }
 
+function toPlayerKeys(title: string, topics: string[] | null | undefined): string[] {
+  const keys: string[] = [];
+  const t = normalizeTitle(title);
+
+  // crude but safe heuristic; replace with your existing name extractor if present:
+  // pulls "First Last" or "First Last Jr." and lowercases + hyphens as key
+  const m = t.match(/\b([A-Z][a-z]+)\s([A-Z][a-z]+(?:\sJr\.?)?)\b/);
+  if (m) keys.push(`${m[1]}-${m[2]}`.toLowerCase().replace(/\s+/g, "-").replace(/\./g, ""));
+
+  if (Array.isArray(topics)) {
+    for (const raw of topics) {
+      const v = String(raw).trim().toLowerCase();
+      // accept pre-keyed topics like "player:justin-jefferson"
+      if (v.startsWith("player:")) keys.push(v.split(":")[1]);
+    }
+  }
+  return Array.from(new Set(keys)).filter(Boolean);
+}
+
+async function enhanceBucket(items: DbRow[], topic: CanonTopic | null) {
+  if (items.length === 0) return;
+  const enhanced = await Promise.all(
+    items.map(async (it) => {
+      const ok = it.image_url && !isWeakArticleImage(it.image_url);
+      const playerKeys = toPlayerKeys(it.title, it.topics);
+      const chosen = ok
+        ? (it.image_url as string)
+        : await pickBestImage({
+            articleImage: it.image_url ?? null,
+            domain: it.domain,
+            topic: topic ?? null,
+            playerKeys: playerKeys.length ? playerKeys : null, // ← enables player_images fallback
+          });
+      return { ...it, image_url: chosen };
+    })
+  );
+  items.splice(0, items.length, ...enhanced);
+}
+
+
 /** Simple keyword helpers for overflow */
 const RE_STARTSIT = /(\bstart[\s/-]?sit\b|\bsleeper(s)?\b|who to (start|sit))/i;
 const RE_WAIVER   = /\b(waiver(s)?|pick[\s-]?ups?|adds?|wire)\b/i;
@@ -128,6 +170,7 @@ const toDbRow = (r: PoolRow): DbRow => ({
   discovered_at: r.discovered_at,
   week: r.week,
   topics: r.topics,
+  players: r.players,
   source: r.source,
 });
 
@@ -148,6 +191,7 @@ function buildPoolSql(): string {
         a.discovered_at,
         a.week,
         a.topics,
+        a.players,
         a.primary_topic,
         a.secondary_topic,
         s.name AS source,
@@ -183,7 +227,7 @@ function buildPoolSql(): string {
       FROM base
     )
     SELECT
-      id, title, url, canonical_url, domain, image_url, published_at, discovered_at, week, topics, source,
+      id, title, url, canonical_url, domain, image_url, published_at, discovered_at, week, topics, players, source,
       primary_topic, secondary_topic, order_ts::text
     FROM ranked
     WHERE rn = 1
@@ -214,6 +258,7 @@ async function fetchMoreByTopic(
         a.discovered_at,
         a.week,
         a.topics,
+        a.players,
         s.name AS source,
         COALESCE(a.published_at, a.discovered_at) AS order_ts
       FROM articles a
@@ -271,6 +316,7 @@ async function fetchStaticPages(
       a.discovered_at,
       a.week,
       a.topics,
+      a.players,
       s.name AS source
     FROM articles a
     JOIN sources s ON s.id = a.source_id
@@ -478,6 +524,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
               articleImage: it.image_url ?? null,
               domain: it.domain,
               topic,
+              playerKeys: Array.isArray(it.players) ? it.players : null,   // ← NEW
             });
         return { ...it, image_url: chosen };
       })

@@ -4,6 +4,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { getSafeImageUrl, FALLBACK } from "@/lib/images";
+import { normalizeTitle } from "@/lib/strings";
+
 
 export type HeroProps = {
   title: string;
@@ -17,6 +19,7 @@ export type HeroProps = {
 
 export default function Hero({ title, href, src, source }: HeroProps) {
   const img = getSafeImageUrl(src) || FALLBACK;
+  const display = normalizeTitle(title);
 
 
     console.log("Hero image check:", { src, safeValue: img });
@@ -48,9 +51,9 @@ export default function Hero({ title, href, src, source }: HeroProps) {
                 {/* Headline */}
                 <h3
                 className="mt-2 ml-2 line-clamp-2 text-[20px] leading-snug text-black hover:text-green-900"
-                title={title}
+                title={display}
                 >
-                {title}
+                {display}
                 </h3>
 
                 {/* Meta row */}
