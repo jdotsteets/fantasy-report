@@ -216,7 +216,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     <Suspense fallback={null}>
       <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
         <header className="mb-6 text-center">
-          <h1 className="font-extrabold tracking-tight text-black text-5xl sm:text-6xl md:text-7xl">
+          <h1 className="font-extrabold tracking-tight text-black text-5xl sm:text-4xl md:text-4xl">
             The Fantasy Report
           </h1>
         </header>

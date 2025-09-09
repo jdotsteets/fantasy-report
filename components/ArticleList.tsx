@@ -52,7 +52,7 @@ function matchesSection(a: Article, section?: SectionKey): boolean {
 
 /** Typography */
 const HEADLINE_TEXT_CLS =
-  "mt-0 text-[12px] sm:text-[13px] leading-tight tracking-tight text-black hover:text-green-900";
+  "mt-0 text-[12px] sm:text-[13px] leading-snug tracking-tight text-black hover:text-green-900";
 const SUBHEADLINE_TEXT_CLS =
   "mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] sm:text-[11px] leading-tight text-zinc-700";
 
@@ -131,36 +131,29 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
                 {/* Two-column row: favicon | (title + meta) */}
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-                  <div className="flex items-start gap-2">
-                    {/* left: favicon */}
-                    {favicon ? (
-                      <img
-                        src={favicon}
-                        width={18}
-                        height={18}
-                        alt=""
-                        className="h-[18px] w-[18px] shrink-0 rounded"
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200" />
-                    )}
-
-                    {/* right: title + meta stacked */}
-                    <div className="min-w-0 flex-1">
-                      <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
-                        {displayTitle}
-                      </h3>
-
-                      <div className={SUBHEADLINE_TEXT_CLS}>
-                        <span>{fmtDate(r.published_at)}</span>
-                        <span>• {r.source}</span>
-                      </div>
-                    </div>
-                  </div>
+<div className="flex items-center gap-2">
+  {favicon ? (
+    <img
+      src={favicon}
+      width={18}
+      height={18}
+      alt=""
+      className="h-[18px] w-[18px] shrink-0 rounded -translate-y-0.5"  // ← up ~2px
+      loading="lazy"
+    />
+  ) : (
+    <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200 -translate-y-0.5" />
+  )}
+  <div className="min-w-0 flex-1">
+    <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
+      {displayTitle}
+    </h3>
+    <div className={SUBHEADLINE_TEXT_CLS}>
+      <span>{fmtDate(r.published_at)}</span>
+      <span>• {r.source}</span>
+    </div>
+  </div>
+</div>
                 </Link>
               </li>
             );
