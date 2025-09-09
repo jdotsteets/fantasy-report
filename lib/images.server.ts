@@ -3,24 +3,43 @@ import { dbQuery } from "@/lib/db";
 import { FALLBACK, isLikelyFavicon, isWeakArticleImage } from "./images";
 
 type PickArgs = {
-  /** Raw image URL already on the article (e.g. scraped/ingested). */
   articleImage?: string | null;
-  /** Article domain (used to pick a per-source fallback). */
-  domain?: string | null;           // e.g. "www.espn.com"
-  /** Canonical topic used for topic fallbacks. */
-  topic?: string | null;            // "rankings" | "waiver-wire" | "start-sit" | "dfs" | "injury" | "advice" | "news"
-  /** Optional player keys to allow headshot fallback. */
-  playerKeys?: string[] | null;     // e.g. ["nfl:name:justin-jefferson"]
+  domain?: string | null;
+  topic?: string | null;
+  playerKeys?: string[] | null;
 };
 
-/**
- * Choose the best image with graceful fallbacks:
- *  1) Validated article image (reject favicons/author avatars/weak)
- *  2) Player headshot (player_images)
- *  3) Per-source fallback (source_images)
- *  4) Per-topic fallback (topic_images)
- *  5) Global FALLBACK
- */
+/* ───────────────────────── In-process memo + concurrency cap ───────────────────────── */
+
+const inFlightChecks = new Map<string, Promise<boolean>>();
+
+class Semaphore {
+  private count: number;
+  private queue: Array<() => void> = [];
+  constructor(max: number) { this.count = max; }
+  async acquire(): Promise<() => void> {
+    if (this.count > 0) {
+      this.count -= 1;
+      return () => this.release();
+    }
+    return new Promise<() => void>((resolve) => {
+      this.queue.push(() => {
+        this.count -= 1;
+        resolve(() => this.release());
+      });
+    });
+  }
+  private release(): void {
+    this.count += 1;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+}
+
+const headSemaphore = new Semaphore(Number(process.env.IMAGE_HEAD_CONCURRENCY ?? 4));
+
+/* ───────────────────────── Public API ───────────────────────── */
+
 export async function pickBestImage(args: PickArgs): Promise<string> {
   const { articleImage, domain, topic, playerKeys } = args;
 
@@ -37,7 +56,7 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
         LIMIT 1`,
       [playerKeys]
     );
-    const p = normalize(rows?.[0]?.url);
+    const p = normalize(rows?.[0]?.url ?? null);
     if (await isUsable(p)) return p!;
   }
 
@@ -50,7 +69,7 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
         LIMIT 1`,
       [domain]
     );
-    const s = normalize(rows?.[0]?.default_url);
+    const s = normalize(rows?.[0]?.default_url ?? null);
     if (await isUsable(s)) return s!;
   }
 
@@ -63,7 +82,7 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
         LIMIT 1`,
       [topic]
     );
-    const t = normalize(rows?.[0]?.url);
+    const t = normalize(rows?.[0]?.url ?? null);
     if (await isUsable(t)) return t!;
   }
 
@@ -76,10 +95,8 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
 function isAuthorImage(url: string | null | undefined): boolean {
   if (!url) return false;
   const u = url.toLowerCase();
-
-  // Common author/byline/avatar patterns we see across Yahoo/USAToday/Wire/CDNs
   if (
-    u.includes("authoring-images") ||      // Gannett / USA Today network
+    u.includes("authoring-images") ||
     u.includes("/byline/") ||
     u.includes("/profile/") ||
     u.includes("/profiles/") ||
@@ -88,12 +105,38 @@ function isAuthorImage(url: string | null | undefined): boolean {
     u.includes("/authors/") ||
     u.includes("/wp-content/uploads/avatars/")
   ) return true;
-
-  // Small-square hints in query params often used for profile pics
-  // e.g. ?width=144&height=144
   if (/[?&](w|width)=1\d{2}\b/.test(u) && /[?&](h|height)=1\d{2}\b/.test(u)) return true;
-
   return false;
+}
+
+
+function unwrapNextImageProxy(u: string): string | null {
+  try {
+    const parsed = new URL(u);
+    // Typical patterns:
+    //  - https://site.com/_next/image?url=<encoded>&w=...
+    //  - https://www.fanduel.com/research/_next/image?url=<encoded>&w=...
+    if (parsed.pathname.endsWith("/_next/image")) {
+      const raw = parsed.searchParams.get("url");
+      if (raw) {
+        const decoded = decodeURIComponent(raw);
+        if (/^https?:\/\//i.test(decoded)) return decoded;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function isSignedResizer(u: string): boolean {
+  // These often require a referer or a valid signature, and frequently 400/403 on server-side HEAD.
+  // Add more if you bump into them.
+  return (
+    /:\/\/[^/]*masslive\.com\/resizer\//i.test(u) ||
+    /:\/\/[^/]*advance\.digital\/resizer\//i.test(u) ||
+    /:\/\/[^/]*gannettcdn\.com\/.*width=/i.test(u)
+  );
 }
 
 /** Normalize + early reject bad candidates (favicon, SVG, weak, author avatar). */
@@ -102,74 +145,122 @@ function normalize(u?: string | null): string | null {
   let s = u.trim();
   if (!s) return null;
 
+    // Unwrap Next.js image optimizer URLs to the original CDN asset
+  const unwrapped = unwrapNextImageProxy(s);
+  if (unwrapped) s = unwrapped;
+
   if (s.startsWith("//")) s = "https:" + s;
   if (!/^https?:\/\//i.test(s)) return null;
 
-  // Early rejections
+  if (isSignedResizer(s)) return null;     // skip signed/locked resizers
   if (isLikelyFavicon(s)) return null;
   if (/\.(svg)(\?|#|$)/i.test(s)) return null;
-  if (isWeakArticleImage(s)) return null; // 1x1, tracker gifs, placeholder-y patterns
-  if (isAuthorImage(s)) return null;      // 🚫 byline / avatar images
-
+  if (isWeakArticleImage(s)) return null;
+  if (isAuthorImage(s)) return null;
   return s;
 }
 
 /**
- * Use a tiny DB cache and a HEAD probe to confirm the URL is an image.
- * Table should exist as:
- *   image_cache(
- *     url text primary key,
- *     ok boolean,
- *     content_type text,
- *     bytes int,
- *     checked_at timestamptz,
- *     proxied_url text  -- optional
- *   )
+ * HEAD-probe with:
+ *  - cache lookup
+ *  - in-process memo to avoid duplicate concurrent fetches
+ *  - tiny concurrency cap to prevent dogpiles
+ *  - shorter timeout to keep TTFB in check
  */
 async function isUsable(u?: string | null): Promise<boolean> {
   if (!u) return false;
 
-  // 1) Cache hit
+  // 1) DB cache hit
   const cached = await dbQuery<{ ok: boolean }>(
     `SELECT ok FROM image_cache WHERE url = $1`,
     [u]
   );
   if (cached.rows?.[0]?.ok === true) return true;
 
-  // 2) Probe via HEAD
-  let ok = false;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5500);
-    const res = await fetch(u, { method: "HEAD", signal: ctrl.signal });
-    clearTimeout(t);
+  // 2) In-process memo: if a probe is already running, await it
+  const existing = inFlightChecks.get(u);
+  if (existing) return existing;
 
-    const type = (res.headers.get("content-type") || "").toLowerCase();
-    const bytes = Number(res.headers.get("content-length") || "0");
+  // 3) New probe, memoize now
+  const probePromise = (async (): Promise<boolean> => {
+    let ok = false;
+    const release = await headSemaphore.acquire();
+    try {
+      const timeoutMs = Number(process.env.IMAGE_HEAD_TIMEOUT_MS ?? 3500);
 
-    // "good enough" heuristic; HEAD content-type must look like an image and be non-tiny
-    ok = res.ok && type.startsWith("image/") && bytes > 2000;
+      // First try HEAD (some CDNs reject or don’t implement)
+      let type = "";
+      let bytes = 0;
+      let headOk = false;
 
-    await dbQuery(
-      `INSERT INTO image_cache(url, ok, content_type, bytes, checked_at)
-       VALUES ($1,$2,$3,$4, NOW())
-       ON CONFLICT (url) DO UPDATE
-         SET ok = EXCLUDED.ok,
-             content_type = EXCLUDED.content_type,
-             bytes = EXCLUDED.bytes,
-             checked_at = NOW()`,
-      [u, ok, type, Number.isFinite(bytes) ? bytes : null]
-    );
-  } catch {
-    await dbQuery(
-      `INSERT INTO image_cache(url, ok, checked_at)
-       VALUES ($1,false,NOW())
-       ON CONFLICT (url) DO UPDATE
-         SET ok=false, checked_at=NOW()`,
-      [u]
-    );
-    ok = false;
-  }
+      {
+        const ctrl = new AbortController();
+        const kill = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+          const res = await fetch(u, { method: "HEAD", redirect: "follow", signal: ctrl.signal });
+          type = (res.headers.get("content-type") || "").toLowerCase();
+          bytes = Number(res.headers.get("content-length") || "0");
+          headOk = res.ok && type.startsWith("image/") && bytes > 2000;
+        } catch {
+          headOk = false;
+        } finally {
+          clearTimeout(kill);
+        }
+      }
 
-  return ok;
+      if (!headOk) {
+        // Fallback: tiny GET (some hosts 400/405 on HEAD)
+        const ctrl = new AbortController();
+        const tinyGetTimeout = Math.max(2500, timeoutMs - 500);
+        const kill = setTimeout(() => ctrl.abort(), tinyGetTimeout);
+        try {
+          const res = await fetch(u, {
+            method: "GET",
+            headers: { Range: "bytes=0-0" },
+            redirect: "follow",
+            signal: ctrl.signal,
+          });
+          const type2 = (res.headers.get("content-type") || "").toLowerCase();
+          const bytes2 = Number(res.headers.get("content-length") || "0");
+          ok = res.ok && type2.startsWith("image/") && (Number.isFinite(bytes2) ? bytes2 > 2000 : true);
+          type = type2 || type;
+          bytes = Number.isFinite(bytes2) ? bytes2 : bytes;
+        } catch {
+          ok = false;
+        } finally {
+          clearTimeout(kill);
+        }
+      } else {
+        ok = true;
+      }
+
+      await dbQuery(
+        `INSERT INTO image_cache(url, ok, content_type, bytes, checked_at)
+         VALUES ($1,$2,$3,$4, NOW())
+         ON CONFLICT (url) DO UPDATE
+           SET ok = EXCLUDED.ok,
+               content_type = EXCLUDED.content_type,
+               bytes = EXCLUDED.bytes,
+               checked_at = NOW()`,
+        [u, ok, type, Number.isFinite(bytes) ? bytes : null]
+      );
+    } catch {
+      await dbQuery(
+        `INSERT INTO image_cache(url, ok, checked_at)
+         VALUES ($1,false,NOW())
+         ON CONFLICT (url) DO UPDATE
+           SET ok=false, checked_at=NOW()`,
+        [u]
+      );
+      ok = false;
+    } finally {
+      release();
+      // Remove from memo regardless of success/failure so future calls can retry later
+      inFlightChecks.delete(u);
+    }
+    return ok;
+  })();
+
+  inFlightChecks.set(u, probePromise);
+  return probePromise;
 }

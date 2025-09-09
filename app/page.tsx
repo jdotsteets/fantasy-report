@@ -221,15 +221,17 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
           </h1>
         </header>
 
-        <div className="flex justify-end gap-2 px-3 py-2">
-          <ImageToggle />
-        </div>
+
 
         {showHero && hero && (
           <div className="mb-8 mx-auto max-w-2xl">
             <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
           </div>
         )}
+
+        <div className="flex justify-end gap-2 px-3 py-2">
+          <ImageToggle />
+        </div>
 
         {selectedSection ? (
           <div className="mx-auto w-full max-w-3xl space-y-4">{renderSelected(selectedSection)}</div>
