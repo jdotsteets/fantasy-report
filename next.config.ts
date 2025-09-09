@@ -1,6 +1,17 @@
 // next.config.ts
 import type { NextConfig } from "next";
 
+module.exports = {
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: 'cdn.sanity.io' },
+      { protocol: 'https', hostname: 'images2.minutemediacdn.com' }, // example other CDNs you see
+      { protocol: 'https', hostname: 'static.www.nfl.com' },         // add the ones you use
+      // ...do NOT include */_next/image or masslive resizer; we skip those
+    ],
+  },
+};
+
 const nextConfig: NextConfig = {
   eslint: { ignoreDuringBuilds: true },
 

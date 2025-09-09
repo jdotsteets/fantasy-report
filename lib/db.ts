@@ -64,6 +64,9 @@ function makePool(): Pool {
     keepAliveInitialDelayMillis: Number(process.env.PG_KEEPALIVE_DELAY_MS ?? 10_000),
     maxUses: Number(process.env.PG_MAX_USES ?? 7_500),
     allowExitOnIdle: true,
+    // Use simple protocol (no prepared statements) — safer with pgBouncer transaction pooling
+    // @ts-expect-error supported by node-postgres even if not in older PoolConfig typings
+    simple_query: (process.env.PG_SIMPLE_QUERY ?? "").toLowerCase() === "true",
   };
 
   const p = new Pool(cfg);

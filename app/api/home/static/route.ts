@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
+// app/api/home/static/route.ts
+export const runtime = "nodejs";
+export const preferredRegion = ["iad1"]; // match your DB/pooler region
+
 
 type StaticType =
   | "rankings_ros"
@@ -21,8 +25,17 @@ const ALLOWED: ReadonlyArray<StaticType> = [
   "stats",
 ];
 
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`route deadline ${ms}ms`)), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
+}
+
 export async function GET(req: Request) {
   try {
+    await withDeadline(dbQuery("select 1"), 8000);
+    
     const u = new URL(req.url);
     const type = (u.searchParams.get("type") || "rankings_ros") as StaticType;
     const sport = u.searchParams.get("sport") || "nfl";
@@ -57,7 +70,10 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, items: rows });
   } catch (e) {
-    console.error("GET /api/home/static error", e);
-    return NextResponse.json({ ok: false, error: "Server error" }, { status: 500 });
+    // Return a 503 so vercel/clients back off instead of stampeding
+    return NextResponse.json(
+      { error: "temporarily unavailable" },
+      { status: 503, headers: { "Cache-Control": "max-age=0, s-maxage=15, stale-while-revalidate=60" } }
+    );
   }
 }
