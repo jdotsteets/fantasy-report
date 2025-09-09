@@ -25,7 +25,7 @@ export type PageSignals = {
 export type UrlClassification =
   | { decision: "discard"; reason: string }
   | {
-      decision: "include_article" | "include_static" | "capture_section";
+      decision: "include_article" | "include_static" | "capture_section" | "include_player_page";
       league: "nfl" | "other";
       category:
         | "rankings"
@@ -61,6 +61,28 @@ export type UrlClassification =
         looksSectionHub: boolean;
       };
     };
+
+
+
+    // Player page patterns (more precise than before)
+const PLAYER_PAGE_CANDIDATE: RegExp[] = [
+  /\/nfl\/players?\//i,                 // fantasypros, rotoworld, rotowire, etc.
+  /\/player\/[a-z0-9-]+/i,              // generic /player/<slug>
+  /\/nfl\/[a-z0-9-]+\/[0-9a-f-]{8,}\/?$/i, // nbcsports style .../<slug>/<uuid>
+  /\/stats\/players?\b/i,               // player stat pages
+  /\/player-news\b/i                    // player news hubs (still keep; we’ll classify later)
+];
+
+export function looksLikePlayerPageUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.toLowerCase();
+    return PLAYER_PAGE_CANDIDATE.some((rx) => rx.test(path));
+  } catch {
+    return false;
+  }
+}
+
 
 // ───────────────────────────── Regex & helpers ─────────────────────────────
 
@@ -180,15 +202,14 @@ export function allowItem(item: FeedLike, url: string): boolean {
 
   // Block other sports
   if (NON_NFL_PATH_DENY.some((rx) => rx.test(path))) return false;
-
-  // Block player pages (news blobs, stat pages)
-  if (PLAYER_PAGE_DENY.some((rx) => rx.test(path))) return false;
-
+ 
   // Block obvious junk (sitemaps, feeds, tags/categories, pagers, etc.)
   if (JUNK_PATH_DENY.some((rx) => rx.test(url))) return false;
 
   // Block non-HTML asset URLs by extension
   if (NON_HTML_EXT.test(path)) return false;
+
+  if (looksLikePlayerPageUrl(url)) return true;
 
   // Positive boosts (post-blocks)
   if (NFL_WORD.test(path) || FANTASY_FOOTBALL.test(path)) return true;
@@ -378,6 +399,25 @@ export function classifyUrl(
         hasNFLKeyword,
         pathDepth: depth,
         looksStaticRanking,
+        looksSectionHub: false,
+      },
+    };
+  }
+
+  if (looksLikePlayerPageUrl(u.href)) {
+    return {
+      decision: "include_player_page",
+      league: /nfl/i.test(`${u.hostname}${u.pathname}${title ?? ""}`) ? "nfl" : "other",
+      category: "other",
+      reason: "player_page_pattern",
+      signals: {
+        hasDateInUrl: DATE_IN_URL.test(u.pathname),
+        hasPublishedMeta: signals.hasPublishedMeta,
+        hasArticleSchema: signals.hasArticleSchema,
+        hasFantasyKeyword: FANTASY_FOOTBALL.test(`${u.pathname} ${title ?? ""}`),
+        hasNFLKeyword: NFL_WORD.test(`${u.pathname} ${title ?? ""}`),
+        pathDepth: u.pathname.split("/").filter(Boolean).length,
+        looksStaticRanking: looksStaticRankingFrom(`${u.pathname} ${title ?? ""}`),
         looksSectionHub: false,
       },
     };

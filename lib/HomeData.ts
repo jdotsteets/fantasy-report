@@ -1,4 +1,3 @@
-// lib/HomeData.ts
 import { dbQuery } from "@/lib/db";
 import { pickBestImage } from "@/lib/images.server"; // server-only helper
 import { isWeakArticleImage } from "@/lib/images";   // safe favicon/placeholder detector
@@ -6,9 +5,7 @@ import { normalizeTitle } from "@/lib/strings";
 
 type IdList = number[];
 
-const isProdBuild = process.env.NEXT_PHASE === 'phase-production-build';
-
-
+const isProdBuild = process.env.NEXT_PHASE === "phase-production-build";
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -16,6 +13,8 @@ export type HomeParams = {
   sport: "nfl";
   days: number;
   week?: number | null;
+  /** Optional: filter all sections down to a single source */
+  sourceId: number | undefined;
   limitNews: number;
   limitRankings: number;
   limitStartSit: number;
@@ -101,7 +100,6 @@ function normalizedTopicsArray(arr: string[] | null | undefined): string[] {
 
 /** If DB has no primary_topic, derive one from topics[] with precedence. */
 function derivePrimaryFromTopics(topics: string[]): CanonTopic | null {
-  // precedence: sleepers → start-sit, then waiver-wire, rankings, injury, start-sit, dfs, advice
   if (topics.includes("sleepers")) return "start-sit";
   if (topics.includes("waiver-wire") || topics.includes("waiver")) return "waiver-wire";
   if (topics.includes("rankings")) return "rankings";
@@ -116,22 +114,20 @@ function toPlayerKeys(title: string, topics: string[] | null | undefined): strin
   const keys: string[] = [];
   const t = normalizeTitle(title);
 
-  // crude but safe heuristic; replace with your existing name extractor if present:
-  // pulls "First Last" or "First Last Jr." and lowercases + hyphens as key
   const m = t.match(/\b([A-Z][a-z]+)\s([A-Z][a-z]+(?:\sJr\.?)?)\b/);
   if (m) keys.push(`${m[1]}-${m[2]}`.toLowerCase().replace(/\s+/g, "-").replace(/\./g, ""));
 
   if (Array.isArray(topics)) {
     for (const raw of topics) {
       const v = String(raw).trim().toLowerCase();
-      // accept pre-keyed topics like "player:justin-jefferson"
       if (v.startsWith("player:")) keys.push(v.split(":")[1]);
     }
   }
   return Array.from(new Set(keys)).filter(Boolean);
 }
 
-async function enhanceBucket(items: DbRow[], topic: CanonTopic | null) {
+// (Top-level version, unused in main below but kept for parity with other modules)
+async function enhanceBucketTop(items: DbRow[], topic: CanonTopic | null) {
   if (items.length === 0) return;
   const enhanced = await Promise.all(
     items.map(async (it) => {
@@ -143,7 +139,7 @@ async function enhanceBucket(items: DbRow[], topic: CanonTopic | null) {
             articleImage: it.image_url ?? null,
             domain: it.domain,
             topic: topic ?? null,
-            playerKeys: playerKeys.length ? playerKeys : null, // ← enables player_images fallback
+            playerKeys: playerKeys.length ? playerKeys : null,
           });
       return { ...it, image_url: chosen };
     })
@@ -151,8 +147,6 @@ async function enhanceBucket(items: DbRow[], topic: CanonTopic | null) {
   items.splice(0, items.length, ...enhanced);
 }
 
-
-/** Simple keyword helpers for overflow */
 const RE_STARTSIT = /(\bstart[\s/-]?sit\b|\bsleeper(s)?\b|who to (start|sit))/i;
 const RE_WAIVER   = /\b(waiver(s)?|pick[\s-]?ups?|adds?|wire)\b/i;
 
@@ -221,6 +215,7 @@ function buildPoolSql(): string {
             OR a.url ILIKE '%fantasy%football%'
           )
         )
+        AND ($3::int IS NULL OR a.source_id = $3)   -- ← optional source filter
     ),
     ranked AS (
       SELECT *,
@@ -246,7 +241,8 @@ async function fetchMoreByTopic(
   days: number,
   limit: number,
   excludeIds: IdList,
-  week: number | null // only used for waivers
+  week: number | null,       // only used for waivers
+  sourceId: number | undefined
 ) {
   const { rows } = await dbQuery<DbRow>(
     `
@@ -287,15 +283,16 @@ async function fetchMoreByTopic(
         )
         AND a.primary_topic = $2
         AND ($3::int IS NULL OR a.week = $3)           -- only constrains waivers when week is provided
-        AND NOT (a.id = ANY($4::int[]))                -- don’t duplicate anything already placed
+        AND ($4::int IS NULL OR a.source_id = $4)      -- ← optional source filter
+        AND NOT (a.id = ANY($5::int[]))                -- don’t duplicate anything already placed
     )
     SELECT id, title, url, canonical_url, domain, image_url,
            published_at, discovered_at, week, topics, source
     FROM base
     ORDER BY order_ts DESC NULLS LAST, id DESC
-    LIMIT $5
+    LIMIT $6
     `,
-    [String(days), topic, week, excludeIds, limit]
+    [String(days), topic, week, sourceId ?? null, excludeIds, limit]
   );
 
   return rows;
@@ -305,7 +302,8 @@ async function fetchMoreByTopic(
 async function fetchStaticPages(
   days: number,
   limit: number,
-  types: string[] | null | undefined
+  types: string[] | null | undefined,
+  sourceId: number | undefined
 ): Promise<DbRow[]> {
   const { rows } = await dbQuery<DbRow>(
     `
@@ -340,16 +338,17 @@ async function fetchStaticPages(
         $2::text[] IS NULL
         OR a.static_type = ANY($2::text[])
       )
+      AND ($3::int IS NULL OR a.source_id = $3)   -- ← optional source filter
     ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
-    LIMIT $3
+    LIMIT $4
     `,
-    [String(days), types && types.length ? types : null, limit]
+    [String(days), types && types.length ? types : null, sourceId ?? null, limit]
   );
   return rows;
 }
 
-async function fetchPool(days: number, poolLimit: number): Promise<PoolRow[]> {
-  const { rows } = await dbQuery<PoolRow>(buildPoolSql(), [String(days), poolLimit]);
+async function fetchPool(days: number, poolLimit: number, sourceId: number | undefined): Promise<PoolRow[]> {
+  const { rows } = await dbQuery<PoolRow>(buildPoolSql(), [String(days), poolLimit, sourceId ?? null]);
   return rows;
 }
 
@@ -357,7 +356,7 @@ async function fetchPool(days: number, poolLimit: number): Promise<PoolRow[]> {
 
 export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const {
-    days, week,
+    days, week, sourceId,
     limitNews, limitRankings, limitStartSit, limitAdvice, limitDFS, limitWaivers, limitInjuries, limitHero,
     staticSectionLimit = 0,
     staticTypes = null,
@@ -370,8 +369,8 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const poolSize = Math.max(sum * 3, 400);
 
   const [poolRaw, staticRaw] = await Promise.all([
-    fetchPool(days, poolSize),
-    staticSectionLimit > 0 ? fetchStaticPages(days, staticSectionLimit * 2, staticTypes) : Promise.resolve([] as DbRow[]),
+    fetchPool(days, poolSize, sourceId),
+    staticSectionLimit > 0 ? fetchStaticPages(days, staticSectionLimit * 2, staticTypes, sourceId) : Promise.resolve([] as DbRow[]),
   ]);
 
   // Normalize rows & derive missing primary from topics if needed
@@ -498,7 +497,14 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     if (bucket.length >= cap) return;
     const needed = cap - bucket.length;
     const excludeIds = Array.from(placed);
-    const more = await fetchMoreByTopic(topic, days, needed * 2, excludeIds, weekForTopic);
+    const more = await fetchMoreByTopic(
+      topic,
+      days,
+      needed * 2,
+      excludeIds,
+      weekForTopic,
+      sourceId
+    );
     for (const r of more) {
       if (bucket.length >= cap) break;
       if (placed.has(r.id)) continue;
@@ -528,7 +534,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
               articleImage: it.image_url ?? null,
               domain: it.domain,
               topic,
-              playerKeys: Array.isArray(it.players) ? it.players : null,   // ← NEW
+              playerKeys: Array.isArray(it.players) ? it.players : null,
             });
         return { ...it, image_url: chosen };
       })
@@ -555,9 +561,8 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   }
   await enhanceBucket(latest, null);
 
-  // 5) Optional Static section: strictly is_static=true, never used elsewhere here
+  // 5) Optional Static section
   if (staticSectionLimit > 0 && staticRaw.length > 0) {
-    // de-dupe against anything already placed by id just in case
     for (const r of staticRaw) {
       if (staticItems.length >= staticSectionLimit) break;
       if (placed.has(r.id)) continue;
@@ -569,7 +574,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
 
   const heroCandidates = latest.slice(0, limitHero);
 
-  const payload: HomePayload = {
+  return {
     items: {
       latest,
       rankings,
@@ -582,6 +587,4 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
       ...(staticSectionLimit > 0 ? { staticItems } : {}),
     },
   };
-
-  return payload;
 }

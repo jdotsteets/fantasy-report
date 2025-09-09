@@ -1,4 +1,3 @@
-// components/ArticleList.tsx
 "use client";
 
 import Image from "next/image";
@@ -27,7 +26,7 @@ function fmtDate(iso?: string | null) {
   return d.toLocaleString();
 }
 
-/** Client-side matcher only applies if you explicitly pass filter.section. */
+// Optional section matcher (only applies if filter.section provided)
 function matchesSection(a: Article, section?: SectionKey): boolean {
   if (!section) return true;
 
@@ -47,17 +46,15 @@ function matchesSection(a: Article, section?: SectionKey): boolean {
     case "dfs":
       return has(/\bdfs\b|\bdraftkings\b|\bfanduel\b|\bgpp\b|\bcash games?\b|\b(lineup|stack)s?\b/);
     case "news":
-      return true; // server already picked "latest"
+      return true;
   }
 }
 
-/**
- * ▶︎ Font sizing controls
- */
+/** Typography */
 const HEADLINE_TEXT_CLS =
   "mt-0 text-[12px] sm:text-[13px] leading-tight tracking-tight text-black hover:text-green-900";
 const SUBHEADLINE_TEXT_CLS =
-  "mt-0 flex flex-wrap items-center gap-x-2 text-[10px] sm:text-[11px] leading-tight text-zinc-700";
+  "mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] sm:text-[11px] leading-tight text-zinc-700";
 
 export default function ArticleList({ items, title, className, filter }: Props) {
   const [mode, setMode] = useState<ImagesMode>("all");
@@ -100,20 +97,22 @@ export default function ArticleList({ items, title, className, filter }: Props) 
         <ul className="divide-y divide-zinc-300">
           {filtered.map((r, idx) => {
             const href = r.canonical_url ?? r.url;
-
-            // Clean the title for display (decodes &#039;, &amp;, etc.)
             const displayTitle = normalizeTitle(r.title || "");
 
+            // Image handling
             let candidate = getSafeImageUrl(r.image_url);
             if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate)) {
               candidate = null;
             }
-
             const wantImage = mode === "all" ? true : mode === "first" ? idx === 0 : false;
             const displaySrc = candidate && wantImage ? candidate : "";
 
+            // Favicon from domain
+            const favicon = r.domain ? `https://icons.duckduckgo.com/ip3/${r.domain}.ico` : null;
+
             return (
               <li key={r.id} className="px-3 py-1.5 sm:px-5 sm:py-2">
+                {/* Optional preview image */}
                 {displaySrc ? (
                   <div className="relative mb-1 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:mb-1.5 sm:aspect-[16/9]">
                     <Image
@@ -130,14 +129,37 @@ export default function ArticleList({ items, title, className, filter }: Props) 
                   </div>
                 ) : null}
 
+                {/* Two-column row: favicon | (title + meta) */}
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-                  <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
-                    {displayTitle}
-                  </h3>
+                  <div className="flex items-start gap-2">
+                    {/* left: favicon */}
+                    {favicon ? (
+                      <img
+                        src={favicon}
+                        width={18}
+                        height={18}
+                        alt=""
+                        className="h-[18px] w-[18px] shrink-0 rounded"
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200" />
+                    )}
 
-                  <div className={SUBHEADLINE_TEXT_CLS}>
-                    <span>{fmtDate(r.published_at)}</span>
-                    <span>• {r.source}</span>
+                    {/* right: title + meta stacked */}
+                    <div className="min-w-0 flex-1">
+                      <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
+                        {displayTitle}
+                      </h3>
+
+                      <div className={SUBHEADLINE_TEXT_CLS}>
+                        <span>{fmtDate(r.published_at)}</span>
+                        <span>• {r.source}</span>
+                      </div>
+                    </div>
                   </div>
                 </Link>
               </li>

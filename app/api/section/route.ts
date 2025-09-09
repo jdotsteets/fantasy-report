@@ -33,13 +33,13 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "invalid key" }, { status: 400 });
     }
 
-    const days   = clampInt(url.searchParams.get("days"),   1, 2000, 45);
-    const limit  = clampInt(url.searchParams.get("limit"),  1, 100,  10);
-    const offset = clampInt(url.searchParams.get("offset"), 0, 10_000, 0);
-    const week   = toNullableInt(url.searchParams.get("week"));
+    const days     = clampInt(url.searchParams.get("days"),   1, 2000, 45);
+    const limit    = clampInt(url.searchParams.get("limit"),  1, 100,  10);
+    const offset   = clampInt(url.searchParams.get("offset"), 0, 10_000, 0);
+    const week     = toNullableInt(url.searchParams.get("week"));
+    const sourceId = toNullableInt(url.searchParams.get("sourceId")); // ← NEW
 
-    // NOTE: we do *not* include a.is_static rows (they’ll live in your optional static section)
-    // Also keep your NBC/NFL filter and canonical de-dup.
+    // ───────── NEWS ─────────
     if (key === "news") {
       const { rows } = await dbQuery<DbRow>(
         `
@@ -73,6 +73,7 @@ export async function GET(req: Request) {
                 a.url ILIKE '%fantasy%football%'
               )
             )
+            AND ($4::int IS NULL OR a.source_id = $4)  -- ← NEW
         ),
         ranked AS (
           SELECT *,
@@ -90,13 +91,13 @@ export async function GET(req: Request) {
         OFFSET $3
         LIMIT $2
         `,
-        [String(days), limit, offset]
+        [String(days), limit, offset, sourceId] // ← add sourceId as $4
       );
       return NextResponse.json({ items: rows }, { status: 200 });
     }
 
-    // Topic-backed sections (rankings/start-sit/waiver-wire/dfs/injury/advice)
-    const topic = key; // normalized with hyphen
+    // ───────── TOPIC SECTIONS ─────────
+    const topic = key;
     const { rows } = await dbQuery<DbRow>(
       `
       WITH base AS (
@@ -133,7 +134,8 @@ export async function GET(req: Request) {
             OR a.primary_topic = REPLACE($4, '-', '_')
             OR ( $4 = 'waiver-wire' AND a.primary_topic IN ('waiver', 'waiver_wire') )
           )
-          AND ( $5::int IS NULL OR a.week = $5 )  -- only constrains waivers if you pass week
+          AND ( $5::int IS NULL OR a.week = $5 )
+          AND ( $6::int IS NULL OR a.source_id = $6 )  -- ← NEW
       )
       SELECT id, title, url, canonical_url, domain, image_url,
              published_at, discovered_at, week, topics, source
@@ -142,12 +144,13 @@ export async function GET(req: Request) {
       OFFSET $3
       LIMIT $2
       `,
-      [String(days), limit, offset, topic, week]
+      [String(days), limit, offset, topic, week, sourceId] // ← add sourceId as $6
     );
 
     return NextResponse.json({ items: rows }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? "server error" }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "server error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

@@ -1,7 +1,6 @@
-// components/LoadMoreSection.tsx
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Section from "@/components/Section";
 import ArticleList from "@/components/ArticleList";
 import type { Article } from "@/types/sources";
@@ -14,7 +13,8 @@ type Props = {
   initialItems: Article[];
   pageSize?: number;
   days?: number;
-  week?: number | null; // only relevant for waiver-wire
+  week?: number | null;
+  sourceId?: number;
 };
 
 export default function LoadMoreSection({
@@ -24,6 +24,7 @@ export default function LoadMoreSection({
   pageSize = 10,
   days = 45,
   week = null,
+  sourceId,
 }: Props) {
   const [items, setItems] = useState<Article[]>(initialItems);
   const [loading, setLoading] = useState(false);
@@ -31,15 +32,21 @@ export default function LoadMoreSection({
   const [error, setError] = useState<string | null>(null);
   const offsetRef = useRef<number>(initialItems.length);
 
-  const btnLabel = useMemo(
-    () => `More ${title.replace(/ &.*/i, "")}`, // e.g., "More Start/Sit"
-    [title]
-  );
+  // 🔁 Reset when filters/inputs change (new source, week, etc.)
+  useEffect(() => {
+    setItems(initialItems);
+    offsetRef.current = initialItems.length;
+    setDone(initialItems.length < pageSize);
+    setError(null);
+  }, [initialItems, pageSize, sectionKey, days, week, sourceId]);
+
+  const btnLabel = useMemo(() => `More ${title.replace(/ &.*/i, "")}`, [title]);
 
   async function loadMore() {
     if (loading || done) return;
     setLoading(true);
     setError(null);
+
     try {
       const params = new URLSearchParams({
         key: sectionKey,
@@ -48,32 +55,34 @@ export default function LoadMoreSection({
         days: String(days),
       });
       if (sectionKey === "waiver-wire" && week != null) params.set("week", String(week));
+      if (typeof sourceId === "number" && Number.isFinite(sourceId)) {
+        params.set("sourceId", String(sourceId)); // must match API param name
+      }
 
       const res = await fetch(`/api/section?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: { items: Article[] } = await res.json();
 
-      // de-dupe by id (in case offset overlaps with new rows)
       const seen = new Set(items.map((x) => x.id));
       const fresh = data.items.filter((x) => !seen.has(x.id));
       setItems((cur) => [...cur, ...fresh]);
 
-      // advance offset by what the API *returned*
       offsetRef.current += data.items.length;
-
       if (data.items.length < pageSize) setDone(true);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load more");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load more";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }
 
+
+
   return (
     <Section title={title}>
       <ArticleList items={items} />
 
-      {/* Row: More … */}
       <div className="mt-2">
         {error ? (
           <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">

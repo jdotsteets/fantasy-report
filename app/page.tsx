@@ -15,8 +15,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/* ───────────────────────── Types & constants ───────────────────────── */
-
+/* ───────────────────────── Types/consts ───────────────────────── */
 type HomePayload = {
   items: {
     latest: DbRow[];
@@ -26,32 +25,23 @@ type HomePayload = {
     dfs: DbRow[];
     waivers: DbRow[];
     injuries: DbRow[];
-    heroCandidates: DbRow[]; // (fetched by getHomeData)
+    heroCandidates: DbRow[];
   };
 };
 
 type HeroData = { title: string; href: string; src: string; source: string };
 
 const SPORT = "nfl";
-const DAYS = 45;
+const DEFAULT_DAYS = 45;
 const CURRENT_WEEK = 1;
 const weekLabel = (wk: number) => `Week ${wk}`;
 
-const SECTION_KEYS = [
-  "waivers",
-  "rankings",
-  "start-sit",
-  "injury",
-  "dfs",
-  "advice",
-  "news",
-] as const;
+const SECTION_KEYS = ["waivers", "rankings", "start-sit", "injury", "dfs", "advice", "news"] as const;
 type SectionKey = (typeof SECTION_KEYS)[number];
 const isSectionKey = (v: string): v is SectionKey =>
   (SECTION_KEYS as readonly string[]).includes(v);
 
 /* ───────────────────────── Helpers ───────────────────────── */
-
 const mapRow = (a: DbRow): Article => ({
   id: a.id,
   title: a.title,
@@ -74,34 +64,39 @@ const dropId =
     id ? arr.filter((x) => x.id !== id) : arr;
 
 /* ───────────────────────── Page ───────────────────────── */
-
 type SP = Record<string, string | string[] | undefined>;
 
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<SP>;
-}) {
+export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
-  const rawSection =
-    (Array.isArray(sp.section) ? sp.section[0] : sp.section) ?? "";
+
+  // optional section and source filters
+  const rawSection = (Array.isArray(sp.section) ? sp.section[0] : sp.section) ?? "";
   const sectionParam = rawSection.toLowerCase().trim();
-  const selected: SectionKey | null = isSectionKey(sectionParam)
-    ? sectionParam
-    : null;
+  const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
+
+  const selectedSourceId =
+    Number(Array.isArray(sp.sourceId) ? sp.sourceId[0] : sp.sourceId) || null;
+  const isSourceMode = !!selectedSourceId;
+
+  // widen window + limits when viewing a single source
+  const days = isSourceMode ? 365 : DEFAULT_DAYS;
+  const limits = {
+    limitNews: isSourceMode ? 150 : 20,
+    limitRankings: isSourceMode ? 60 : 10,
+    limitStartSit: isSourceMode ? 60 : 12,
+    limitAdvice: isSourceMode ? 60 : 10,
+    limitDFS: isSourceMode ? 60 : 10,
+    limitWaivers: isSourceMode ? 60 : 10,
+    limitInjuries: isSourceMode ? 60 : 10,
+    limitHero: isSourceMode ? 24 : 12,
+  };
 
   const data: HomePayload = await getHomeData({
     sport: SPORT,
-    days: DAYS,
-    week: CURRENT_WEEK, // only Waiver Wire uses this filter
-    limitNews: 20,
-    limitRankings: 10,
-    limitStartSit: 12,
-    limitAdvice: 10,
-    limitDFS: 10,
-    limitWaivers: 10,
-    limitInjuries: 10,
-    limitHero: 12,
+    days,
+    week: CURRENT_WEEK,                 // only Waiver Wire uses this filter
+    sourceId: selectedSourceId ?? undefined,
+    ...limits,
   });
 
   // Normalize to Article[]
@@ -120,7 +115,6 @@ export default async function Page({
         title: heroRow.title,
         href: heroRow.canonical_url ?? heroRow.url ?? `/go/${heroRow.id}`,
         src: getSafeImageUrl(heroRow.image_url)!,
-        // ensure string for the Hero component
         source: heroRow.source ?? "",
       }
     : null;
@@ -134,9 +128,8 @@ export default async function Page({
   const waiversFiltered = removeHero(waivers);
   const injuriesFiltered = removeHero(injuries);
 
-  const showHero = selected === null && hero !== null;
+  const showHero = selectedSection === null && hero !== null;
 
-  // Renders a single LoadMoreSection based on the selected filter
   const renderSelected = (k: SectionKey) => {
     switch (k) {
       case "rankings":
@@ -147,7 +140,8 @@ export default async function Page({
               title="Rankings"
               sectionKey="rankings"
               initialItems={rankingsFiltered}
-              days={DAYS}
+              days={days}
+              sourceId={selectedSourceId ?? undefined}
             />
           </>
         );
@@ -157,7 +151,8 @@ export default async function Page({
             title="Start/Sit & Sleepers"
             sectionKey="start-sit"
             initialItems={startSitFiltered}
-            days={DAYS}
+            days={days}
+            sourceId={selectedSourceId ?? undefined}
           />
         );
       case "waivers":
@@ -166,8 +161,9 @@ export default async function Page({
             title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}
             sectionKey="waiver-wire"
             initialItems={waiversFiltered}
-            days={DAYS}
+            days={days}
             week={CURRENT_WEEK}
+            sourceId={selectedSourceId ?? undefined}
           />
         );
       case "news":
@@ -176,7 +172,8 @@ export default async function Page({
             title="News & Updates"
             sectionKey="news"
             initialItems={latestFiltered}
-            days={DAYS}
+            days={days}
+            sourceId={selectedSourceId ?? undefined}
           />
         );
       case "dfs":
@@ -187,7 +184,8 @@ export default async function Page({
               title="DFS"
               sectionKey="dfs"
               initialItems={dfsFiltered}
-              days={DAYS}
+              days={days}
+              sourceId={selectedSourceId ?? undefined}
             />
           </>
         );
@@ -197,7 +195,8 @@ export default async function Page({
             title="Advice"
             sectionKey="advice"
             initialItems={adviceFiltered}
-            days={DAYS}
+            days={days}
+            sourceId={selectedSourceId ?? undefined}
           />
         );
       case "injury":
@@ -206,7 +205,8 @@ export default async function Page({
             title="Injuries"
             sectionKey="injury"
             initialItems={injuriesFiltered}
-            days={DAYS}
+            days={days}
+            sourceId={selectedSourceId ?? undefined}
           />
         );
     }
@@ -221,28 +221,19 @@ export default async function Page({
           </h1>
         </header>
 
-        {showHero && hero && (
-          <div className="mb-8 mx-auto max-w-2xl">
-            <Hero
-              title={hero.title}
-              href={hero.href}
-              src={hero.src}
-              source={hero.source}
-            />
-          </div>
-        )}
-
-        <div className="flex justify-end px-3 py-2">
+        <div className="flex justify-end gap-2 px-3 py-2">
           <ImageToggle />
         </div>
 
-        {/* If a filter is active, render a centered single column */}
-        {selected ? (
-          <div className="mx-auto w-full max-w-3xl space-y-4">
-            {renderSelected(selected)}
+        {showHero && hero && (
+          <div className="mb-8 mx-auto max-w-2xl">
+            <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
           </div>
+        )}
+
+        {selectedSection ? (
+          <div className="mx-auto w-full max-w-3xl space-y-4">{renderSelected(selectedSection)}</div>
         ) : (
-          // 3-column view
           <div className="grid grid-cols-1 gap-1.5 md:grid-cols-[1fr_1.25fr_1fr] md:gap-2">
             {/* Left column */}
             <div className="order-2 md:order-1 space-y-4">
@@ -250,17 +241,20 @@ export default async function Page({
                 title="Rankings"
                 sectionKey="rankings"
                 initialItems={rankingsFiltered}
+                sourceId={selectedSourceId ?? undefined}
               />
               <LoadMoreSection
                 title="Start/Sit & Sleepers"
                 sectionKey="start-sit"
                 initialItems={startSitFiltered}
+                sourceId={selectedSourceId ?? undefined}
               />
               <LoadMoreSection
                 title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}
                 sectionKey="waiver-wire"
                 initialItems={waiversFiltered}
                 week={CURRENT_WEEK}
+                sourceId={selectedSourceId ?? undefined}
               />
             </div>
 
@@ -270,28 +264,30 @@ export default async function Page({
                 title="News & Updates"
                 sectionKey="news"
                 initialItems={latestFiltered}
+                sourceId={selectedSourceId ?? undefined}
               />
             </div>
 
             {/* Right column */}
             <div className="order-3 md:order-3 space-y-4">
-              {/* NEW: Static links above DFS */}
               <StaticLinksSection initial="rankings_ros" />
-
               <LoadMoreSection
                 title="DFS"
                 sectionKey="dfs"
                 initialItems={dfsFiltered}
+                sourceId={selectedSourceId ?? undefined}
               />
               <LoadMoreSection
                 title="Advice"
                 sectionKey="advice"
                 initialItems={adviceFiltered}
+                sourceId={selectedSourceId ?? undefined}
               />
               <LoadMoreSection
                 title="Injuries"
                 sectionKey="injury"
                 initialItems={injuriesFiltered}
+                sourceId={selectedSourceId ?? undefined}
               />
               <Section title="Sites">
                 <FantasyLinks />

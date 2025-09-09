@@ -1,17 +1,21 @@
 // lib/images.server.ts
 import { dbQuery } from "@/lib/db";
-import { FALLBACK, isLikelyFavicon } from "./images";
+import { FALLBACK, isLikelyFavicon, isWeakArticleImage } from "./images";
 
 type PickArgs = {
+  /** Raw image URL already on the article (e.g. scraped/ingested). */
   articleImage?: string | null;
-  domain?: string | null;      // e.g. "www.espn.com"
-  topic?: string | null;       // e.g. "rankings","waiver-wire","start-sit","dfs","injury","advice","news"
-  playerKeys?: string[] | null; // optional keys if you identify players in articles
+  /** Article domain (used to pick a per-source fallback). */
+  domain?: string | null;           // e.g. "www.espn.com"
+  /** Canonical topic used for topic fallbacks. */
+  topic?: string | null;            // "rankings" | "waiver-wire" | "start-sit" | "dfs" | "injury" | "advice" | "news"
+  /** Optional player keys to allow headshot fallback. */
+  playerKeys?: string[] | null;     // e.g. ["nfl:name:justin-jefferson"]
 };
 
 /**
  * Choose the best image with graceful fallbacks:
- *  1) Validated article image
+ *  1) Validated article image (reject favicons/author avatars/weak)
  *  2) Player headshot (player_images)
  *  3) Per-source fallback (source_images)
  *  4) Per-topic fallback (topic_images)
@@ -33,7 +37,7 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
         LIMIT 1`,
       [playerKeys]
     );
-    const p = normalize(rows[0]?.url);
+    const p = normalize(rows?.[0]?.url);
     if (await isUsable(p)) return p!;
   }
 
@@ -42,10 +46,11 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
     const { rows } = await dbQuery<{ default_url: string }>(
       `SELECT default_url
          FROM source_images
-        WHERE domain = $1`,
+        WHERE domain = $1
+        LIMIT 1`,
       [domain]
     );
-    const s = normalize(rows[0]?.default_url);
+    const s = normalize(rows?.[0]?.default_url);
     if (await isUsable(s)) return s!;
   }
 
@@ -54,10 +59,11 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
     const { rows } = await dbQuery<{ url: string }>(
       `SELECT url
          FROM topic_images
-        WHERE topic = $1`,
+        WHERE topic = $1
+        LIMIT 1`,
       [topic]
     );
-    const t = normalize(rows[0]?.url);
+    const t = normalize(rows?.[0]?.url);
     if (await isUsable(t)) return t!;
   }
 
@@ -65,32 +71,72 @@ export async function pickBestImage(args: PickArgs): Promise<string> {
   return FALLBACK;
 }
 
+/* ───────────────────────── Internals ───────────────────────── */
+
+function isAuthorImage(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const u = url.toLowerCase();
+
+  // Common author/byline/avatar patterns we see across Yahoo/USAToday/Wire/CDNs
+  if (
+    u.includes("authoring-images") ||      // Gannett / USA Today network
+    u.includes("/byline/") ||
+    u.includes("/profile/") ||
+    u.includes("/profiles/") ||
+    u.includes("headshot") ||
+    u.includes("avatar") ||
+    u.includes("/authors/") ||
+    u.includes("/wp-content/uploads/avatars/")
+  ) return true;
+
+  // Small-square hints in query params often used for profile pics
+  // e.g. ?width=144&height=144
+  if (/[?&](w|width)=1\d{2}\b/.test(u) && /[?&](h|height)=1\d{2}\b/.test(u)) return true;
+
+  return false;
+}
+
+/** Normalize + early reject bad candidates (favicon, SVG, weak, author avatar). */
 function normalize(u?: string | null): string | null {
   if (!u) return null;
   let s = u.trim();
   if (!s) return null;
+
   if (s.startsWith("//")) s = "https:" + s;
   if (!/^https?:\/\//i.test(s)) return null;
+
+  // Early rejections
   if (isLikelyFavicon(s)) return null;
+  if (/\.(svg)(\?|#|$)/i.test(s)) return null;
+  if (isWeakArticleImage(s)) return null; // 1x1, tracker gifs, placeholder-y patterns
+  if (isAuthorImage(s)) return null;      // 🚫 byline / avatar images
+
   return s;
 }
 
 /**
  * Use a tiny DB cache and a HEAD probe to confirm the URL is an image.
- * Tables:
- *   image_cache(url PK, ok bool, content_type text, bytes int, checked_at timestamptz, proxied_url text)
+ * Table should exist as:
+ *   image_cache(
+ *     url text primary key,
+ *     ok boolean,
+ *     content_type text,
+ *     bytes int,
+ *     checked_at timestamptz,
+ *     proxied_url text  -- optional
+ *   )
  */
 async function isUsable(u?: string | null): Promise<boolean> {
   if (!u) return false;
 
-  // 1) cache hit
-  const c = await dbQuery<{ ok: boolean }>(
+  // 1) Cache hit
+  const cached = await dbQuery<{ ok: boolean }>(
     `SELECT ok FROM image_cache WHERE url = $1`,
     [u]
   );
-  if (c.rows[0]?.ok === true) return true;
+  if (cached.rows?.[0]?.ok === true) return true;
 
-  // 2) probe (HEAD)
+  // 2) Probe via HEAD
   let ok = false;
   try {
     const ctrl = new AbortController();
@@ -98,27 +144,28 @@ async function isUsable(u?: string | null): Promise<boolean> {
     const res = await fetch(u, { method: "HEAD", signal: ctrl.signal });
     clearTimeout(t);
 
-    const type = res.headers.get("content-type") || "";
+    const type = (res.headers.get("content-type") || "").toLowerCase();
     const bytes = Number(res.headers.get("content-length") || "0");
 
-    // "good enough" heuristic for thumbnails
+    // "good enough" heuristic; HEAD content-type must look like an image and be non-tiny
     ok = res.ok && type.startsWith("image/") && bytes > 2000;
-    // note: you can proxy/store to your CDN here and persist proxied_url too
+
     await dbQuery(
       `INSERT INTO image_cache(url, ok, content_type, bytes, checked_at)
-       VALUES ($1,$2,$3,$4, now())
+       VALUES ($1,$2,$3,$4, NOW())
        ON CONFLICT (url) DO UPDATE
          SET ok = EXCLUDED.ok,
              content_type = EXCLUDED.content_type,
              bytes = EXCLUDED.bytes,
-             checked_at = now()`,
-      [u, ok, type, isNaN(bytes) ? null : bytes]
+             checked_at = NOW()`,
+      [u, ok, type, Number.isFinite(bytes) ? bytes : null]
     );
   } catch {
     await dbQuery(
       `INSERT INTO image_cache(url, ok, checked_at)
-       VALUES ($1,false, now())
-       ON CONFLICT (url) DO UPDATE SET ok=false, checked_at=now()`,
+       VALUES ($1,false,NOW())
+       ON CONFLICT (url) DO UPDATE
+         SET ok=false, checked_at=NOW()`,
       [u]
     );
     ok = false;

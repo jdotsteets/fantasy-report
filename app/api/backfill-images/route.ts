@@ -18,7 +18,7 @@ import { logIngest } from "@/lib/ingestLogs";
 import { upsertPlayerImage } from "@/lib/ingestPlayerImages";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";  
+export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
 
@@ -52,27 +52,58 @@ function toPlayerKey(name: string) {
   return `nfl:name:${slug}`;
 }
 
+/** Block typical author/byline/avatar URLs (Yahoo/USAToday/Wire/CDNs, etc.) */
+function isAuthorImage(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  if (
+    u.includes("authoring-images") || // Gannett/USAToday
+    u.includes("/byline/") ||
+    u.includes("/authors/") ||
+    u.includes("/author/") ||
+    u.includes("/profile/") ||
+    u.includes("/profiles/") ||
+    u.includes("headshot") ||
+    u.includes("avatar") ||
+    u.includes("/wp-content/uploads/avatars/")
+  ) return true;
+
+  // Tiny square hints common for bylines (?width=144&height=144, etc.)
+  if (/[?&](w|width)=1\d{2}\b/.test(u) && /[?&](h|height)=1\d{2}\b/.test(u)) return true;
+
+  return false;
+}
+
+/** Normalize and enforce all filters (favicon, weak, author). */
+function normalizeCandidate(u: string | null | undefined): string | null {
+  const s = getSafeImageUrl(u);
+  if (!s) return null;
+  if (isLikelyFavicon(s)) return null;
+  if (isWeakArticleImage(s)) return null;
+  if (/\.(svg)(\?|#|$)/i.test(s)) return null;
+  if (isAuthorImage(s)) return null;
+  return s;
+}
+
 async function pickBestImage(articleUrl: string, title: string | null): Promise<string | null> {
   // 1) OG/Twitter
   const og = await fetchOgImage(articleUrl).catch(() => null);
-  let candidate = getSafeImageUrl(og);
+  let candidate = normalizeCandidate(og);
 
   // 2) Scrape (meta/JSON-LD/body)
   if (!candidate) {
     const scraped = await findArticleImage(articleUrl).catch(() => null);
-    candidate = getSafeImageUrl(scraped);
+    candidate = normalizeCandidate(scraped);
   }
 
-  // 3) Optional wiki fallback when title looks like a person (keep only if you have this util)
+  // 3) (Optional) wiki/person fallback — keep disabled unless you wire it up
   // const name = title ? extractLikelyNameFromTitle(title) : null;
   // if (!candidate && name) {
   //   const wiki = await findWikipediaHeadshot(name).catch(() => null);
-  //   candidate = getSafeImageUrl(wiki?.src ?? null);
+  //   candidate = normalizeCandidate(wiki?.src ?? null);
   // }
 
-  if (!candidate) return null;
-  if (isLikelyFavicon(candidate) || isWeakArticleImage(candidate)) return null;
-  return candidate;
+  return candidate ?? null;
 }
 
 export async function GET(req: NextRequest) {
@@ -88,16 +119,18 @@ export async function GET(req: NextRequest) {
   const staleHours = parseHours(url.searchParams.get("staleHours"), 24 * 7);
   const dryRun = url.searchParams.has("dry");
 
-  // Broaden the “needs work” predicate a bit
+  // Broaden the “needs work” predicate, including known author/byline patterns
   const selectSql = `
     SELECT id, source_id, url, canonical_url, title, image_url, players
     FROM articles
     WHERE (url IS NOT NULL OR canonical_url IS NOT NULL)
       AND (
-           image_url IS NULL OR image_url = ''
+           image_url IS NULL
+        OR image_url = ''
         OR image_checked_at IS NULL
         OR image_checked_at < NOW() - ($2 || ' hours')::interval
         OR image_url ~* '(1x1|pixel|tracker|spacer|placeholder|blank|\\.gif($|\\?))'
+        OR image_url ~* '(authoring-images|/byline/|/authors?/|/profile(s)?/|headshot|avatar|/wp-content/uploads/avatars/)'
       )
     ORDER BY COALESCE(published_at, discovered_at) DESC NULLS LAST, id DESC
     LIMIT $1
@@ -145,8 +178,14 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // If unchanged and not a known placeholder, just stamp checked_at
-      if (r.image_url && r.image_url === found && !isWeakArticleImage(r.image_url)) {
+      // Only treat as unchanged if the stored one isn't weak/author-ish
+      const storedIsOk =
+        r.image_url &&
+        !isWeakArticleImage(r.image_url) &&
+        !isLikelyFavicon(r.image_url) &&
+        !isAuthorImage(r.image_url);
+
+      if (storedIsOk && r.image_url === found) {
         unchanged++;
         items.push({ id: r.id, url: fetchUrl, action: "unchanged", found });
         if (!dryRun) {
@@ -176,8 +215,7 @@ export async function GET(req: NextRequest) {
         detail: "image backfilled",
       });
 
-      // Opportunistic player_images seed:
-      // prefer articles.players; else try extracting a single name from title
+      // Opportunistic player_images seed
       const single =
         (r.players && r.players.length === 1 && r.players[0]) ||
         (r.title ? extractLikelyNameFromTitle(r.title) : null);
@@ -189,7 +227,7 @@ export async function GET(req: NextRequest) {
         } catch {
           /* ignore seeding errors */
         }
-      } 
+      }
     }
 
     return NextResponse.json(

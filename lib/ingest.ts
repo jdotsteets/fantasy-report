@@ -11,7 +11,7 @@ import {
 } from "@/lib/jobs";
 
 import { fetchItemsForSource } from "@/lib/sources/index";
-import { classifyArticle } from "@/lib/classify";
+import { classifyArticle, looksLikePlayerPage } from "@/lib/classify";
 import { upsertPlayerImage } from "@/lib/ingestPlayerImages"; // keeps player_images logic separate
 import { findArticleImage } from "@/lib/scrape-image";       // OG/Twitter/JSON-LD finder
 import { isWeakArticleImage, extractPlayersFromTitleAndUrl } from "@/lib/images";
@@ -19,6 +19,8 @@ import { isWeakArticleImage, extractPlayersFromTitleAndUrl } from "@/lib/images"
 // ─────────────────────────────────────────────────────────────────────────────
 // Optional helpers/adapters (scrape canonical, route, etc.)
 // ─────────────────────────────────────────────────────────────────────────────
+
+
 type Adapters = {
   extractCanonicalUrl?: (url: string, html?: string) => Promise<string | null>;
   scrapeArticle?: (
@@ -129,35 +131,7 @@ function mkLogger(jobId?: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DB helpers (articles)
 // ─────────────────────────────────────────────────────────────────────────────
-export type ArticleInput = {
-  canonical_url?: string | null;
-  url?: string | null;
-  link?: string | null; // convenience alias
-  source_id?: number | null;
-  title?: string | null;
-  author?: string | null;
-  published_at?: Date | string | null;
-  image_url?: string | null;
-  domain?: string | null;
-  sport?: string | null;
-  topics?: string[] | null;
-  primary_topic?: string | null;
-  secondary_topic?: string | null;
-  week?: number | null;
-  players?: string[] | null;
-};
 
-export type UpsertResult = { inserted: boolean };
-
-function pickNonEmpty(...vals: Array<unknown>): string | null {
-  for (const v of vals) {
-    if (typeof v === "string") {
-      const s = v.trim();
-      if (s) return s;
-    }
-  }
-  return null;
-}
 
 function rowsOf<T>(res: unknown): T[] {
   if (Array.isArray(res)) return res as T[];
@@ -165,72 +139,128 @@ function rowsOf<T>(res: unknown): T[] {
   return Array.isArray(obj?.rows) ? (obj.rows as T[]) : [];
 }
 
+
+// lib/ingest.ts (replace this function)
+
+export type UpsertResult =
+  | { inserted: true; updated?: false }
+  | { updated: true; inserted?: false };
+
+type ArticleInput = {
+  canonical_url?: string | null;
+  url?: string | null;
+  link?: string | null;
+
+  source_id?: number | null;
+  sourceId?: number | null;
+
+  title?: string | null;
+  author?: string | null;
+
+  // Either of these may be provided by callers
+  published_at?: string | Date | null;
+  publishedAt?: string | Date | null;
+
+  image_url?: string | null;
+  domain?: string | null;
+  sport?: string | null;
+
+  topics?: string[] | null;
+  primary_topic?: string | null;
+  secondary_topic?: string | null;
+  week?: number | null;
+  players?: string[] | null;
+
+  is_player_page?: boolean | null;
+};
+
+function pickNonEmpty<T extends string | null | undefined>(...vals: T[]): string | null {
+  for (const v of vals) {
+    if (typeof v === "string" && v.trim() !== "") return v;
+  }
+  return null;
+}
+
+function toDateOrNull(v: unknown): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
+  // Choose primary URL
   const primary = pickNonEmpty(row.canonical_url, row.url, row.link);
-  if (!primary) return { inserted: false };
+  if (!primary) return { updated: true }; // nothing to do, treat as no-op
 
   const canonical = pickNonEmpty(row.canonical_url, primary)!;
   const url = pickNonEmpty(row.url, primary)!;
 
-  let publishedAt: Date | null = null;
-  if (row.published_at) {
-    const d = new Date(row.published_at as string);
-    publishedAt = Number.isNaN(d.valueOf()) ? null : d;
-  }
+  const publishedAt = toDateOrNull(row.publishedAt ?? row.published_at);
 
   const topicsArr = Array.isArray(row.topics) ? row.topics : null;
   const playersArr = Array.isArray(row.players) ? row.players : null;
 
+  const srcId = row.source_id ?? row.sourceId ?? null;
+  const isPlayerPage = row.is_player_page ?? null;
+
   const params = [
-    canonical, // $1
-    url, // $2
-    row.source_id ?? null, // $3
-    row.title ?? null, // $4
-    row.author ?? null, // $5
-    publishedAt, // $6
-    row.image_url ?? null, // $7
-    row.domain ?? null, // $8
-    (row.sport ?? "nfl") || null, // $9
-    topicsArr, // $10 ::text[]
-    row.primary_topic ?? null, // $11
+    canonical,                // $1
+    url,                      // $2
+    srcId,                    // $3
+    row.title ?? null,        // $4
+    row.author ?? null,       // $5
+    publishedAt,              // $6 ::timestamptz
+    row.image_url ?? null,    // $7
+    row.domain ?? null,       // $8
+    row.sport ?? null, // $9
+    topicsArr,                // $10 ::text[]
+    row.primary_topic ?? null,// $11
     row.secondary_topic ?? null, // $12
-    row.week ?? null, // $13 ::int
-    playersArr, // $14 ::text[]
+    row.week ?? null,         // $13 ::int
+    playersArr,               // $14 ::text[]
+    isPlayerPage              // $15 ::bool (nullable, coerced later)
   ];
 
   const sql = `
     INSERT INTO articles (
       canonical_url, url, source_id, title, author, published_at,
       image_url, domain, sport, discovered_at,
-      topics, primary_topic, secondary_topic, week, players
+      topics, primary_topic, secondary_topic, week, players, is_player_page
     ) VALUES (
       $1::text, $2::text, $3::int,
       NULLIF($4::text,''), NULLIF($5::text,''),
       $6::timestamptz,
       NULLIF($7::text,''), NULLIF($8::text,''), NULLIF($9::text,''),
       NOW(),
-      $10::text[], NULLIF($11::text,''), NULLIF($12::text,''), $13::int, $14::text[]
+      $10::text[], NULLIF($11::text,''), NULLIF($12::text,''), $13::int, $14::text[],
+      COALESCE($15::bool, false)
     )
     ON CONFLICT (canonical_url)
     DO UPDATE SET
-      url            = COALESCE(EXCLUDED.url, articles.url),
-      title          = COALESCE(EXCLUDED.title, articles.title),
-      author         = COALESCE(EXCLUDED.author, articles.author),
-      published_at   = COALESCE(EXCLUDED.published_at, articles.published_at),
-      image_url      = COALESCE(EXCLUDED.image_url, articles.image_url),
-      domain         = COALESCE(EXCLUDED.domain, articles.domain),
-      sport          = COALESCE(EXCLUDED.sport, articles.sport),
-      topics         = COALESCE(EXCLUDED.topics, articles.topics),
-      primary_topic  = COALESCE(EXCLUDED.primary_topic, articles.primary_topic),
-      secondary_topic= COALESCE(EXCLUDED.secondary_topic, articles.secondary_topic),
-      week           = COALESCE(EXCLUDED.week, articles.week),
-      players        = COALESCE(EXCLUDED.players, articles.players)
+      url             = COALESCE(EXCLUDED.url, articles.url),
+      title           = COALESCE(EXCLUDED.title, articles.title),
+      author          = COALESCE(EXCLUDED.author, articles.author),
+      published_at    = COALESCE(EXCLUDED.published_at, articles.published_at),
+      image_url       = COALESCE(EXCLUDED.image_url, articles.image_url),
+      domain          = COALESCE(EXCLUDED.domain, articles.domain),
+      sport           = COALESCE(EXCLUDED.sport, articles.sport),
+      topics          = COALESCE(EXCLUDED.topics, articles.topics),
+      primary_topic   = COALESCE(EXCLUDED.primary_topic, articles.primary_topic),
+      secondary_topic = COALESCE(EXCLUDED.secondary_topic, articles.secondary_topic),
+      week            = COALESCE(EXCLUDED.week, articles.week),
+      players         = COALESCE(EXCLUDED.players, articles.players),
+      is_player_page  = articles.is_player_page OR COALESCE(EXCLUDED.is_player_page, false)
     RETURNING (xmax = 0) AS inserted;
   `;
 
   const res = await dbQuery<{ inserted: boolean }>(sql, params);
   const rows = rowsOf<{ inserted: boolean }>(res);
-  return { inserted: !!rows?.[0]?.inserted };
+  const inserted = !!rows?.[0]?.inserted;
+  return inserted ? { inserted: true } : { updated: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,6 +417,7 @@ export async function ingestSourceById(
   try {
     items = await fetchItemsForSource(sourceId, limit);
     await log.debug("Fetched feed items", { mode: "sources-index", count: items.length });
+    await log.debug("Fetched feed items", { mode: "fetchItemsForSource", count: items.length,});
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     await log.error("Failed to fetch candidates", { sourceId, error: msg });
@@ -417,12 +448,16 @@ export async function ingestSourceById(
     }
 
     // Optional routing (article vs index)
+    await log.debug("Ingesting item", { link, feedTitle, sourceId });
+
     try {
       if (adapters.routeByUrl) {
         const routed = await adapters.routeByUrl(link);
         if (routed?.kind === "skip") {
           skipped++;
           await log.debug("Router suggested skip", { link, suggested_reason: routed?.reason });
+          await log.debug("Router decision", { link, decision: routed?.kind, reason: routed?.reason });
+
           await logIngest(
             src,
             `skip_router`,
@@ -463,7 +498,14 @@ export async function ingestSourceById(
 
     try {
       if (adapters.scrapeArticle) {
+        await log.debug("Calling scrapeArticle", { link });
         const scraped = await adapters.scrapeArticle(link);
+        await log.debug("Scrape result", {
+              link,
+              gotCanonical: !!scraped?.canonical_url,
+              gotTitle: !!scraped?.title,
+              gotImage: !!scraped?.image_url
+            });
         if (scraped?.canonical_url) canonical = scraped.canonical_url!;
         if (!publishedAt && scraped?.published_at) {
           const d = new Date(scraped.published_at as string);
@@ -484,6 +526,11 @@ export async function ingestSourceById(
           sourceName: src.name ?? undefined,
         });
 
+
+        const pageUrl = scraped.url ?? link;
+        const pageDomain = hostnameOf(pageUrl) ?? null;
+        const isPlayerPage = looksLikePlayerPage(pageUrl, chosenTitle ?? undefined, pageDomain ?? undefined);
+
         const res = await upsertArticle({
           canonical_url: canonical,
           url: scraped.url ?? link,
@@ -499,6 +546,7 @@ export async function ingestSourceById(
           secondary_topic: klass.secondary,
           week: klass.week,
           players: chosenPlayers,
+          is_player_page: isPlayerPage,
         });
 
         const action = res.inserted ? "ok_insert" : "ok_update";
@@ -527,6 +575,8 @@ export async function ingestSourceById(
     }
 
     // 3) Fallback upsert with feed data + classification from feed title/URL
+    await log.debug("Using fallback upsert (no scraper)", { link });
+
     const klass = classifyArticle({
       title: feedTitle ?? undefined,
       url: link,
@@ -534,6 +584,10 @@ export async function ingestSourceById(
     });
 
     const players = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
+
+
+    const pageDomain = hostnameOf(link) ?? null;
+    const isPlayerPage = looksLikePlayerPage(link, feedTitle ?? undefined, pageDomain ?? undefined);
 
 
     const res = await upsertArticle({
@@ -551,6 +605,7 @@ export async function ingestSourceById(
       secondary_topic: klass.secondary,
       week: klass.week,
       players,
+      is_player_page: isPlayerPage
     });
 
     const action = res.inserted ? "ok_insert" : "ok_update";

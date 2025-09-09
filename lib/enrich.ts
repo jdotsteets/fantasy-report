@@ -4,7 +4,8 @@ import slugify from "slugify";
 import { getSafeImageUrl, isLikelyFavicon, extractLikelyNameFromTitle } from "@/lib/images";
 import { findArticleImage } from "@/lib/scrape-image";
 import { findWikipediaHeadshot } from "@/lib/wiki";
-import { normalizeTitle } from "@/lib/strings"; 
+import { normalizeTitle } from "@/lib/strings";
+import { fixCbsFantasyTitle } from "./enrichers/cbs";
 
 /** Minimal feed item we get from rss-parser (etc.), extended with media fields */
 export type RawItem = {
@@ -77,12 +78,11 @@ export type Enriched = {
   image_url: string | null;
 };
 
-
 // ——— tiny helpers (no `any`) ———
 
 // add near the other helpers
 const URL_YMD = /\/(20\d{2})\/([01]?\d)\/([0-3]?\d)(?:\/|$)/; // /YYYY/MM/DD/
-const URL_YEAR = /\/(20\d{2})(?:\/|$)/;                        // /YYYY/
+const URL_YEAR = /\/(20\d{2})(?:\/|$)/; // /YYYY/
 
 function inferDateFromUrl(u: string): string | null {
   try {
@@ -90,7 +90,9 @@ function inferDateFromUrl(u: string): string | null {
     const p = url.pathname;
     const m1 = p.match(URL_YMD);
     if (m1) {
-      const y = +m1[1], m = +m1[2], d = +m1[3];
+      const y = +m1[1],
+        m = +m1[2],
+        d = +m1[3];
       if (y >= 2005 && y <= new Date().getFullYear() + 1 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
         return new Date(Date.UTC(y, m - 1, d)).toISOString();
       }
@@ -106,7 +108,6 @@ function inferDateFromUrl(u: string): string | null {
   } catch {}
   return null;
 }
-
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
@@ -155,11 +156,9 @@ function imageFromEnclosure(item: unknown): string | null {
   const rec = asRecord(item);
   if (!rec) return null;
 
-  const candidates: Array<unknown> = [
-    rec.enclosure,
-    rec["rss:enclosure"],
-    rec.enclosures,
-  ].filter((v) => v != null);
+  const candidates: Array<unknown> = [rec.enclosure, rec["rss:enclosure"], rec.enclosures].filter(
+    (v) => v != null
+  );
 
   for (const c of candidates) {
     const u = firstUrlFrom(c);
@@ -193,14 +192,11 @@ function imageFromMedia(item: unknown): string | null {
   const media = asRecord(rec.media);
   if (media) {
     const u =
-      firstUrlFrom(media.content) ??
-      firstUrlFrom(media.thumbnail) ??
-      firstUrlFrom(media.group);
+      firstUrlFrom(media.content) ?? firstUrlFrom(media.thumbnail) ?? firstUrlFrom(media.group);
     if (u) return u;
   }
   return null;
 }
-
 
 /* -----------------------
    image capture (improved)
@@ -272,10 +268,7 @@ function faviconFor(domain: string): string | null {
    URL normalization
 ------------------------ */
 
-const BAD_PARAMS = [
-  /^utm_/i, /^fbclid$/i, /^gclid$/i, /^mc_cid$/i, /^mc_eid$/i,
-  /^ref$/i, /^cn$/i, /^cmp$/i, /^igshid$/i,
-];
+const BAD_PARAMS = [/^utm_/i, /^fbclid$/i, /^gclid$/i, /^mc_cid$/i, /^mc_eid$/i, /^ref$/i, /^cn$/i, /^cmp$/i, /^igshid$/i];
 
 export function normalizeUrl(raw: string): {
   url: string;
@@ -361,7 +354,11 @@ export function inferWeek(title: string, now = new Date(), pageUrl?: string): nu
 function tagsFromUrl(pageUrl?: string | null): string[] {
   if (!pageUrl) return [];
   let u: URL | null = null;
-  try { u = new URL(pageUrl); } catch { return []; }
+  try {
+    u = new URL(pageUrl);
+  } catch {
+    return [];
+  }
 
   const path = `${u.pathname}`.toLowerCase();
   const q = `${u.search}`.toLowerCase();
@@ -380,7 +377,9 @@ function tagsFromUrl(pageUrl?: string | null): string[] {
     if (!tags.includes("rankings") && has(/\badp|tiers?\b/)) tags.push("rankings");
     tags.push("draft-prep");
   }
-  if (has(/\btrade(s|)|buy[-_ ]?sell|sell[-_ ]?high|buy[-_ ]?low|risers[-_ ]?and[-_ ]?fallers|targets?\b/)) {
+  if (
+    has(/\btrade(s|)|buy[-_ ]?sell|sell[-_ ]?high|buy[-_ ]?low|risers[-_ ]?and[-_ ]?fallers|targets?\b/)
+  ) {
     tags.push("advice");
     if (!tags.includes("trade")) tags.push("trade");
   }
@@ -398,7 +397,11 @@ export function classify(title: string, pageUrl?: string | null): string[] {
   const t = (title || "").toLowerCase().trim();
   const tags: string[] = [];
 
-  if (/\b(waiver\s*wire|pick\s*ups?|adds?|streamers?|deep\s*adds?|stash(?:es)?|faab|sleepers?|targets?|spec\s*adds?|roster\s*moves?)\b/.test(t)) {
+  if (
+    /\b(waiver\s*wire|pick\s*ups?|adds?|streamers?|deep\s*adds?|stash(?:es)?|faab|sleepers?|targets?|spec\s*adds?|roster\s*moves?)\b/.test(
+      t
+    )
+  ) {
     tags.push("waiver-wire");
   }
 
@@ -436,17 +439,6 @@ export function classify(title: string, pageUrl?: string | null): string[] {
       tags.push("rankings");
     }
     tags.push("draft-prep");
-  }
-
-  if (
-    /\bbuy(?:\/sell| & sell| or sell)?\b/.test(t) ||
-    /\bsell candidates?\b/.test(t) ||
-    /\btrade targets?\b/.test(t) ||
-    /\brisers?\b/.test(t) ||
-    /\bfallers?\b/.test(t) ||
-    /\bplayers? to (watch|avoid|target)\b/.test(t)
-  ) {
-    tags.push("advice");
   }
 
   // merge in URL-derived hints
@@ -489,18 +481,19 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const rawUrl = item.link || "";
   const { url, canonical, domain } = normalizeUrl(rawUrl);
 
+  // 🔧 NEW: Fix CBS Fantasy “See Full Article” placeholders
   const rawTitle = item.title || "";
-  const normalized = normalizeTitle(rawTitle);
-  const cleaned    = cleanTitleForSource(sourceName, normalized);
+  const patched = await fixCbsFantasyTitle(canonical, rawTitle).catch(() => null);
+  const finalTitle = (patched ?? rawTitle) || "";
 
-  const topics       = classify(cleaned, canonical);          // 👈 include URL hints
-  const week         = inferWeek(cleaned, new Date(), canonical); // 👈 URL can hint week too
-  const published_at =
-  parseDate(item.isoDate, false) ??
-  inferDateFromUrl(canonical) ??
-  null;
-  const slug         = makeSlug(sourceName, cleaned, canonical);
-  const fp           = fingerprint(canonical, cleaned);
+  const normalized = normalizeTitle(finalTitle);
+  const cleaned = cleanTitleForSource(sourceName, normalized);
+
+  const topics = classify(cleaned, canonical); // include URL hints
+  const week = inferWeek(cleaned, new Date(), canonical); // URL can hint week too
+  const published_at = parseDate(item.isoDate, false) ?? inferDateFromUrl(canonical) ?? null;
+  const slug = makeSlug(sourceName, cleaned, canonical);
+  const fp = fingerprint(canonical, cleaned);
 
   // 1) candidates coming directly from the feed
   const directFromEnclosure = imageFromEnclosure(item);
@@ -535,7 +528,7 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
 
   // 4) Wikipedia headshot heuristic for likely player pages
   if (!image_url) {
-    const name = extractLikelyNameFromTitle(cleaned); // from lib/images.ts
+    const name = extractLikelyNameFromTitle(cleaned);
     if (name) {
       const wiki = await findWikipediaHeadshot(name).catch(() => null);
       image_url = getSafeImageUrl(wiki?.src ?? null);
@@ -551,7 +544,7 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
     url,
     canonical_url: canonical,
     domain,
-    title: rawTitle || "",
+    title: finalTitle,           // 👈 use patched title when present
     cleaned_title: cleaned,
     topics,
     week,

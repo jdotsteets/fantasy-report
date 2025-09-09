@@ -36,6 +36,15 @@ export type CommitPayload = {
   };
 };
 
+export type AdapterKey =
+  | "sitemap-generic"
+  | "fantasylife"
+  | "wordpress-generic"
+  | "jsonld-list"
+  | "next-data"
+  // add others here
+  | string;
+
 
 export type ProbeRequest = {
   url: string;
@@ -51,7 +60,6 @@ export type ProbeArticle = {
   sourceHost: string;
 };
 
-export type ProbeMethod = "rss" | "scrape" | "adapter";
 
 export type FeedCandidate = {
   feedUrl: string;
@@ -152,3 +160,9 @@ export type SourceConfig = {
   adapter: string | null;
   fetch_mode: "auto" | "rss" | "sitemap" | "html" | null; // keep 'html' for future
 };
+
+
+
+export type ProbeMethod = "rss" | "scrape" | "adapter";
+
+export type FetchMode = ProbeMethod | "auto";

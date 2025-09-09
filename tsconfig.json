@@ -23,6 +23,17 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "lib/classify.ts"],
+  "include": [
+    "next-env.d.ts", 
+    "**/*.ts", 
+    "**/*.tsx", 
+    ".next/types/**/*.ts", 
+    "lib/classify.ts",
+    "components",
+    "lib",
+    "pages",
+    "types",
+    "app"
+  ],
   "exclude": ["node_modules"]
 }

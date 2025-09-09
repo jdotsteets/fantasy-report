@@ -263,3 +263,28 @@ export function classifyArticle(input: Input): Classification {
     week: week ?? null,
   };
 }
+
+
+// lib/classify.ts
+export function looksLikePlayerPage(url?: string | null, title?: string | null, domain?: string | null): boolean {
+  const u = (url ?? "").toLowerCase();
+  const d = (domain ?? "").toLowerCase();
+  const t = (title ?? "").trim();
+
+  if (!u && !t) return false;
+
+  // URL patterns
+  if (u.match(/fantasypros\.com\/.*\/nfl\/(players|stats|news)\/[a-z0-9-]+\.php/)) return true;
+  if (u.match(/nbcsports\.com\/.*\/nfl\/[a-z0-9-]+\/(\d+|[0-9a-f-]{36})/)) return true;
+  if (u.match(/sports\.yahoo\.com\/.*\/nfl\/players\/\d+/)) return true;
+  if (u.match(/espn\.com\/nfl\/player\/_\/id\/\d+/)) return true;
+  if (u.match(/pro-football-reference\.com\/players\/[A-Z]\/[A-Za-z0-9]+\.htm/)) return true;
+  if (u.match(/rotowire\.com\/football\/player\/[a-z0-9-]+-\d+/)) return true;
+
+  // Bare-name titles
+  if (t && /^[A-Z][A-Za-z.'-]+( [A-Z][A-Za-z.'-]+){0,3}( (?:Jr|Sr|II|III|IV)\.?)?$/.test(t)) {
+    return true;
+  }
+
+  return false;
+}
