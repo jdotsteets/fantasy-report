@@ -1,10 +1,16 @@
 // app/api/home/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { getHomeData } from "@/lib/HomeData";
 
 export const runtime = "nodejs";         // ensure Node runtime (not edge)
 export const dynamic = "force-dynamic";  // NEVER prerender this route
 export const revalidate = 0;             // disable caching for the route
+
+
+function toIntOrUndef(v: string | null): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 
 // ───────────────────────────────────────────────────────────
@@ -45,7 +51,9 @@ function parseWeek(raw: string | null): number | null {
 // ───────────────────────────────────────────────────────────
 // Route
 // ───────────────────────────────────────────────────────────
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+    const sp = req.nextUrl.searchParams;
+
   const u = new URL(req.url);
   const cacheKey = u.search;
 
@@ -61,6 +69,8 @@ export async function GET(req: Request) {
 
   const days          = clampInt(u.searchParams.get("days"), 45, 1, 365);
   const week          = parseWeek(u.searchParams.get("week")); // only Waivers uses this
+  const sourceId = toIntOrUndef(sp.get("sourceId")); // <-- add this
+
 
   const limitNews     = clampInt(u.searchParams.get("limitNews"),     60, 1, 100);
   const limitRankings = clampInt(u.searchParams.get("limitRankings"), 10, 1, 100);
@@ -75,7 +85,8 @@ export async function GET(req: Request) {
     const body = await getHomeData({
       sport,
       days,
-      week,               // null is fine; Waivers handler uses it
+      week, 
+      sourceId,              // null is fine; Waivers handler uses it
       limitNews,
       limitRankings,
       limitStartSit,

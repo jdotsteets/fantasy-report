@@ -1,29 +1,23 @@
-import { NextRequest, NextResponse } from "next/server";
+// app/api/players/[key]/articles/route.ts
 import { dbQuery } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ParamShape = { key: string };
-
 function keyVariants(key: string): string[] {
-  // Accept raw "justin-jefferson" and "nfl:name:justin-jefferson"
   const bare = key.startsWith("nfl:name:") ? key.slice("nfl:name:".length) : key;
   return [bare, `nfl:name:${bare}`];
 }
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: ParamShape }
-) {
+export async function GET(req: Request, ctx: any) {
   const url = new URL(req.url);
-  const days = Math.max(1, Math.min(Number(url.searchParams.get("days") || 60), 365));
+  const days  = Math.max(1, Math.min(Number(url.searchParams.get("days")  || 60), 365));
   const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 50), 200));
 
-  const rawKey = params?.key ?? "";
+  const rawKey = (ctx?.params?.key ?? "") as string;
   const decoded = decodeURIComponent(rawKey).trim();
   if (!decoded) {
-    return NextResponse.json({ ok: false, error: "invalid_key" }, { status: 400 });
+    return Response.json({ ok: false, error: "invalid_key" }, { status: 400 });
   }
 
   const variants = keyVariants(decoded);
@@ -54,18 +48,15 @@ export async function GET(
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE COALESCE(a.published_at, a.discovered_at) >= NOW() - ($1 || ' days')::interval
-        AND a.players && $2::text[]          -- overlap operator: any variant present
+        AND a.players && $2::text[]  -- any player key variant present
       ORDER BY ts DESC NULLS LAST, a.id DESC
       LIMIT $3
       `,
       [String(days), variants, limit]
     );
 
-    return NextResponse.json({ items: rows }, { status: 200 });
+    return Response.json({ items: rows }, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "query_failed" },
-      { status: 500 }
-    );
+    return Response.json({ ok: false, error: e?.message ?? "query_failed" }, { status: 500 });
   }
 }
