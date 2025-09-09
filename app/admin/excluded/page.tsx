@@ -180,6 +180,7 @@ const REASON_LABEL: Record<string, string> = {
   category_index: "Category/Hub",
   tool_or_landing: "Tool/Landing",
   non_article_generic: "Generic title",
+  source_non_nfl: "Non-NFL (guarded source)", // ← NEW
 };
 
 const SKIP_LABEL: Record<IngestLogRow["reason"], string> = {

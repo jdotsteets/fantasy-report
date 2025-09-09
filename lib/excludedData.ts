@@ -2,9 +2,9 @@
 import { dbQuery } from "@/lib/db";
 
 export type ExcludedParams = {
-  days?: number;   // lookback window (default 21)
-  limit?: number;  // max rows (default 200)
-  reason?: string | null; // optional: only show one reason
+  days?: number;           // lookback window (default 21)
+  limit?: number;          // max rows (default 200)
+  reason?: string | null;  // optional: only show one reason (matches reason key)
 };
 
 export type ExcludedRow = {
@@ -15,7 +15,7 @@ export type ExcludedRow = {
   source: string;
   published_at: string | null;
   discovered_at: string | null;
-  reasons: string[]; // computed
+  reasons: string[]; // e.g., ["player_page","source_non_nfl",...]
 };
 
 export type IngestLogRow = {
@@ -29,7 +29,8 @@ export type IngestLogRow = {
   created_at: string;
 };
 
-
+/** Sources where we want to guard against non-NFL posts getting in. */
+const NON_NFL_GUARD_SOURCE_IDS: number[] = [6, 3135]; // ← adjust as needed
 
 export async function getIngestLogs(days = 7, limit = 200): Promise<IngestLogRow[]> {
   const sql = `
@@ -47,18 +48,10 @@ export async function getIngestLogs(days = 7, limit = 200): Promise<IngestLogRow
   return res.rows;
 }
 
-// reason keys are stable and can be filtered in UI
-// - player_page          : is_player_page = true
-// - nbc_non_nfl          : nbcsports item not under /nfl/
-// - fp_player_util       : fantasypros php/player/»
-// - html_in_title        : title contains HTML tags
-// - category_index       : section/category/”Articles” hub pages
-// - tool_or_landing      : lineup generator/optimizer/pass etc.
-// - non_article_generic  : generic one/two-word titles like “DFS 101”
-
 export async function getExcludedItems(p: ExcludedParams = {}): Promise<ExcludedRow[]> {
-  const days = p.days ?? 21;
+  const days  = p.days  ?? 21;
   const limit = Math.min(Math.max(p.limit ?? 200, 1), 500);
+  const reasonFilter = p.reason ?? null;
 
   // NOTE: keep these in sync with contentFilter + homeData rules
   const sql = `
@@ -106,7 +99,19 @@ export async function getExcludedItems(p: ExcludedParams = {}): Promise<Excluded
         (
           -- very generic titles that are almost certainly hubs
           COALESCE(a.cleaned_title, a.title) ~* '^(DFS 101|DFS Articles|Articles)$'
-        ) AS r_non_article_generic
+        ) AS r_non_article_generic,
+
+        (
+          -- NEW: guard some sources; flag when the post isn't clearly NFL
+          a.source_id = ANY($3::int[])
+          AND NOT (
+            a.url ILIKE '%/nfl/%'
+            OR a.url ILIKE '%nfl%'
+            OR a.url ILIKE '%fantasy%football%'
+            OR COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%'
+            OR COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%'
+          )
+        ) AS r_source_non_nfl
 
       FROM articles a
       JOIN sources s ON s.id = a.source_id
@@ -116,25 +121,27 @@ export async function getExcludedItems(p: ExcludedParams = {}): Promise<Excluded
       SELECT
         id, title, url, domain, source, published_at, discovered_at,
         ARRAY_REMOVE(ARRAY[
-          CASE WHEN r_player_page THEN 'player_page' END,
-          CASE WHEN r_nbc_non_nfl THEN 'nbc_non_nfl' END,
-          CASE WHEN r_fp_player_util THEN 'fp_player_util' END,
-          CASE WHEN r_html_in_title THEN 'html_in_title' END,
-          CASE WHEN r_category_index THEN 'category_index' END,
-          CASE WHEN r_tool_or_landing THEN 'tool_or_landing' END,
-          CASE WHEN r_non_article_generic THEN 'non_article_generic' END
+          CASE WHEN r_player_page        THEN 'player_page'         END,
+          CASE WHEN r_nbc_non_nfl        THEN 'nbc_non_nfl'         END,
+          CASE WHEN r_fp_player_util     THEN 'fp_player_util'      END,
+          CASE WHEN r_html_in_title      THEN 'html_in_title'       END,
+          CASE WHEN r_category_index     THEN 'category_index'      END,
+          CASE WHEN r_tool_or_landing    THEN 'tool_or_landing'     END,
+          CASE WHEN r_non_article_generic THEN 'non_article_generic' END,
+          CASE WHEN r_source_non_nfl     THEN 'source_non_nfl'      END
         ], NULL) AS reasons
       FROM base
     )
     SELECT *
     FROM reasons
     WHERE array_length(reasons, 1) IS NOT NULL
-      ${p.reason ? "AND $2 = ANY(reasons)" : ""}
+      AND ($2::text IS NULL OR $2 = ANY(reasons))
     ORDER BY COALESCE(published_at, discovered_at) DESC NULLS LAST, id DESC
-    LIMIT ${p.reason ? "$3" : "$2"}
+    LIMIT $4
   `;
 
-  const params = p.reason ? [String(days), p.reason, limit] : [String(days), limit];
-  const res = await dbQuery<ExcludedRow>(sql, params);
+  // Params: 1=days, 2=reason filter (nullable), 3=guarded source ids, 4=limit
+  const params = [String(days), reasonFilter, NON_NFL_GUARD_SOURCE_IDS, limit] as const;
+  const res = await dbQuery<ExcludedRow>(sql, params as unknown as (string | number | boolean | Date | null)[]);
   return res.rows;
 }

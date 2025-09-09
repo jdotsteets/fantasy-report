@@ -128,6 +128,29 @@ function mkLogger(jobId?: string) {
   };
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Non-NFL guard for specific sources
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ADD: tweak IDs as needed
+const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([6, 3135]);
+
+function looksClearlyNFL(url: string, title?: string | null): boolean {
+  const u = (url || "").toLowerCase();
+  const t = (title || "").toLowerCase();
+
+  // Accept if either URL or title strongly hints NFL
+  // (covers /nfl/, "nfl", "fantasy football", "fantasy-football")
+  const okUrl =
+    u.includes("/nfl/") || u.includes("nfl") || u.includes("fantasy%20football") || u.includes("fantasy-football") || u.includes("fantasyfootball");
+
+  const okTitle =
+    t.includes("nfl") || t.includes("fantasy football") || t.includes("fantasy-football") || t.includes("fantasyfootball");
+
+  return okUrl || okTitle;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DB helpers (articles)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,6 +419,25 @@ export async function ingestSourceById(
   const log = mkLogger(jobId);
   const adapters = await loadAdapters();
 
+  // NEW: guard list + helper (tweak IDs as needed)
+  const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([6, 3135]);
+  const looksClearlyNFL = (url: string, title?: string | null) => {
+    const u = (url || "").toLowerCase();
+    const t = (title || "").toLowerCase();
+    const okUrl =
+      u.includes("/nfl/") ||
+      u.includes("nfl") ||
+      u.includes("fantasy%20football") ||
+      u.includes("fantasy-football") ||
+      u.includes("fantasyfootball");
+    const okTitle =
+      t.includes("nfl") ||
+      t.includes("fantasy football") ||
+      t.includes("fantasy-football") ||
+      t.includes("fantasyfootball");
+    return okUrl || okTitle;
+  };
+
   const src = await getSource(sourceId);
   if (!src) {
     await log.error("Unknown source", { sourceId });
@@ -404,11 +446,7 @@ export async function ingestSourceById(
 
   await log.info("Ingest started", { sourceId, limit });
   if (jobId) {
-    try {
-      await setProgress(jobId, 0, limit);
-    } catch {
-      /* noop */
-    }
+    try { await setProgress(jobId, 0, limit); } catch {}
   }
 
   // 1) Candidate items via your sources/index.ts
@@ -417,26 +455,19 @@ export async function ingestSourceById(
   try {
     items = await fetchItemsForSource(sourceId, limit);
     await log.debug("Fetched feed items", { mode: "sources-index", count: items.length });
-    await log.debug("Fetched feed items", { mode: "fetchItemsForSource", count: items.length,});
+    await log.debug("Fetched feed items", { mode: "fetchItemsForSource", count: items.length });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     await log.error("Failed to fetch candidates", { sourceId, error: msg });
     items = [];
   }
 
-  let inserted = 0,
-    updated = 0,
-    skipped = 0,
-    processed = 0;
+  let inserted = 0, updated = 0, skipped = 0, processed = 0;
 
   for (const it of items) {
     processed++;
     if (jobId) {
-      try {
-        await setProgress(jobId, processed);
-      } catch {
-        /* noop */
-      }
+      try { await setProgress(jobId, processed); } catch {}
     }
 
     const link = String(it?.link ?? "");
@@ -447,9 +478,20 @@ export async function ingestSourceById(
       continue;
     }
 
+    // NEW: per-source non-NFL guard (blocks non-NFL before any scrape/upsert)
+    if (NON_NFL_GUARD_SOURCE_IDS.has(src.id)) {
+      if (!looksClearlyNFL(link, feedTitle)) {
+        skipped++;
+        await logIngest(src, "blocked_by_filter", link, {
+          title: feedTitle,
+          detail: "non_nfl_guard",
+        });
+        continue;
+      }
+    }
+
     // Optional routing (article vs index)
     await log.debug("Ingesting item", { link, feedTitle, sourceId });
-
     try {
       if (adapters.routeByUrl) {
         const routed = await adapters.routeByUrl(link);
@@ -457,13 +499,7 @@ export async function ingestSourceById(
           skipped++;
           await log.debug("Router suggested skip", { link, suggested_reason: routed?.reason });
           await log.debug("Router decision", { link, decision: routed?.kind, reason: routed?.reason });
-
-          await logIngest(
-            src,
-            `skip_router`,
-            link,
-            { title: feedTitle, detail: routed?.reason ?? null }
-          );
+          await logIngest(src, `skip_router`, link, { title: feedTitle, detail: routed?.reason ?? null });
           continue;
         }
         if (routed?.kind === "index") {
@@ -501,11 +537,11 @@ export async function ingestSourceById(
         await log.debug("Calling scrapeArticle", { link });
         const scraped = await adapters.scrapeArticle(link);
         await log.debug("Scrape result", {
-              link,
-              gotCanonical: !!scraped?.canonical_url,
-              gotTitle: !!scraped?.title,
-              gotImage: !!scraped?.image_url
-            });
+          link,
+          gotCanonical: !!scraped?.canonical_url,
+          gotTitle: !!scraped?.title,
+          gotImage: !!scraped?.image_url,
+        });
         if (scraped?.canonical_url) canonical = scraped.canonical_url!;
         if (!publishedAt && scraped?.published_at) {
           const d = new Date(scraped.published_at as string);
@@ -514,18 +550,15 @@ export async function ingestSourceById(
         if (scraped?.title) {
           chosenTitle = scraped.title;
           chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
-
         }
         scrapedImage = scraped?.image_url ?? null;
 
-        // Run classification with scraped info (best signal)
         const klass = classifyArticle({
           title: chosenTitle ?? undefined,
           summary: (scraped as { summary?: string | null })?.summary ?? undefined,
           url: canonical,
           sourceName: src.name ?? undefined,
         });
-
 
         const pageUrl = scraped.url ?? link;
         const pageDomain = hostnameOf(pageUrl) ?? null;
@@ -553,17 +586,15 @@ export async function ingestSourceById(
         if (res.inserted) inserted++; else updated++;
         await logIngest(src, action, canonical, { title: chosenTitle });
 
-        // 2b) First-pass thumbnail store (if blank/weak) + seed (if single player)
         await backfillAfterUpsert(
           canonical,
           klass.primary,
           (chosenPlayers && chosenPlayers.length === 1) ? chosenPlayers[0] : null
         );
 
-        // 2c) Opportunistic headshot seed from scraped image (low priority)
         if (chosenPlayers && chosenPlayers.length === 1 && looksUsableImage(scrapedImage)) {
           const key = `nfl:name:${chosenPlayers[0].trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-          await upsertPlayerImage({ key: key, url: scrapedImage! });
+          await upsertPlayerImage({ key, url: scrapedImage! });
         }
 
         continue;
@@ -585,10 +616,8 @@ export async function ingestSourceById(
 
     const players = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
 
-
     const pageDomain = hostnameOf(link) ?? null;
     const isPlayerPage = looksLikePlayerPage(link, feedTitle ?? undefined, pageDomain ?? undefined);
-
 
     const res = await upsertArticle({
       canonical_url: canonical,
@@ -605,14 +634,13 @@ export async function ingestSourceById(
       secondary_topic: klass.secondary,
       week: klass.week,
       players,
-      is_player_page: isPlayerPage
+      is_player_page: isPlayerPage,
     });
 
     const action = res.inserted ? "ok_insert" : "ok_update";
     if (res.inserted) inserted++; else updated++;
     await logIngest(src, action, canonical, { title: feedTitle });
 
-    // 3b) First-pass thumbnail store (if blank/weak) + optional seed
     await backfillAfterUpsert(
       canonical,
       klass.primary,
@@ -624,13 +652,11 @@ export async function ingestSourceById(
   await log.info("Ingest summary", summary);
   return summary;
 
-  // ── local helper to avoid a second query for id/fields ─────────────────────
   async function backfillAfterUpsert(
     canon: string,
     primaryTopic: string | null,
     possiblePlayerName?: string | null
   ) {
-    // get id + current image to decide whether to fetch a thumbnail
     const rs = await dbQuery<{ id: number; image_url: string | null }>(
       `SELECT id, image_url FROM articles WHERE canonical_url = $1`,
       [canon]
@@ -640,13 +666,13 @@ export async function ingestSourceById(
 
     const best = await backfillArticleImage(row.id, canon, row.image_url, primaryTopic ?? null);
 
-    // If we inferred exactly one player and we found a usable image, seed player_images
     if (possiblePlayerName && looksUsableImage(best)) {
       const key = toPlayerKey(possiblePlayerName);
-      await upsertPlayerImage({ key, url: best });
+      await upsertPlayerImage({ key, url: best! });
     }
   }
 }
+
 
 export async function ingestAllAllowedSources(
   opts?: { jobId?: string; perSourceLimit?: number }

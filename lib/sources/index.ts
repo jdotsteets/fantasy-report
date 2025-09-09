@@ -71,74 +71,155 @@ export async function saveSourceWithMethod(args: {
     sitemap_url?: string | null;
     scrape_selector?: string | null;
     scrape_path?: string | null;
-    adapter?: string | null; // new column (optional explicit set)
+    adapter?: string | null; // explicit adapter column if you keep one
     adapter_config?: Record<string, unknown> | null;
     allowed?: boolean | null;
-    paywall?: boolean;
+    paywall?: boolean | null;
     category?: string | null;
     sport?: string | null;
     priority?: number | null;
     fetch_mode?: ProbeMethod | "auto" | null;
+        adapter_endpoint?: {
+      kind: "page" | "sitemap";
+      url: string;
+      selector?: string | null;
+    } | null;
   };
 }): Promise<number> {
   const {
-    url, method, feedUrl = null, selector = null, adapterKey = null,
-    nameHint = null, sourceId, updates = {},
+    url,
+    method,
+    feedUrl = null,
+    selector = null,
+    adapterKey = null,
+    nameHint = null,
+    sourceId,
+    updates = {},
   } = args;
 
+  const adapterEndpoint = updates.adapter_endpoint ?? null;
+
   const homepageOrigin = (() => {
-    try { return new URL(url).origin + "/"; } catch { return url; }
+    try {
+      return new URL(url).origin + "/";
+    } catch {
+      return url;
+    }
   })();
 
-  // Base payload; clear mutually-exclusive fields by default
-  const u: Record<string, unknown> = {
-    homepage_url: updates.homepage_url ?? homepageOrigin,
-    rss_url: null,
-    sitemap_url: updates.sitemap_url ?? null,
-    scrape_selector: null,
-    scrape_path: null,
-    adapter: updates.adapter ?? null,       // column
-    adapter_config: null,                   // JSONB
-    fetch_mode: updates.fetch_mode ?? method,
-    name: updates.name ?? null,
-    allowed: updates.allowed ?? null,
-    paywall: updates.paywall ?? null,
-    category: updates.category ?? null,
-    sport: updates.sport ?? null,
-    priority: updates.priority ?? null,
-  };
+  // Build an update payload u with only fields we want to write.
+  // (We add method-specific clears below so switching methods doesn't leave stale config.)
+  const u: Record<string, unknown> = {};
 
-  if (method === "rss") {
-    u.rss_url = updates.rss_url ?? feedUrl ?? null;
-  } else if (method === "scrape") {
-    u.scrape_selector = updates.scrape_selector ?? selector ?? null;
-    try {
-      u.scrape_path = updates.scrape_path ?? new URL(url).pathname;
-    } catch {
-      u.scrape_path = updates.scrape_path ?? null;
-    }
-  } else if (method === "adapter") {
-    // Prefer the column `adapter`; also store a key in adapter_config for legacy callers.
-    const key = updates.adapter ?? adapterKey ?? null;
-    u.adapter = key;
-    u.adapter_config = updates.adapter_config ?? (key ? { key } : null);
+    if (method === "adapter" && adapterEndpoint && typeof sourceId === "number" && sourceId > 0) {
+    const cur = await dbQuery<{ adapter_config: any }>(
+      "SELECT adapter_config FROM sources WHERE id = $1",
+      [sourceId]
+    );
+    const cfg = (cur.rows[0]?.adapter_config ?? {}) as any;
+    const list: any[] = Array.isArray(cfg.endpoints) ? cfg.endpoints : [];
+    const exists = list.some(
+      (e) =>
+        e?.kind === adapterEndpoint.kind &&
+        e?.url === adapterEndpoint.url &&
+        (e?.selector ?? null) === (adapterEndpoint.selector ?? null)
+    );
+    if (!exists) list.push(adapterEndpoint);
+    cfg.endpoints = list;
+
+    await dbQuery(
+      `UPDATE sources
+         SET adapter_config = $1::jsonb,
+             fetch_mode = 'adapter'
+       WHERE id = $2`,
+      [JSON.stringify(cfg), sourceId]
+    );
+    return sourceId; // ✅ done
   }
 
-  // UPSERT by id if provided
-  if (typeof sourceId === "number") {
-    const fields = Object.keys(u).filter((k) => u[k] !== undefined);
+  // Base / general fields — only set if provided (avoid clobbering on update).
+  if (updates.homepage_url !== undefined) u.homepage_url = updates.homepage_url;
+  else if (!sourceId) u.homepage_url = homepageOrigin; // INSERT default
+
+  if (updates.sitemap_url !== undefined) u.sitemap_url = updates.sitemap_url;
+
+  if (updates.name !== undefined) u.name = updates.name;
+  else if (!sourceId && nameHint) u.name = nameHint; // INSERT only
+
+  if (updates.allowed !== undefined) u.allowed = updates.allowed;
+  if (updates.paywall !== undefined) u.paywall = updates.paywall;
+  if (updates.category !== undefined) u.category = updates.category;
+  if (updates.sport !== undefined) u.sport = updates.sport;
+  if (updates.priority !== undefined) u.priority = updates.priority;
+
+  // Fetch mode: caller wins if explicitly set; else use the selected method.
+  u.fetch_mode = updates.fetch_mode !== undefined ? updates.fetch_mode : method;
+
+  // ─────────────────────────────────────────────────────
+  // Clear mutually exclusive fields for the chosen method
+  // (so a switch from rss→scrape or adapter cleans old config)
+  // ─────────────────────────────────────────────────────
+  // We always write these clears on UPDATE/INSERT to keep the row coherent.
+  u.rss_url = null;
+  u.scrape_selector = null;
+  u.scrape_path = null;
+  u.adapter = null;
+  u.adapter_config = null;
+
+  // Then populate the fields relevant to the chosen method.
+  if (method === "rss") {
+    // Respect explicit updates.rss_url > picked feedUrl
+    const chosen = updates.rss_url !== undefined ? updates.rss_url : feedUrl;
+    if (chosen != null) u.rss_url = chosen;
+  } else if (method === "scrape") {
+    const chosenSel =
+      updates.scrape_selector !== undefined ? updates.scrape_selector : selector;
+    if (chosenSel != null) u.scrape_selector = chosenSel;
+
+    const chosenPath =
+      updates.scrape_path !== undefined
+        ? updates.scrape_path
+        : (() => {
+            try {
+              return new URL(url).pathname || null;
+            } catch {
+              return null;
+            }
+          })();
+    if (chosenPath != null) u.scrape_path = chosenPath;
+  } else if (method === "adapter") {
+    const key =
+      updates.adapter !== undefined
+        ? updates.adapter
+        : adapterKey ?? null;
+
+    if (key != null) u.adapter = key;
+    // If caller supplied a full adapter_config, use it; else store a simple {key}.
+    u.adapter_config =
+      updates.adapter_config !== undefined
+        ? updates.adapter_config
+        : key
+        ? { key }
+        : null;
+  }
+
+  // Helper: run UPDATE with the keys we actually set in u
+  async function runUpdate(id: number): Promise<number> {
+    const fields = Object.keys(u);
+    if (fields.length === 0) return id; // nothing to do
     const setSql = fields.map((k, i) => `${k} = $${i + 2}`).join(", ");
     const sql = `update sources set ${setSql} where id = $1 returning id;`;
-    const params = [sourceId, ...fields.map((k) => u[k])];
+    const params = [id, ...fields.map((k) => u[k])];
     const { rows } = await dbQuery<{ id: number }>(sql, params);
     return rows[0].id;
   }
 
-  // INSERT
-  if (updates.name === undefined && nameHint) {
-    u.name = nameHint;
+  // UPSERT by id if provided
+  if (typeof sourceId === "number" && sourceId > 0) {
+    return runUpdate(sourceId);
   }
 
+  // INSERT; build column list dynamically from u
   const cols = Object.keys(u);
   const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
   const insertSql = `insert into sources (${cols.join(", ")}) values (${placeholders}) returning id;`;
@@ -148,18 +229,12 @@ export async function saveSourceWithMethod(args: {
     const { rows } = await dbQuery<{ id: number }>(insertSql, insertParams);
     return rows[0].id;
   } catch (e) {
-    // Unique homepage_url? Try to update instead.
+    // On unique conflict (e.g., homepage_url unique), fallback to UPDATE of the matching row.
     const err = e as { code?: string };
     if (err?.code === "23505") {
       const existing = await findExistingSourceByUrl(url);
       if (!existing) throw e;
-
-      const fields = Object.keys(u).filter((k) => u[k] !== undefined);
-      const setSql = fields.map((k, i) => `${k} = $${i + 2}`).join(", ");
-      const updateSql = `update sources set ${setSql} where id = $1 returning id;`;
-      const params = [existing.id, ...fields.map((k) => u[k])];
-      const { rows } = await dbQuery<{ id: number }>(updateSql, params);
-      return rows[0].id;
+      return runUpdate(existing.id);
     }
     throw e;
   }

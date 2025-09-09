@@ -50,6 +50,9 @@ export async function POST(req: NextRequest) {
     } else if (isCreate) {
       normalized.paywall = false;
     }
+    if (payload.updates?.adapter_endpoint) {
+  normalized.adapter_endpoint = payload.updates.adapter_endpoint;
+}
     // ------------------------------------------------------------------------
 
     // Create or update the source and switch to the selected method.
@@ -62,6 +65,8 @@ export async function POST(req: NextRequest) {
       nameHint: payload.nameHint ?? null, // friendly default on INSERT
       sourceId: existing?.id,
       updates: normalized,
+
+
     });
 
     // Start an ingest run and return its tracking id.

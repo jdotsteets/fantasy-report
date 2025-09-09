@@ -11,6 +11,13 @@ export type ExistingSourceLite = {
   adapter_config: Record<string, unknown> | null;
 };
 
+export type AdapterEndpoint = {
+  kind: "page" | "sitemap";
+  url: string;
+  selector?: string | null;
+};
+
+
 export type CommitPayload = {
   url: string;
   method: ProbeMethod;
@@ -33,6 +40,8 @@ export type CommitPayload = {
     category?: string | null;
     sport?: string | null;
     priority?: number | null;
+    adapter_endpoint?: AdapterEndpoint | null;  // 👈 NEW
+
   };
 };
 
@@ -117,6 +126,8 @@ export type Recommendation = {
   suggestedUrl?: string | null; // if we think a different page is better to save
   selector?: string | null;     // for scrape
   feedUrl?: string | null;      // for rss
+  adapterKey?: string | null;                  // 👈 (optional) helper for UI
+  endpointKind?: "page" | "sitemap" | null;  
 };
 
 
@@ -166,3 +177,4 @@ export type SourceConfig = {
 export type ProbeMethod = "rss" | "scrape" | "adapter";
 
 export type FetchMode = ProbeMethod | "auto";
+

@@ -28,6 +28,11 @@ export default function ProbePanel() {
   const [paywall, setPaywall] = useState<boolean | null>(null);
   const [priority, setPriority] = useState<number | "">("");
 
+  // user picks for method variants
+  const [selectedFeed, setSelectedFeed] = useState<string | null>(null);
+  const [selectedSelector, setSelectedSelector] = useState<string | null>(null);
+  const [selectedAdapterKey, setSelectedAdapterKey] = useState<string | null>(null);
+
   // ✨ ingest tracking UI state
   const [jobId, setJobId] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({
@@ -67,6 +72,15 @@ export default function ProbePanel() {
     }
   }
 
+  // helper: score feeds to prefer NFL/football paths
+  function feedScore(u: string): number {
+    let s = 0;
+    if (/\/nfl(\/|$)/i.test(u) || /\bnfl\b/i.test(u)) s += 5;
+    if (/football/i.test(u)) s += 2;
+    if (/(nba|mlb|nhl|soccer|mls|ncaa)/i.test(u)) s -= 1;
+    return s;
+  }
+
   // Derive best options for display & enabling buttons
   const derived = useMemo(() => {
     if (!data) {
@@ -82,10 +96,17 @@ export default function ProbePanel() {
     }
     const rec = data.recommended.method;
 
-    const bestFeed =
-      data.feeds.filter((f) => f.ok).sort((a, b) => b.itemCount - a.itemCount)[0] ?? null;
+    const feedsSorted = [...data.feeds].sort((a, b) => {
+      // prefer nfl/football first, then by itemCount
+      const s = feedScore(b.feedUrl) - feedScore(a.feedUrl);
+      if (s !== 0) return s;
+      return (b.itemCount || 0) - (a.itemCount || 0);
+    });
+    const bestFeed = feedsSorted.find((f) => f.ok) ?? null;
+
     const bestScrape =
       data.scrapes.filter((s) => s.ok).sort((a, b) => b.linkCount - a.linkCount)[0] ?? null;
+
     const ba = data.adapters.filter((a) => a.ok).sort((a, b) => b.itemCount - a.itemCount)[0];
     const bestAdapter = ba ? { key: ba.key, itemCount: ba.itemCount } : null;
 
@@ -98,6 +119,48 @@ export default function ProbePanel() {
       canUseScrape: !!bestScrape,
       canUseAdapter: !!bestAdapter,
     };
+  }, [data]);
+
+  // When data changes, preselect sensible defaults (prefer NFL feed and best selector/adapter)
+  useEffect(() => {
+    if (!data) {
+      setSelectedFeed(null);
+      setSelectedSelector(null);
+      setSelectedAdapterKey(null);
+      return;
+    }
+
+    // feeds
+    const nflFav =
+      [...data.feeds]
+        .filter((f) => f.ok)
+        .sort((a, b) => {
+          const s = feedScore(b.feedUrl) - feedScore(a.feedUrl);
+          if (s !== 0) return s;
+          return (b.itemCount || 0) - (a.itemCount || 0);
+        })[0]?.feedUrl ?? null;
+
+    const recFeed = data.recommended.feedUrl ?? null;
+    setSelectedFeed(recFeed ?? nflFav ?? derived.bestFeed?.feedUrl ?? null);
+
+    // selectors
+    const recSel = data.recommended.selector ?? null;
+    const bestSel =
+      data.scrapes.filter((s) => s.ok).sort((a, b) => b.linkCount - a.linkCount)[0]?.selectorTried ??
+      null;
+    setSelectedSelector(recSel ?? bestSel ?? null);
+
+    // adapters
+const bestAdapterKey =
+  data.adapters
+    .filter((a) => a.ok)
+    .sort((a, b) => (b.itemCount || 0) - (a.itemCount || 0))[0]?.key ?? null;
+
+const recAdapterKey =
+  data.recommended.method === "adapter" ? bestAdapterKey : null;
+
+setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
   function btnClass(kind: ProbeMethod, enabled: boolean) {
@@ -194,13 +257,26 @@ export default function ProbePanel() {
     };
 
     if (method === "rss") {
-      body.feedUrl = data.recommended.feedUrl ?? derived.bestFeed?.feedUrl ?? null;
+      // 👇 prefer the user’s pick; fall back to recommended/best
+      body.feedUrl =
+        selectedFeed ??
+        data.recommended.feedUrl ??
+        derived.bestFeed?.feedUrl ??
+        null;
     }
     if (method === "scrape") {
-      body.selector = data.recommended.selector ?? derived.bestScrape?.selectorTried ?? null;
+      // 👇 prefer the user’s pick; fall back to recommended/best
+      body.selector =
+        selectedSelector ??
+        data.recommended.selector ??
+        derived.bestScrape?.selectorTried ??
+        null;
     }
     if (method === "adapter") {
-      body.adapterKey = derived.bestAdapter?.key ?? null;
+      // 👇 prefer the user’s pick; fall back to best adapter
+      body.adapterKey =
+        selectedAdapterKey ??
+        (derived.bestAdapter ? derived.bestAdapter.key : null);
     }
 
     const r = await fetch("/api/admin/source-probe/commit", {
@@ -254,10 +330,9 @@ export default function ProbePanel() {
                 <input type="radio" checked={mode === "update"} onChange={() => setMode("update")} />
                 Update existing
               </label>
-              <label className="flex items-center gap-2 text-sm opacity-50">
+              <label className="flex items-center gap-2 text-sm">
                 <input
                   type="radio"
-                  disabled={!!data?.existingSource}
                   checked={mode === "create"}
                   onChange={() => setMode("create")}
                 />
@@ -342,35 +417,83 @@ export default function ProbePanel() {
 
           <div className="rounded border p-2">
             <b>Feeds</b>
-            <ul className="list-disc pl-5">
-              {data.feeds.map((f) => (
-                <li key={f.feedUrl}>
-                  {f.ok ? "✅" : "❌"} {f.feedUrl} {f.ok ? `(${f.itemCount})` : f.error ? `— ${f.error}` : ""}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-1 space-y-1">
+              {data.feeds.length === 0 ? (
+                <div className="text-zinc-500">No feeds found.</div>
+              ) : (
+                data.feeds.map((f) => {
+                  const disabled = !f.ok;
+                  return (
+                    <label key={f.feedUrl} className={`flex items-center gap-2 py-1 ${disabled ? "opacity-50" : ""}`}>
+                      <input
+                        type="radio"
+                        name="feedChoice"
+                        value={f.feedUrl}
+                        disabled={disabled}
+                        checked={selectedFeed === f.feedUrl}
+                        onChange={() => setSelectedFeed(f.feedUrl)}
+                      />
+                      <span className="truncate">{f.feedUrl}</span>
+                      <span className="text-xs text-zinc-500">{f.ok ? `(${f.itemCount})` : f.error ? `— ${f.error}` : ""}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           <div className="rounded border p-2">
             <b>Scrape selectors</b>
-            <ul className="list-disc pl-5">
-              {data.scrapes.map((s) => (
-                <li key={s.selectorTried}>
-                  {s.ok ? "✅" : "❌"} {s.selectorTried} {s.ok ? `(${s.linkCount})` : s.error ? `— ${s.error}` : ""}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-1 space-y-1">
+              {data.scrapes.length === 0 ? (
+                <div className="text-zinc-500">No selectors tried.</div>
+              ) : (
+                data.scrapes.map((s) => {
+                  const disabled = !s.ok;
+                  return (
+                    <label key={s.selectorTried} className={`flex items-center gap-2 py-1 ${disabled ? "opacity-50" : ""}`}>
+                      <input
+                        type="radio"
+                        name="selChoice"
+                        value={s.selectorTried}
+                        disabled={disabled}
+                        checked={selectedSelector === s.selectorTried}
+                        onChange={() => setSelectedSelector(s.selectorTried)}
+                      />
+                      <code className="font-mono">{s.selectorTried}</code>
+                      <span className="text-xs text-zinc-500">{s.ok ? `(${s.linkCount})` : s.error ? `— ${s.error}` : ""}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           <div className="rounded border p-2">
             <b>Adapters</b>
-            <ul className="list-disc pl-5">
-              {data.adapters.map((a) => (
-                <li key={a.key}>
-                  {a.ok ? "✅" : "❌"} {a.label ?? a.key} {a.ok ? `(${a.itemCount})` : a.error ? `— ${a.error}` : ""}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-1 space-y-1">
+              {data.adapters.length === 0 ? (
+                <div className="text-zinc-500">No adapters matched.</div>
+              ) : (
+                data.adapters.map((a) => {
+                  const disabled = !a.ok;
+                  return (
+                    <label key={a.key} className={`flex items-center gap-2 py-1 ${disabled ? "opacity-50" : ""}`}>
+                      <input
+                        type="radio"
+                        name="adapterChoice"
+                        value={a.key}
+                        disabled={disabled}
+                        checked={selectedAdapterKey === a.key}
+                        onChange={() => setSelectedAdapterKey(a.key)}
+                      />
+                      <span className="truncate">{a.label ?? a.key}</span>
+                      <span className="text-xs text-zinc-500">{a.ok ? `(${a.itemCount})` : a.error ? `— ${a.error}` : ""}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           <div className="rounded border p-2">
@@ -387,7 +510,7 @@ export default function ProbePanel() {
               onClick={() => derived.canUseRss && commit("rss")}
               disabled={!derived.canUseRss}
               className={btnClass("rss", derived.canUseRss)}
-              title={derived.canUseRss ? "Create source using RSS" : "No working feed detected"}
+              title={derived.canUseRss ? "Create/update source using RSS (uses your selected feed)" : "No working feed detected"}
             >
               Use RSS{derived.bestFeed ? ` (${derived.bestFeed.itemCount})` : ""}
             </button>
@@ -396,7 +519,7 @@ export default function ProbePanel() {
               onClick={() => derived.canUseScrape && commit("scrape")}
               disabled={!derived.canUseScrape}
               className={btnClass("scrape", derived.canUseScrape)}
-              title={derived.canUseScrape ? "Create source using the selected CSS selector" : "No viable selector found"}
+              title={derived.canUseScrape ? "Create/update source using the selected CSS selector" : "No viable selector found"}
             >
               Use Scrape{derived.bestScrape ? ` (${derived.bestScrape.linkCount})` : ""}
             </button>
@@ -405,7 +528,7 @@ export default function ProbePanel() {
               onClick={() => derived.canUseAdapter && commit("adapter")}
               disabled={!derived.canUseAdapter}
               className={btnClass("adapter", derived.canUseAdapter)}
-              title={derived.canUseAdapter ? "Create source using an adapter" : "No adapter matched"}
+              title={derived.canUseAdapter ? "Create/update source with selected adapter (merges endpoint if updating)" : "No adapter matched"}
             >
               Use Adapter{derived.bestAdapter ? ` (${derived.bestAdapter.itemCount})` : ""}
             </button>
