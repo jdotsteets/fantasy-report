@@ -111,7 +111,7 @@ export default function ArticleList({ items, title, className, filter }: Props) 
             const favicon = r.domain ? `https://icons.duckduckgo.com/ip3/${r.domain}.ico` : null;
 
             return (
-              <li key={r.id} className="px-3 py-1.5 sm:px-5 sm:py-2">
+              <li key={r.id} className="px-1 py-3 sm:px-2 sm:py-2">
                 {/* Optional preview image */}
                 {displaySrc ? (
                   <div className="relative mb-1 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:mb-1.5 sm:aspect-[16/9]">

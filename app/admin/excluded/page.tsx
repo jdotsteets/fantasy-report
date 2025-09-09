@@ -319,7 +319,7 @@ export default async function Page({
     (Array.isArray(sp?.notice) ? sp.notice?.[0] : sp?.notice) ?? null;
 
   return (
-    <main className="mx-auto max-w-4xl p-6 space-y-8">
+    <main className="mx-auto max-w-[100%] p-6 space-y-8">
       {/* Admin nav */}
       <AdminNav active="excluded" />
 
