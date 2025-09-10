@@ -66,14 +66,6 @@ export function isWeakArticleImage(url?: string | null): boolean {
 }
 
 
-/** Extracts a likely person name from a headline (best-effort). */
-const STOP_WORDS = new Set([
-  "diagnosed","with","out","vs","at","ruled","placed","signs","agrees","trade",
-  "injury","injured","activated","reinstated","questionable","doubtful","probable",
-  "update","news","notes","expected","likely","season","game","practice","status",
-  "listed","concussion","hamstring","ankle","knee","groin","back","fracture","tear",
-]);
-
 
 const NAME_STOPWORDS = new Set([
   // common fantasy/news words we don't want to treat as names
@@ -135,9 +127,7 @@ export function extractNameFromUrlPath(u: string): string | null {
   }
 }
 
-function cleanPrefix(t: string) {
-  return t.replace(/^[A-Za-z ]+:\s+/, ""); // “Report: …”
-}
+
 /** From a title, best-effort find a "First Last" (optionally + suffix). */
 export function extractLikelyNameFromTitle(title: string | null | undefined): string | null {
   if (!title) return null;

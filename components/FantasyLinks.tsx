@@ -1,5 +1,6 @@
 // components/FantasyLinks.tsx
 import { dbQuery } from "@/lib/db";
+import Image from "next/image";
 
 type SourceRow = {
   id: number;
@@ -78,12 +79,12 @@ export default async function FantasyLinks() {
         return (
           <li key={r.id} className="flex items-start gap-2">
             {ico ? (
-              <img
+              <Image
                 src={ico}
                 alt=""
                 width={16}
                 height={16}
-                loading="lazy"
+                unoptimized
                 className="mt-[2px] h-4 w-4 shrink-0 rounded"
               />
             ) : (

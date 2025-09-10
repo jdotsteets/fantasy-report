@@ -7,7 +7,7 @@ import {
   FeedItem,
   SourceConfig,
   ExistingSourceLite,
-  ProbeMethod,      // "rss" | "adapter" | "scrape"
+  ProbeMethod, // "rss" | "adapter" | "scrape"
   ProbeResult,
   ProbeArticle,
   FeedCandidate,
@@ -21,12 +21,34 @@ import { allowItem as coreAllowItem } from "@/lib/contentFilter";
 import { httpGet } from "./shared";
 import { dbQuery } from "../db";
 
-/* ---------------- shared ---------------- */
+/* ---------------- utilities ---------------- */
 
 type FeedLike = { title: string; link: string };
 const rssParser = new Parser({ timeout: 15000 });
 
 const allowItem = (x: FeedLike): boolean => coreAllowItem(x, x.link);
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+/* For adapter_config endpoints editing (no `any`) */
+type AdapterEndpoint = {
+  kind: "page" | "sitemap";
+  url: string;
+  selector?: string | null;
+};
+
+function isAdapterEndpoint(v: unknown): v is AdapterEndpoint {
+  return (
+    isRecord(v) &&
+    (v.kind === "page" || v.kind === "sitemap") &&
+    typeof v.url === "string" &&
+    (v.selector === undefined ||
+      v.selector === null ||
+      typeof v.selector === "string")
+  );
+}
 
 /* ============================================================================
    PROBE
@@ -79,11 +101,13 @@ export async function saveSourceWithMethod(args: {
     sport?: string | null;
     priority?: number | null;
     fetch_mode?: ProbeMethod | "auto" | null;
-        adapter_endpoint?: {
-      kind: "page" | "sitemap";
-      url: string;
-      selector?: string | null;
-    } | null;
+    adapter_endpoint?:
+      | {
+          kind: "page" | "sitemap";
+          url: string;
+          selector?: string | null;
+        }
+      | null;
   };
 }): Promise<number> {
   const {
@@ -111,28 +135,43 @@ export async function saveSourceWithMethod(args: {
   // (We add method-specific clears below so switching methods doesn't leave stale config.)
   const u: Record<string, unknown> = {};
 
-    if (method === "adapter" && adapterEndpoint && typeof sourceId === "number" && sourceId > 0) {
-    const cur = await dbQuery<{ adapter_config: any }>(
+  // Fast-path: append a single adapter endpoint without clobbering existing config
+  if (method === "adapter" && adapterEndpoint && typeof sourceId === "number" && sourceId > 0) {
+    const cur = await dbQuery<{ adapter_config: unknown }>(
       "SELECT adapter_config FROM sources WHERE id = $1",
       [sourceId]
     );
-    const cfg = (cur.rows[0]?.adapter_config ?? {}) as any;
-    const list: any[] = Array.isArray(cfg.endpoints) ? cfg.endpoints : [];
+
+    // Start from existing adapter_config (object) or {}
+    const currentCfg: Record<string, unknown> = isRecord(cur.rows[0]?.adapter_config)
+      ? (cur.rows[0]!.adapter_config as Record<string, unknown>)
+      : {};
+
+    // Normalize endpoints array
+    const listRaw = isRecord(currentCfg) && Array.isArray((currentCfg as Record<string, unknown>).endpoints)
+      ? (currentCfg.endpoints as unknown[])
+      : [];
+
+    const list: AdapterEndpoint[] = listRaw.filter(isAdapterEndpoint);
+
     const exists = list.some(
       (e) =>
-        e?.kind === adapterEndpoint.kind &&
-        e?.url === adapterEndpoint.url &&
-        (e?.selector ?? null) === (adapterEndpoint.selector ?? null)
+        e.kind === adapterEndpoint.kind &&
+        e.url === adapterEndpoint.url &&
+        (e.selector ?? null) === (adapterEndpoint.selector ?? null)
     );
-    if (!exists) list.push(adapterEndpoint);
-    cfg.endpoints = list;
+    if (!exists && isAdapterEndpoint(adapterEndpoint)) {
+      list.push(adapterEndpoint);
+    }
+
+    const nextCfg: Record<string, unknown> = { ...currentCfg, endpoints: list };
 
     await dbQuery(
       `UPDATE sources
          SET adapter_config = $1::jsonb,
              fetch_mode = 'adapter'
        WHERE id = $2`,
-      [JSON.stringify(cfg), sourceId]
+      [JSON.stringify(nextCfg), sourceId]
     );
     return sourceId; // ✅ done
   }
@@ -157,9 +196,7 @@ export async function saveSourceWithMethod(args: {
 
   // ─────────────────────────────────────────────────────
   // Clear mutually exclusive fields for the chosen method
-  // (so a switch from rss→scrape or adapter cleans old config)
   // ─────────────────────────────────────────────────────
-  // We always write these clears on UPDATE/INSERT to keep the row coherent.
   u.rss_url = null;
   u.scrape_selector = null;
   u.scrape_path = null;
@@ -168,7 +205,6 @@ export async function saveSourceWithMethod(args: {
 
   // Then populate the fields relevant to the chosen method.
   if (method === "rss") {
-    // Respect explicit updates.rss_url > picked feedUrl
     const chosen = updates.rss_url !== undefined ? updates.rss_url : feedUrl;
     if (chosen != null) u.rss_url = chosen;
   } else if (method === "scrape") {
@@ -188,18 +224,14 @@ export async function saveSourceWithMethod(args: {
           })();
     if (chosenPath != null) u.scrape_path = chosenPath;
   } else if (method === "adapter") {
-    const key =
-      updates.adapter !== undefined
-        ? updates.adapter
-        : adapterKey ?? null;
+    const key = updates.adapter !== undefined ? updates.adapter : adapterKey ?? null;
 
     if (key != null) u.adapter = key;
-    // If caller supplied a full adapter_config, use it; else store a simple {key}.
     u.adapter_config =
       updates.adapter_config !== undefined
         ? updates.adapter_config
         : key
-        ? { key }
+        ? ({ key } as Record<string, unknown>)
         : null;
   }
 
@@ -229,7 +261,6 @@ export async function saveSourceWithMethod(args: {
     const { rows } = await dbQuery<{ id: number }>(insertSql, insertParams);
     return rows[0].id;
   } catch (e) {
-    // On unique conflict (e.g., homepage_url unique), fallback to UPDATE of the matching row.
     const err = e as { code?: string };
     if (err?.code === "23505") {
       const existing = await findExistingSourceByUrl(url);
@@ -246,7 +277,11 @@ export async function saveSourceWithMethod(args: {
 
 export async function findExistingSourceByUrl(inputUrl: string): Promise<ExistingSourceLite | null> {
   let host: string | null = null;
-  try { host = new URL(inputUrl).host.replace(/^www\./i, ""); } catch { host = null; }
+  try {
+    host = new URL(inputUrl).host.replace(/^www\./i, "");
+  } catch {
+    host = null;
+  }
   if (!host) return null;
 
   const sql = `
@@ -282,13 +317,13 @@ type SourceRow = {
   rss_url: string | null;
   sitemap_url: string | null;
   scrape_selector: string | null;
-  adapter: string | null;               // ← new column
-  adapter_key_json: string | null;      // ← fallback from adapter_config->>'key'
+  adapter: string | null; // explicit column
+  adapter_key_json: string | null; // fallback from adapter_config->>'key'
   fetch_mode: ProbeMethod | "auto" | null;
 };
 
 async function loadSourceConfig(sourceId: number): Promise<SourceConfig | null> {
-  const res = await dbQuery<SourceRow>(
+  const { rows } = await dbQuery<SourceRow>(
     `
     SELECT
       id,
@@ -305,9 +340,7 @@ async function loadSourceConfig(sourceId: number): Promise<SourceConfig | null> 
     [sourceId]
   );
 
-  const row: SourceRow | undefined =
-    Array.isArray(res) ? (res as unknown as { rows: SourceRow[] }).rows?.[0] : (res as { rows?: SourceRow[] }).rows?.[0];
-
+  const row = rows[0];
   if (!row) return null;
 
   const adapterKey = row.adapter ?? row.adapter_key_json ?? null;
@@ -318,7 +351,7 @@ async function loadSourceConfig(sourceId: number): Promise<SourceConfig | null> 
     rss_url: row.rss_url,
     sitemap_url: row.sitemap_url,
     scrape_selector: row.scrape_selector,
-    adapter: adapterKey,                                        // resolved key
+    adapter: adapterKey,
     fetch_mode: (row.fetch_mode ?? "auto") as SourceConfig["fetch_mode"],
   };
 
@@ -343,7 +376,7 @@ export async function fetchItemsForSource(
 
   /* -------------------- DISPATCH -------------------- */
   if (chosen === "adapter") {
-    const adapterKey = cfg.adapter ?? null; // e.g. 'sitemap-generic', 'fantasylife', ...
+    const adapterKey = cfg.adapter ?? null;
     const baseUrl = (opts?.urlOverride ?? cfg.homepage_url) ?? null;
 
     if (!adapterKey) {
@@ -380,51 +413,45 @@ export async function fetchItemsForSource(
     }
   }
 
-    if (chosen === "rss") {
-      if (!cfg.rss_url) {
-        if (requested === "rss") {
-          throw new Error(`RSS requested but rss_url is missing for source ${sourceId}`);
-        }
-      } else {
-        const items = await fetchRssItems(cfg.rss_url, limit);
-        if (items.length || requested === "rss") return items; // returns [] when forced
+  if (chosen === "rss") {
+    if (!cfg.rss_url) {
+      if (requested === "rss") {
+        throw new Error(`RSS requested but rss_url is missing for source ${sourceId}`);
       }
-      // remove: if (requested === "rss") return [];
+    } else {
+      const items = await fetchRssItems(cfg.rss_url, limit);
+      if (items.length || requested === "rss") return items;
     }
+  }
 
-    if (chosen === "scrape") {
-      if (!cfg.homepage_url) {
-        if (requested === "scrape") {
-          throw new Error(`Scrape requested but homepage_url is missing for source ${sourceId}`);
-        }
-      } else {
-        const items = await scrapeHomepage(cfg, limit);
-        if (items.length || requested === "scrape") return items; // returns [] when forced
+  if (chosen === "scrape") {
+    if (!cfg.homepage_url) {
+      if (requested === "scrape") {
+        throw new Error(`Scrape requested but homepage_url is missing for source ${sourceId}`);
       }
-      // remove: if (requested === "scrape") return [];
+    } else {
+      const items = await scrapeHomepage(cfg, limit);
+      if (items.length || requested === "scrape") return items;
     }
+  }
 
   /* -------- AUTO FALLBACKS (only when NOT forced) -------- */
 
-  // Try RSS first
   if (!requested && cfg.rss_url) {
     const items = await fetchRssItems(cfg.rss_url, limit);
     if (items.length) return items;
   }
 
-  // Then scrape homepage
   if (!requested && cfg.homepage_url) {
     const items = await scrapeHomepage(cfg, limit);
     if (items.length) return items;
   }
 
-  // If configured, use sitemap as an auto helper (not a ProbeMethod)
   if (!requested && cfg.sitemap_url) {
     const items = await fetchFromSitemap(cfg.sitemap_url, limit);
     if (items.length) return items;
   }
 
-  // Finally, discover feeds from homepage
   if (!requested && cfg.homepage_url) {
     try {
       const candidates = await discoverFeedUrls(new URL(cfg.homepage_url));
@@ -439,7 +466,6 @@ export async function fetchItemsForSource(
 
   return [];
 }
-
 
 /* ============================================================================
    PROBE BUILDERS
@@ -481,7 +507,9 @@ async function discoverFeedUrls(base: URL): Promise<string[]> {
       const href = $(el).attr("href");
       if (href) set.add(new URL(href, base).toString());
     });
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return Array.from(set);
 }
 
@@ -492,18 +520,21 @@ async function tryScrape(page: URL): Promise<ScrapeCandidate[]> {
 
   const isNFL = page.hostname.endsWith("nfl.com");
   const isYahoo = /(^|\.)yahoo\.com$/i.test(page.hostname);
-  const isESPN  = /(^|\.)espn\.com$/i.test(page.hostname);
-  
+  const isESPN = /(^|\.)espn\.com$/i.test(page.hostname);
+
   const selectors = isYahoo
-  ? ["a[href*='/nfl/']", "article a[href*='/nfl/']", "main a[href*='/nfl/']"]
-  : isESPN
-  ? ["a[href*='/nfl/']", "article a[href*='/nfl/']", "main a[href*='/nfl/']"]
-  :isNFL
-    ? ["main a[href^='/news/']", "a[href^='https://www.nfl.com/news/']", "section a[href^='/news/']", "article a[href^='/news/']"]
+    ? ["a[href*='/nfl/']", "article a[href*='/nfl/']", "main a[href*='/nfl/']"]
+    : isESPN
+    ? ["a[href*='/nfl/']", "article a[href*='/nfl/']", "main a[href*='/nfl/']"]
+    : isNFL
+    ? [
+        "main a[href^='/news/']",
+        "a[href^='https://www.nfl.com/news/']",
+        "section a[href^='/news/']",
+        "article a[href^='/news/']",
+      ]
     : ["article a", "h2 a, h3 a", "main a"];
 
-
-  
   const out: ScrapeCandidate[] = [];
   for (const sel of selectors) {
     const urls: string[] = [];
@@ -595,7 +626,9 @@ async function buildPreview(
         });
       }
       if (items.length) return dedupe(items);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   const bestAdapter = adapters.filter((a) => a.ok).sort((a, b) => b.itemCount - a.itemCount)[0];
@@ -635,7 +668,11 @@ function slugTitle(u: string): string {
 }
 
 function toAbs(href: string, origin: string): string | null {
-  try { return new URL(href, origin).toString(); } catch { return null; }
+  try {
+    return new URL(href, origin).toString();
+  } catch {
+    return null;
+  }
 }
 
 function dedupe<T extends { url: string }>(items: T[]): T[] {
@@ -655,9 +692,10 @@ async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedIte
   const html = await httpGet(base.toString());
   const $ = cheerio.load(html);
 
-  const selector = (cfg.scrape_selector && cfg.scrape_selector.trim())
-    ? cfg.scrape_selector
-    : "article a[href], h2 a[href], h3 a[href], main a[href]";
+  const selector =
+    cfg.scrape_selector && cfg.scrape_selector.trim()
+      ? cfg.scrape_selector
+      : "article a[href], h2 a[href], h3 a[href], main a[href]";
 
   const seen = new Set<string>();
   const out: FeedItem[] = [];
@@ -666,10 +704,20 @@ async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedIte
     const raw = ($(el).attr("href") || "").trim();
     if (!raw) return;
     let abs: string;
-    try { abs = new URL(raw, base).toString(); } catch { return; }
+    try {
+      abs = new URL(raw, base).toString();
+    } catch {
+      return;
+    }
     if (BAD_SCHEMES.test(abs)) return;
 
-    const hostA = (() => { try { return new URL(abs).hostname.replace(/^www\./i, ""); } catch { return ""; } })();
+    const hostA = (() => {
+      try {
+        return new URL(abs).hostname.replace(/^www\./i, "");
+      } catch {
+        return "";
+      }
+    })();
     const hostB = base.hostname.replace(/^www\./i, "");
     if (hostA !== hostB) return;
 
@@ -690,7 +738,13 @@ async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedIte
       const enriched = await enrichWithOG([cfg.homepage_url], base.host);
       for (const a of enriched) {
         if (!a.url) continue;
-        const hostA = (() => { try { return new URL(a.url).hostname.replace(/^www\./i, ""); } catch { return ""; } })();
+        const hostA = (() => {
+          try {
+            return new URL(a.url).hostname.replace(/^www\./i, "");
+          } catch {
+            return "";
+          }
+        })();
         const hostB = base.hostname.replace(/^www\./i, "");
         if (hostA !== hostB) continue;
 
@@ -705,7 +759,9 @@ async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedIte
         });
         if (out.length >= limit) break;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   return out.slice(0, limit);
@@ -725,14 +781,12 @@ async function fetchRssItems(rssUrl: string, limit = 50): Promise<FeedItem[]> {
     const m = s.match(rx);
     return m ? m[1] : "";
   };
-  const clean = (s: string) =>
-    s.replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, "").trim();
+  const clean = (s: string) => s.replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, "").trim();
 
   const items: FeedItem[] = [];
   for (const block of blocks) {
     const rawLink =
-      get(/<link[^>]*>([\s\S]*?)<\/link>/i, block) ||
-      get(/<guid[^>]*>([\s\S]*?)<\/guid>/i, block);
+      get(/<link[^>]*>([\s\S]*?)<\/link>/i, block) || get(/<guid[^>]*>([\s\S]*?)<\/guid>/i, block);
 
     const link = clean(rawLink);
     if (!/^https?:\/\//i.test(link)) continue;
@@ -743,7 +797,7 @@ async function fetchRssItems(rssUrl: string, limit = 50): Promise<FeedItem[]> {
     items.push({
       title,
       link,
-      publishedAt: pubDate ? new Date(pubDate) : null, // <-- Date, not ISO string
+      publishedAt: pubDate ? new Date(pubDate) : null,
     });
     if (items.length >= limit) break;
   }

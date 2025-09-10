@@ -57,8 +57,7 @@ async function handle(req: NextRequest) {
     LIMIT $1
   `;
 
-  const res = await dbQuery<Row>(selectSql, [limit]);
-  const rows = (Array.isArray(res) ? res : (res as any).rows) as Row[];
+  const { rows } = await dbQuery<Row>(selectSql, [limit]);
 
   let scanned = 0;
   let updated = 0;

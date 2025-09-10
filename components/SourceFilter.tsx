@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 
 type Item = { id: number; name: string; href?: string | null; icon?: string | null };
 
@@ -92,7 +93,7 @@ export default function SourceFilter() {
                       className="flex w-full items-center gap-2 px-2 py-2 text-left hover:bg-zinc-50"
                     >
                       {s.icon ? (
-                        <img
+                        <Image
                           src={s.icon}
                           alt=""
                           width={16}

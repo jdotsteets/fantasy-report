@@ -22,7 +22,7 @@ const upsertSchema = z.object({
   // misc
   category: z.string().optional().default(""),
   allowed: z.boolean().optional().default(true),
-  paywall: z.boolean().optional().default(false),   // <— NEW
+  paywall: z.boolean().optional().default(false),
   priority: z.number().int().min(0).max(9999).optional().default(0),
 
   // adapter bits
@@ -44,9 +44,9 @@ function toJsonb(v: unknown): string | null {
   }
 }
 function getErrorMessage(err: unknown): string {
-  if (err instanceof z.ZodError) return err.issues.map(i => i.message).join(", ");
+  if (err instanceof z.ZodError) return err.issues.map((i) => i.message).join(", ");
   if (err && typeof err === "object" && "message" in err) {
-    const m = (err as any).message;
+    const m = (err as { message?: unknown }).message;
     if (typeof m === "string") return m;
   }
   return "Invalid input";
@@ -78,21 +78,21 @@ export async function POST(req: Request) {
     const body = upsertSchema.parse(await req.json());
 
     const params = [
-      body.name,                      // $1  ::text
-      toText(body.homepage_url),      // $2  ::text
-      toText(body.rss_url),           // $3  ::text
-      toText(body.favicon_url),       // $4  ::text
-      toText(body.sitemap_url),       // $5  ::text
-      toText(body.scrape_path),       // $6  ::text
-      toText(body.scrape_selector),   // $7  ::text
-      toText(body.category),          // $8  ::text
-      !!body.allowed,                 // $9  ::boolean
-      !!body.paywall,                 // $10 ::boolean   <-- NEW
-      Number(body.priority) || 0,     // $11 ::integer
-      toText(body.scraper_key),       // $12 ::text
-      toJsonb(body.adapter_config),   // $13 ::jsonb
-      body.fetch_mode,                // $14 ::text
-    ];
+      body.name, // $1  ::text
+      toText(body.homepage_url), // $2  ::text
+      toText(body.rss_url), // $3  ::text
+      toText(body.favicon_url), // $4  ::text
+      toText(body.sitemap_url), // $5  ::text
+      toText(body.scrape_path), // $6  ::text
+      toText(body.scrape_selector), // $7  ::text
+      toText(body.category), // $8  ::text
+      !!body.allowed, // $9  ::boolean
+      !!body.paywall, // $10 ::boolean
+      Number(body.priority) || 0, // $11 ::integer
+      toText(body.scraper_key), // $12 ::text
+      toJsonb(body.adapter_config), // $13 ::jsonb
+      body.fetch_mode, // $14 ::text
+    ] as const;
 
     const sql = `
       insert into sources (
@@ -108,7 +108,7 @@ export async function POST(req: Request) {
       returning id
     `;
 
-    const r = await dbQuery(sql, params);
+    const r = await dbQuery<{ id: number }>(sql, [...params]);
     return Response.json({ ok: true, id: r.rows[0].id });
   } catch (err) {
     return Response.json({ ok: false, error: getErrorMessage(err) }, { status: 400 });
@@ -117,15 +117,67 @@ export async function POST(req: Request) {
 
 /* ────────────────────────── PATCH (partial update) ────────────────────────── */
 
+type PatchBody = Partial<{
+  id: number;
+  name: unknown;
+  homepage_url: unknown;
+  rss_url: unknown;
+  favicon_url: unknown;
+  sitemap_url: unknown;
+  scrape_path: unknown;
+  scrape_selector: unknown;
+  category: unknown;
+  allowed: unknown;
+  paywall: unknown;
+  priority: unknown;
+  scraper_key: unknown;
+  adapter_config: unknown;
+  fetch_mode: unknown;
+}>;
+
+// Keys we allow to update and their PG casts
+const CASTS: Record<string, string> = {
+  name: "::text",
+  homepage_url: "::text",
+  rss_url: "::text",
+  favicon_url: "::text",
+  sitemap_url: "::text",
+  scrape_path: "::text",
+  scrape_selector: "::text",
+  category: "::text",
+  allowed: "::boolean",
+  paywall: "::boolean",
+  priority: "::integer",
+  scraper_key: "::text",
+  adapter_config: "::jsonb",
+  fetch_mode: "::text",
+};
+
 export async function PATCH(req: Request) {
   try {
-    const raw = await req.json();
-    const id = Number(raw?.id);
+    const raw = (await req.json()) as PatchBody;
+    const id = Number((raw as { id?: unknown }).id);
     if (!Number.isFinite(id) || id <= 0) {
       return Response.json({ ok: false, error: "invalid_id" }, { status: 400 });
     }
 
-    const updates: Record<string, any> = {};
+    // Build a typed updates object without `any`
+    const updates: Partial<{
+      name: string | null;
+      homepage_url: string | null;
+      rss_url: string | null;
+      favicon_url: string | null;
+      sitemap_url: string | null;
+      scrape_path: string | null;
+      scrape_selector: string | null;
+      category: string | null;
+      allowed: boolean;
+      paywall: boolean;
+      priority: number;
+      scraper_key: string | null;
+      adapter_config: string | null; // JSON string (pg will cast -> jsonb)
+      fetch_mode: z.infer<typeof FETCH_MODE> | null;
+    }> = {};
 
     if ("name" in raw) updates.name = toText(raw.name);
     if ("homepage_url" in raw) updates.homepage_url = toText(raw.homepage_url);
@@ -136,39 +188,31 @@ export async function PATCH(req: Request) {
     if ("scrape_selector" in raw) updates.scrape_selector = toText(raw.scrape_selector);
     if ("category" in raw) updates.category = toText(raw.category);
     if ("allowed" in raw) updates.allowed = !!raw.allowed;
-    if ("paywall" in raw) updates.paywall = !!raw.paywall;            // <— NEW
+    if ("paywall" in raw) updates.paywall = !!raw.paywall;
     if ("priority" in raw) updates.priority = Number(raw.priority) || 0;
     if ("scraper_key" in raw) updates.scraper_key = toText(raw.scraper_key);
     if ("adapter_config" in raw) updates.adapter_config = toJsonb(raw.adapter_config);
-    if ("fetch_mode" in raw) updates.fetch_mode = toText(raw.fetch_mode);
+    if ("fetch_mode" in raw) {
+      const m = toText(raw.fetch_mode);
+      const parsed = m ? FETCH_MODE.safeParse(m) : { success: true, data: null as null };
+      if (parsed.success) updates.fetch_mode = parsed.data;
+    }
 
-    if (Object.keys(updates).length === 0) {
+    const fields = Object.keys(updates) as Array<keyof typeof updates>;
+    if (fields.length === 0) {
       return Response.json({ ok: false, error: "no_fields_to_update" }, { status: 400 });
     }
 
-    const fields = Object.keys(updates);
-    const casts: Record<string, string> = {
-      name: "::text",
-      homepage_url: "::text",
-      rss_url: "::text",
-      favicon_url: "::text",
-      sitemap_url: "::text",
-      scrape_path: "::text",
-      scrape_selector: "::text",
-      category: "::text",
-      allowed: "::boolean",
-      paywall: "::boolean",                 // <— NEW
-      priority: "::integer",
-      scraper_key: "::text",
-      adapter_config: "::jsonb",
-      fetch_mode: "::text",
-    };
+    const setSql = fields
+      .map((k, i) => `${String(k)} = $${i + 1}${CASTS[String(k)] ?? ""}`)
+      .join(", ");
 
-    const setSql = fields.map((k, i) => `${k} = $${i + 1}${casts[k] ?? ""}`).join(", ");
-    const params = fields.map(k => updates[k]);
+    const params = fields.map((k) => updates[k] as unknown);
     params.push(id);
 
-    const sql = `update sources set ${setSql} where id = $${fields.length + 1}::integer`;
+    const sql = `update sources set ${setSql} where id = $${
+      fields.length + 1
+    }::integer`;
     await dbQuery(sql, params);
 
     return Response.json({ ok: true });

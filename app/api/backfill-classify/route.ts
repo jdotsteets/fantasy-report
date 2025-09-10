@@ -55,15 +55,16 @@ export async function POST(req: Request) {
   const onlyUndated = !isFalsey(url.searchParams.get("onlyUndated"));
   const onlyMissing = !isFalsey(url.searchParams.get("onlyMissing"));
   const dryRun      = isTruthy(url.searchParams.get("dryRun"));
+
   const modeParam   = (url.searchParams.get("mode") ?? "both").toLowerCase();
   const mode: "static" | "topics" | "both" =
-    modeParam === "static" || modeParam === "topics" ? (modeParam as any) : "both";
+    modeParam === "static" || modeParam === "topics" ? modeParam : "both";
 
   const missingParam = (url.searchParams.get("missing") ?? "all").toLowerCase();
   const missing: MissingKind =
     missingParam === "primary" || missingParam === "secondary" ||
     missingParam === "topics"  || missingParam === "week"
-      ? (missingParam as MissingKind)
+      ? missingParam
       : "all";
 
   const missingClause = (() => {
@@ -169,7 +170,6 @@ export async function POST(req: Request) {
 
         if (!dryRun) {
           if (onlyMissing) {
-            // Fill NULLs only (cast every placeholder; cast $6 too)
             const { rowCount } = await dbQuery(
               `
               UPDATE articles
@@ -201,7 +201,6 @@ export async function POST(req: Request) {
             if (rowCount && rowCount > 0) changedTopics += rowCount;
             else skipped += 1;
           } else {
-            // Overwrite when changed (cast on both sides in WHERE)
             const { rowCount } = await dbQuery(
               `
               UPDATE articles
@@ -228,10 +227,10 @@ export async function POST(req: Request) {
       }
 
       if (!wantsStaticPass && !wantsTopicsPass) skipped += 1;
-    } catch (e: any) {
+    } catch (e: unknown) {
       errors += 1;
       if (errorSamples.length < 12) {
-        errorSamples.push({ id: String(r.id), message: String(e?.message ?? e) });
+        errorSamples.push({ id: String(r.id), message: getErrMsg(e) });
       }
     }
   }
@@ -253,15 +252,16 @@ export async function POST(req: Request) {
     params: { days, limit, onlyUndated, onlyMissing, mode, dryRun, missing },
   };
 
-    return NextResponse.json(
-      {
-        ...summary,
-        updatedTopics: summary.changedTopics,
-        updatedStatic: summary.changedStatic,
-      },
-      { status: 200 }
-    );
+  return NextResponse.json(
+    {
+      ...summary,
+      updatedTopics: summary.changedTopics,
+      updatedStatic: summary.changedStatic,
+    },
+    { status: 200 }
+  );
 }
+
 /* ───────── helpers ───────── */
 
 function needsTopics(r: Row, missing: MissingKind): boolean {
@@ -311,4 +311,9 @@ function isFalsey(v: string | null): boolean {
   if (!v) return false;
   const s = v.toLowerCase();
   return s === "0" || s === "false" || s === "no";
+}
+function getErrMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  try { return JSON.stringify(e); } catch { return String(e); }
 }

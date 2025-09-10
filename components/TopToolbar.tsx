@@ -6,10 +6,11 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import {
   Newspaper, TrendingUp, Stethoscope, Scale, Coins, Lightbulb, Users,
+  LucideIcon,
 } from "lucide-react";
 import SourceTab from "@/components/SourceTab";
 
-type Item = { slug: string; label: string; icon: any; route?: string };
+type Item = { slug: string; label: string; icon: LucideIcon; route?: string };
 
 const items: ReadonlyArray<Item> = [
   { slug: "waivers",   label: "Waivers",   icon: Users },

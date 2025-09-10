@@ -133,14 +133,17 @@ export default function ArticleList({ items, title, className, filter }: Props) 
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
 <div className="flex items-center gap-2">
   {favicon ? (
-    <img
-      src={favicon}
-      width={18}
-      height={18}
-      alt=""
-      className="h-[18px] w-[18px] shrink-0 rounded -translate-y-0.5"  // ← up ~2px
-      loading="lazy"
-    />
+        <Image
+          src={favicon}
+          alt=""
+          width={18}
+          height={18}
+          unoptimized
+          className="h-[18px] w-[18px] shrink-0 rounded -translate-y-0.5"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
   ) : (
     <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200 -translate-y-0.5" />
   )}

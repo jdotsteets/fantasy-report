@@ -130,28 +130,6 @@ function mkLogger(jobId?: string) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Non-NFL guard for specific sources
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ADD: tweak IDs as needed
-const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([6, 3135]);
-
-function looksClearlyNFL(url: string, title?: string | null): boolean {
-  const u = (url || "").toLowerCase();
-  const t = (title || "").toLowerCase();
-
-  // Accept if either URL or title strongly hints NFL
-  // (covers /nfl/, "nfl", "fantasy football", "fantasy-football")
-  const okUrl =
-    u.includes("/nfl/") || u.includes("nfl") || u.includes("fantasy%20football") || u.includes("fantasy-football") || u.includes("fantasyfootball");
-
-  const okTitle =
-    t.includes("nfl") || t.includes("fantasy football") || t.includes("fantasy-football") || t.includes("fantasyfootball");
-
-  return okUrl || okTitle;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // DB helpers (articles)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -367,7 +345,6 @@ async function backfillArticleImage(
   articleId: number,
   canonicalUrl: string,
   currentImageUrl: string | null,
-  topic: string | null
 ): Promise<string | null> {
   const hasUsable = currentImageUrl && !isWeakArticleImage(currentImageUrl);
   if (hasUsable) return currentImageUrl;
@@ -561,8 +538,7 @@ export async function ingestSourceById(
         });
 
         const pageUrl = scraped.url ?? link;
-        const pageDomain = hostnameOf(pageUrl) ?? null;
-        const isPlayerPage = looksLikePlayerPage(pageUrl, chosenTitle ?? undefined, pageDomain ?? undefined);
+        const isPlayerPage = looksLikePlayerPage(pageUrl, chosenTitle ?? undefined);
 
         const res = await upsertArticle({
           canonical_url: canonical,
@@ -615,9 +591,7 @@ export async function ingestSourceById(
     });
 
     const players = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
-
-    const pageDomain = hostnameOf(link) ?? null;
-    const isPlayerPage = looksLikePlayerPage(link, feedTitle ?? undefined, pageDomain ?? undefined);
+    const isPlayerPage = looksLikePlayerPage(link, feedTitle ?? undefined);
 
     const res = await upsertArticle({
       canonical_url: canonical,
@@ -664,7 +638,7 @@ export async function ingestSourceById(
     const row = rowsOf<{ id: number; image_url: string | null }>(rs)[0];
     if (!row) return;
 
-    const best = await backfillArticleImage(row.id, canon, row.image_url, primaryTopic ?? null);
+    const best = await backfillArticleImage(row.id, canon, row.image_url);
 
     if (possiblePlayerName && looksUsableImage(best)) {
       const key = toPlayerKey(possiblePlayerName);

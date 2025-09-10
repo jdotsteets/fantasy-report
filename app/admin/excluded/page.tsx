@@ -6,19 +6,25 @@ import {
   getIngestLogs,
   type IngestLogRow,
 } from "@/lib/excludedData";
-import { headers as nextHeaders } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { PendingFieldset, RunIngestButton } from "@/components/admin/RunIngestControls";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-import { absFetch } from "@/lib/absFetch"; // ✅ adjust path if lib/absFetch.ts is under app/lib
-// app/admin/excluded/page.tsx (or wherever your admin page is)
+
+import { absFetch } from "@/lib/absFetch";
 import JobRunner from "@/components/admin/JobRunner";
 import { headers } from "next/headers";
 
-
+/* tiny helpers */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+const asNum = (v: unknown, fallback = 0): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : fallback;
+const asBool = (v: unknown, fallback = false): boolean =>
+  typeof v === "boolean" ? v : fallback;
 
 /* ───────────────────────── Server Actions ───────────────────────── */
 async function runIngest(formData: FormData) {
@@ -31,7 +37,7 @@ async function runIngest(formData: FormData) {
     return;
   }
 
-  const h = await headers();
+  const h = await headers(); // <-- await in server action environment
   const proto = h.get("x-forwarded-proto") ?? "http";
   const host =
     h.get("x-forwarded-host") ??
@@ -71,26 +77,27 @@ async function runBackfill(formData: FormData) {
   if (!envSecret) {
     console.error("[/admin/excluded] Missing CRON_SECRET env var");
     redirect("/admin/excluded?notice=" + encodeURIComponent("CRON_SECRET is not set"));
-    return; // helps TS understand nothing below runs without a secret
+    return;
   }
-  const secret: string = envSecret; // now typed as string
+  const secret: string = envSecret;
 
-  const h = await nextHeaders();
+  const h = await headers(); // <-- await in server action environment
   const proto = h.get("x-forwarded-proto") ?? "http";
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? process.env.VERCEL_URL ?? "localhost:3000";
+  const host =
+    h.get("x-forwarded-host") ?? h.get("host") ?? process.env.VERCEL_URL ?? "localhost:3000";
   const base = `${proto}://${host}`;
 
-  const batch  = Number((formData.get("batch")  as string) || 500);
+  const batch = Number((formData.get("batch") as string) || 500);
   const fromId = Number((formData.get("fromId") as string) || 0);
   const dryRun = (formData.get("dryRun") as string | null) === "on";
-  const debug  = (formData.get("debug") as string | null) === "on";
+  const debug = (formData.get("debug") as string | null) === "on";
 
   const qs = new URLSearchParams({
-    key: secret,                 // legacy GET support
+    key: secret, // legacy GET support
     batch: String(batch),
     fromId: String(fromId),
     dryRun: dryRun ? "1" : "0",
-    debug:  debug  ? "1" : "0",
+    debug: debug ? "1" : "0",
   });
 
   const url = `${base}/api/backfill-classify?${qs.toString()}`;
@@ -135,10 +142,10 @@ async function runBackfill(formData: FormData) {
         last = { ok: res.ok, status: res.status, text };
 
         if (res.ok || (res.status >= 400 && res.status < 500)) return last;
-        await new Promise(r => setTimeout(r, attempt * 400));
+        await new Promise((r) => setTimeout(r, attempt * 400));
       } catch {
         clearTimeout(t);
-        await new Promise(r => setTimeout(r, attempt * 400));
+        await new Promise((r) => setTimeout(r, attempt * 400));
       }
     }
     return last;
@@ -153,15 +160,31 @@ async function runBackfill(formData: FormData) {
     return redirect("/admin/excluded?notice=" + encodeURIComponent(notice));
   }
 
-  let data: any = null;
-  try { data = result.text ? JSON.parse(result.text) : null; } catch {}
+  // parse JSON without `any`
+  let json: unknown = null;
+  try {
+    json = result.text ? JSON.parse(result.text) : null;
+  } catch {
+    /* leave json as null */
+  }
 
-  const processed =
-    data?.scanned ?? data?.processed ?? data?.count ?? 0;
-  const updatedTopics = data?.updatedTopics ?? 0;
-  const updatedStatic = data?.updatedStatic ?? 0;
-  const updated = (updatedTopics + updatedStatic) || data?.updated || 0;
-  const wasDry = data?.params?.dryRun ?? data?.dryRun ?? dryRun;
+  const processed = isRecord(json)
+    ? asNum(json.scanned ?? json.processed ?? json.count, 0)
+    : 0;
+
+  const updatedTopics = isRecord(json) ? asNum(json.updatedTopics, 0) : 0;
+  const updatedStatic = isRecord(json) ? asNum(json.updatedStatic, 0) : 0;
+  const updatedFallback = isRecord(json) ? asNum(json.updated, 0) : 0;
+  const updated = (updatedTopics + updatedStatic) || updatedFallback;
+
+  const paramsObj = isRecord((json as { params?: unknown })?.params)
+    ? ((json as { params?: unknown }).params as Record<string, unknown>)
+    : undefined;
+
+  const wasDry =
+    (paramsObj ? asBool(paramsObj.dryRun, false) : false) ||
+    (isRecord(json) ? asBool((json as Record<string, unknown>).dryRun, false) : false) ||
+    dryRun;
 
   notice =
     `Backfill ${wasDry ? "(dry-run) " : ""}ok – scanned ${processed}, updated ${updated}` +
@@ -214,25 +237,16 @@ function ReasonBadge({ code }: { code: string }) {
 
 /* ───────────────────────── Admin Nav (same as Sources) ─────────────────── */
 function AdminNav({ active }: { active: "sources" | "excluded" }) {
-  const base =
-    "rounded-md px-3 py-1.5 text-sm font-medium border transition";
-  const normal =
-    "border-zinc-200 text-zinc-700 hover:bg-zinc-50";
-  const current =
-    "border-emerald-300 bg-emerald-50 text-emerald-900";
+  const base = "rounded-md px-3 py-1.5 text-sm font-medium border transition";
+  const normal = "border-zinc-200 text-zinc-700 hover:bg-zinc-50";
+  const current = "border-emerald-300 bg-emerald-50 text-emerald-900";
 
   return (
     <nav className="sticky top-0 z-20 mb-6 -mx-2 flex items-center gap-2 bg-white/70 px-2 py-2 backdrop-blur">
-      <Link
-        className={`${base} ${active === "sources" ? current : normal}`}
-        href="/admin/sources"
-      >
+      <Link className={`${base} ${active === "sources" ? current : normal}`} href="/admin/sources">
         Sources
       </Link>
-      <Link
-        className={`${base} ${active === "excluded" ? current : normal}`}
-        href="/admin/excluded"
-      >
+      <Link className={`${base} ${active === "excluded" ? current : normal}`} href="/admin/excluded">
         Excluded
       </Link>
       {/* add more admin pages here as needed */}
@@ -315,8 +329,7 @@ export default async function Page({
   }
 
   // Notice banner from ?notice=
-  const notice =
-    (Array.isArray(sp?.notice) ? sp.notice?.[0] : sp?.notice) ?? null;
+  const notice = (Array.isArray(sp?.notice) ? sp.notice?.[0] : sp?.notice) ?? null;
 
   return (
     <main className="mx-auto max-w-[100%] p-6 space-y-8">
@@ -409,10 +422,9 @@ export default async function Page({
         </form>
       </div>
 
-          <div className="space-y-8">
-          {/* your existing cards/controls */}
-          <JobRunner />
-          </div>
+      <div className="space-y-8">
+        <JobRunner />
+      </div>
 
       <section className="mb-8">
         <h2 className="mb-3 text-lg font-semibold">Recent Ingest Skips (7d)</h2>

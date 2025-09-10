@@ -1,10 +1,6 @@
 // app/api/admin/test-adapter/route.ts
 import { NextRequest } from "next/server";
-// If your adapter map lives in "@/lib/sources":
 import { ADAPTERS } from "@/lib/sources/adapters";
-// If instead you keep them in "@/lib/source/adapters", swap the import:
-// import { ADAPTERS as ADAPTERS } from "@/lib/source/adapters";
-
 import type { SourceAdapter } from "@/lib/sources/types";
 
 type AdapterConfig = {
@@ -14,62 +10,96 @@ type AdapterConfig = {
   headers?: Record<string, string>;
 };
 
-function okAuth(req: NextRequest) {
-  // Optional guard (matches SourceRowEditor + ingest routes)
-  const key =
-    (process.env.NEXT_PUBLIC_ADMIN_KEY ?? process.env.ADMIN_KEY ?? "").trim();
-  if (!key) return true;
-  return (req.headers.get("x-admin-key") ?? "").trim() === key;
-}
+type IndexHit = { url: string };
 
-function getAdapterByKey(
-  key: string
-): SourceAdapter | undefined {
-  const anyAdapters: any = ADAPTERS as any;
+type ArticleInfo = {
+  url: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  author?: string;
+  publishedAt?: string;
+};
 
-  if (Array.isArray(anyAdapters)) {
-    // array of adapters with a 'key' property
-    return anyAdapters.find(
-      (a: any) => (a?.key ?? "").toLowerCase() === key
-    ) as SourceAdapter | undefined;
-  }
+type GetIndex0 = () => Promise<IndexHit[]>;
+type GetIndex1 = (config?: AdapterConfig) => Promise<IndexHit[]>;
+type GetIndex2 = (pages?: number, config?: AdapterConfig) => Promise<IndexHit[]>;
 
-  // dictionary/object form
-  const dict = anyAdapters as Record<string, SourceAdapter | undefined>;
-  return dict[key];
-}
+type GetArticle1 = (u: string) => Promise<ArticleInfo>;
+type GetArticle2 = (u: string, config?: AdapterConfig) => Promise<ArticleInfo>;
 
 
 async function callGetIndex(
   adapter: SourceAdapter,
   pageCount: number,
   cfg?: AdapterConfig
-) {
-  const fn = adapter.getIndex as (
-    pages?: number,
-    config?: AdapterConfig
-  ) => Promise<Array<{ url: string }>>;
-  return typeof cfg === "undefined" ? fn(pageCount) : fn(pageCount, cfg);
+): Promise<IndexHit[]> {
+  const fn = (adapter as { getIndex?: unknown }).getIndex;
+  if (typeof fn !== "function") throw new Error("adapter missing getIndex");
+
+  // Use declared parameter count to choose a compatible call
+  const arity = fn.length;
+  if (arity === 0) return (fn as GetIndex0)();
+  if (arity === 1) return (fn as GetIndex1)(cfg);
+  return (fn as GetIndex2)(pageCount, cfg);
 }
 
 async function callGetArticle(
   adapter: SourceAdapter,
   url: string,
   cfg?: AdapterConfig
-) {
-  const fn = adapter.getArticle as (
-    u: string,
-    config?: AdapterConfig
-  ) => Promise<{
-    url: string;
-    title: string;
-    description?: string;
-    imageUrl?: string;
-    author?: string;
-    publishedAt?: string;
-  }>;
-  return typeof cfg === "undefined" ? fn(url) : fn(url, cfg);
+): Promise<ArticleInfo> {
+  const fn = (adapter as { getArticle?: unknown }).getArticle;
+  if (typeof fn !== "function") throw new Error("adapter missing getArticle");
+
+  const arity = fn.length;
+  // Some adapters only take (url); others take (url, config)
+  if (arity <= 1) return (fn as GetArticle1)(url);
+  return (fn as GetArticle2)(url, cfg);
 }
+
+
+/* ───────────────────────── Utilities ───────────────────────── */
+
+function okAuth(req: NextRequest): boolean {
+  const key = (process.env.NEXT_PUBLIC_ADMIN_KEY ?? process.env.ADMIN_KEY ?? "").trim();
+  if (!key) return true;
+  return (req.headers.get("x-admin-key") ?? "").trim() === key;
+}
+
+type AdapterMap =
+  | Readonly<Record<string, SourceAdapter>>
+  | ReadonlyArray<SourceAdapter & { key?: string }>;
+
+function isAdapterArray(v: unknown): v is ReadonlyArray<SourceAdapter & { key?: string }> {
+  return Array.isArray(v);
+}
+
+function isAdapterRecord(v: unknown): v is Readonly<Record<string, SourceAdapter>> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function getAdapterByKey(key: string): SourceAdapter | undefined {
+  const src = ADAPTERS as unknown as AdapterMap;
+
+  if (isAdapterArray(src)) {
+    const target = key.toLowerCase();
+    return src.find(a => (a.key ?? "").toLowerCase() === target);
+  }
+  if (isAdapterRecord(src)) {
+    return src[key];
+  }
+  return undefined;
+}
+
+
+
+
+function toMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/* ───────────────────────── Route ───────────────────────── */
 
 export async function POST(req: NextRequest) {
   if (!okAuth(req)) {
@@ -86,10 +116,7 @@ export async function POST(req: NextRequest) {
 
     const key = String(body.scraper_key ?? "").trim().toLowerCase();
     if (!key) {
-      return Response.json(
-        { ok: false, error: "scraper_key required" },
-        { status: 400 }
-      );
+      return Response.json({ ok: false, error: "scraper_key required" }, { status: 400 });
     }
 
     const adapter = getAdapterByKey(key);
@@ -100,15 +127,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    
     // Config + defaults
-    const cfg = (body.adapter_config ?? {}) as AdapterConfig;
+    const cfg: AdapterConfig = body.adapter_config ?? {};
     const pageCount = Number(body.pageCount ?? cfg.pageCount ?? 2) || 2;
-    // cap preview to avoid hammering the site
-    const limit = Math.max(
-      1,
-      Math.min(Number(body.limit ?? cfg.limit ?? 20) || 20, 50)
-    );
+    const limitRaw = Number(body.limit ?? cfg.limit ?? 20) || 20;
+    const limit = Math.max(1, Math.min(limitRaw, 50));
 
     // 1) Index
     const hits = await callGetIndex(adapter, pageCount, cfg);
@@ -130,10 +153,7 @@ export async function POST(req: NextRequest) {
       sampleCount: sample.length,
       sample,
     });
-  } catch (e: any) {
-    return Response.json(
-      { ok: false, error: e?.message ?? "invalid_input" },
-      { status: 400 }
-    );
+  } catch (e: unknown) {
+    return Response.json({ ok: false, error: toMessage(e) }, { status: 400 });
   }
 }

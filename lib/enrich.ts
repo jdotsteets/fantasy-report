@@ -259,11 +259,6 @@ export async function fetchOgImage(pageUrl: string, timeoutMs = 4000): Promise<s
   }
 }
 
-function faviconFor(domain: string): string | null {
-  if (!domain) return null;
-  return `https://${domain}/favicon.ico`;
-}
-
 /* -----------------------
    URL normalization
 ------------------------ */

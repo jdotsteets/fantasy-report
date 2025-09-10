@@ -152,7 +152,7 @@ export async function getIndex(
 
 export async function getArticle(
   url: string,
-  _config?: { headers?: Record<string, string> }
+
 ): Promise<ScrapedItem> {
   const html = await httpGet(url, { retries: 2, timeoutMs: 15000 });
   const $ = parseHtml(html);

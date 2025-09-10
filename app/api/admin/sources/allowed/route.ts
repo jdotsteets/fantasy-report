@@ -6,22 +6,38 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type AnyRow = Record<string, unknown>;
-type AnyRows = AnyRow[];
+type AllowedSource = {
+  id: number;
+  name?: string | null;
+  site?: string | null;
+  homepage_url?: string | null;
+  feed_url?: string | null;
+  allowed: boolean;
+};
+
+/** dbQuery can return either an array or an object with a `rows` array. */
+type ResultLike<T> = T[] | { rows?: T[] };
 
 /** Run a query and always return an array of rows, regardless of dbQuery’s shape */
-async function tryQuery(sql: string): Promise<AnyRows> {
-  // Use <any> to avoid QueryResultRow generic constraints
-  const res = await dbQuery<any>(sql, []);
-  const rows = Array.isArray(res) ? res : (res as any).rows;
-  return (rows ?? []) as AnyRows;
+async function tryQuery<T extends Record<string, unknown>>(sql: string): Promise<T[]> {
+  const res = (await dbQuery(sql, [])) as ResultLike<T>;
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.rows)) return res.rows;
+  return [];
+}
+
+function toErrorInfo(err: unknown) {
+  if (err instanceof Error) {
+    return { message: err.message, stack: err.stack ?? null };
+  }
+  return { message: String(err), stack: null };
 }
 
 export async function GET() {
   try {
-    // 1) Preferred: has `allowed`
+    // 1) Preferred: table has `allowed`
     try {
-      const rows = await tryQuery(`
+      const rows = await tryQuery<AllowedSource>(`
         SELECT
           id,
           COALESCE(name, NULL)          AS name,
@@ -35,9 +51,9 @@ export async function GET() {
       `);
       return NextResponse.json({ ok: true, sources: rows });
     } catch {
-      // 2) Alternate: has `allowed_to_ingest`
+      // 2) Alternate: table has `allowed_to_ingest`
       try {
-        const rows = await tryQuery(`
+        const rows = await tryQuery<AllowedSource>(`
           SELECT
             id,
             COALESCE(name, NULL)              AS name,
@@ -50,9 +66,9 @@ export async function GET() {
         `);
         return NextResponse.json({ ok: true, sources: rows });
       } catch {
-        // 3) Minimal fallbacks (IDs only)
+        // 3) Minimal fallbacks (IDs only) — try `allowed` then `allowed_to_ingest`
         try {
-          const rows = await tryQuery(`
+          const rows = await tryQuery<AllowedSource>(`
             SELECT id, COALESCE(allowed, true) AS allowed
             FROM sources
             WHERE COALESCE(allowed, true) = true
@@ -60,7 +76,7 @@ export async function GET() {
           `);
           return NextResponse.json({ ok: true, sources: rows });
         } catch {
-          const rows = await tryQuery(`
+          const rows = await tryQuery<AllowedSource>(`
             SELECT id, COALESCE(allowed_to_ingest, true) AS allowed
             FROM sources
             WHERE COALESCE(allowed_to_ingest, true) = true
@@ -70,10 +86,8 @@ export async function GET() {
         }
       }
     }
-  } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: String(err?.message ?? err), stack: err?.stack ?? null },
-      { status: 500 }
-    );
+  } catch (err: unknown) {
+    const { message, stack } = toErrorInfo(err);
+    return NextResponse.json({ ok: false, error: message, stack }, { status: 500 });
   }
 }

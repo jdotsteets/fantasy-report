@@ -266,9 +266,8 @@ export function classifyArticle(input: Input): Classification {
 
 
 // lib/classify.ts
-export function looksLikePlayerPage(url?: string | null, title?: string | null, domain?: string | null): boolean {
+export function looksLikePlayerPage(url?: string | null, title?: string | null, ): boolean {
   const u = (url ?? "").toLowerCase();
-  const d = (domain ?? "").toLowerCase();
   const t = (title ?? "").trim();
 
   if (!u && !t) return false;

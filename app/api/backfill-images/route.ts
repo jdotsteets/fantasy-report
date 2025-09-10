@@ -22,6 +22,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
 
+/* ───────────────────────── Types ───────────────────────── */
+
 type Row = {
   id: number;
   source_id: number;
@@ -31,6 +33,16 @@ type Row = {
   image_url: string | null;
   players: string[] | null;
 };
+
+type ResultLike<T> = T[] | { rows?: T[] };
+
+function toRows<T>(res: unknown): T[] {
+  const v = res as ResultLike<T>;
+  if (Array.isArray(v)) return v;
+  return Array.isArray(v.rows) ? v.rows : [];
+}
+
+/* ───────────────────────── Helpers ───────────────────────── */
 
 function bearer(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -42,6 +54,7 @@ function parseLimit(v: string | null): number {
   const n = Number(v ?? "");
   return Number.isFinite(n) ? Math.min(Math.max(n, 1), 200) : 50;
 }
+
 function parseHours(v: string | null, def: number): number {
   const n = Number(v ?? "");
   return Number.isFinite(n) ? Math.max(1, Math.min(n, 24 * 30)) : def;
@@ -66,7 +79,8 @@ function isAuthorImage(url: string | null | undefined): boolean {
     u.includes("headshot") ||
     u.includes("avatar") ||
     u.includes("/wp-content/uploads/avatars/")
-  ) return true;
+  )
+    return true;
 
   // Tiny square hints common for bylines (?width=144&height=144, etc.)
   if (/[?&](w|width)=1\d{2}\b/.test(u) && /[?&](h|height)=1\d{2}\b/.test(u)) return true;
@@ -85,7 +99,7 @@ function normalizeCandidate(u: string | null | undefined): string | null {
   return s;
 }
 
-async function pickBestImage(articleUrl: string, title: string | null): Promise<string | null> {
+async function pickBestImage(articleUrl: string): Promise<string | null> {
   // 1) OG/Twitter
   const og = await fetchOgImage(articleUrl).catch(() => null);
   let candidate = normalizeCandidate(og);
@@ -96,7 +110,7 @@ async function pickBestImage(articleUrl: string, title: string | null): Promise<
     candidate = normalizeCandidate(scraped);
   }
 
-  // 3) (Optional) wiki/person fallback — keep disabled unless you wire it up
+  // 3) Optional wiki/person fallback (disabled unless wired)
   // const name = title ? extractLikelyNameFromTitle(title) : null;
   // if (!candidate && name) {
   //   const wiki = await findWikipediaHeadshot(name).catch(() => null);
@@ -105,6 +119,8 @@ async function pickBestImage(articleUrl: string, title: string | null): Promise<
 
   return candidate ?? null;
 }
+
+/* ───────────────────────── Route ───────────────────────── */
 
 export async function GET(req: NextRequest) {
   // Auth
@@ -138,7 +154,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await dbQuery<Row>(selectSql, [limit, String(staleHours)]);
-    const rows = (Array.isArray(res) ? res : (res as any).rows) as Row[];
+    const rows = toRows<Row>(res);
 
     let scanned = 0;
     let updated = 0;
@@ -158,7 +174,7 @@ export async function GET(req: NextRequest) {
       const fetchUrl = r.canonical_url || r.url!;
       if (!fetchUrl) continue;
 
-      const found = await pickBestImage(fetchUrl, r.title);
+      const found = await pickBestImage(fetchUrl);
 
       if (!found) {
         notFound++;
@@ -245,7 +261,7 @@ export async function GET(req: NextRequest) {
       },
       { status: 200 }
     );
-  } catch (e) {
+  } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }

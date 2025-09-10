@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Filter } from "lucide-react";
+import Image from "next/image";
+
 
 type Row = {
   id: number;
@@ -174,7 +176,7 @@ export default function SourceTab() {
                         {(() => {
                           const u = faviconUrl(r);
                           return u ? (
-                            <img
+                            <Image
                               src={u}
                               alt=""
                               width={18}

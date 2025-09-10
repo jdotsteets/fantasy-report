@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Filter } from "lucide-react";
+import Image from "next/image";
 
 type SourceRow = {
   id: number;
@@ -152,7 +153,7 @@ export default function SourcePickerButton() {
                         }`}
                       >
                         {ico ? (
-                          <img
+                          <Image
                             src={ico}
                             alt=""
                             width={16}

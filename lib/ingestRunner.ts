@@ -1,4 +1,5 @@
-// lib/ingestRunner.ts
+//lib/ingestRunner.ts
+
 import { allowItem } from "@/lib/contentFilter";
 import { upsertArticle } from "@/lib/ingest";
 import { fetchItemsForSource } from "./sources";
@@ -37,6 +38,15 @@ type UpsertInput = {
   jobId?: string;
   sport?: string | null;
 };
+
+// Tolerate both string and object return styles from upsertArticle
+type UpsertResult =
+  | "inserted"
+  | "updated"
+  | {
+      inserted?: boolean;
+      updated?: boolean;
+    };
 
 /* ---------- helpers ---------- */
 
@@ -112,10 +122,10 @@ function blockedByDenylist(
 // Turn Date | string | null | undefined into ISO string or null
 function toIsoTimestamp(v: unknown): string | null {
   if (!v) return null;
-  if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString();
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
   if (typeof v === "string" && v.trim() !== "") {
     const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d.toISOString();
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
   return null;
 }
@@ -180,6 +190,11 @@ function isUtilityUrl(u: string): boolean {
   } catch {
     return true;
   }
+}
+
+// local wrapper to give upsertArticle a concrete return type (no `any`)
+async function safeUpsert(input: UpsertInput): Promise<UpsertResult> {
+  return (await upsertArticle(input)) as unknown as UpsertResult;
 }
 
 /* ---------- main ---------- */
@@ -255,31 +270,26 @@ export async function* runIngestOnce(
       }
 
       // Build typed upsert payload (normalize publishedAt)
+      type MaybeDated = { publishedAt?: Date | string | null };
       const upsertInput: UpsertInput = {
         sourceId: (item.source_id ?? sourceId) as number,
         source_id: (item.source_id ?? sourceId) as number,
         title: item.title ?? "",
         link,
         author: item.author ?? null,
-        publishedAt: toIsoTimestamp(
-          (item as { publishedAt?: unknown }).publishedAt
-        ),
+        publishedAt: toIsoTimestamp((item as MaybeDated).publishedAt ?? null),
         debug,
         jobId,
         sport: sport ?? null, // thread sport explicitly
       };
 
-      const result = await upsertArticle(upsertInput as any);
+      const result = await safeUpsert(upsertInput);
 
       const isInserted =
-        typeof result === "string"
-          ? result === "inserted"
-          : !!(result as any)?.inserted;
+        typeof result === "string" ? result === "inserted" : !!result.inserted;
 
       const isUpdated =
-        typeof result === "string"
-          ? result === "updated"
-          : !!(result as any)?.updated;
+        typeof result === "string" ? result === "updated" : !!result.updated;
 
       if (isInserted) {
         inserted += 1;
@@ -305,7 +315,7 @@ export async function* runIngestOnce(
           meta: { link, result },
         };
       }
-    } catch (e) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       yield {
         level: "error",

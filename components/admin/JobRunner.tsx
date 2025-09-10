@@ -21,7 +21,7 @@ type EventRow = {
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function isJobStatus(v: unknown): v is JobStatus {
   return v === "queued" || v === "running" || v === "success" || v === "error";
@@ -45,7 +45,7 @@ function isJob(v: unknown): v is Job {
 }
 function parseJobEnvelope(raw: unknown): Job | null {
   if (!isRecord(raw)) return null;
-  const maybeJob = (raw as Record<string, unknown>).job;
+  const maybeJob = raw.job as unknown;
   return isJob(maybeJob) ? maybeJob : null;
 }
 
@@ -60,26 +60,38 @@ function coerceId(val: unknown): number | null {
 
 function parseEventsEnvelope(raw: unknown): EventRow[] {
   if (!isRecord(raw)) return [];
-  const ev = (raw as Record<string, unknown>).events;
+  const ev = raw.events as unknown;
   if (!Array.isArray(ev)) return [];
 
   const out: EventRow[] = [];
   for (const e of ev) {
     if (!isRecord(e)) continue;
-    const id = coerceId((e as any).id);
-    const level = String((e as any).level ?? "");
+
+    // Narrow fields safely from unknown
+    const id = coerceId((e as { id?: unknown }).id);
+    const levelRaw = (e as { level?: unknown }).level;
+    const level =
+      typeof levelRaw === "string" ? levelRaw : String(levelRaw ?? "");
+
+    const ts = (e as { ts?: unknown }).ts;
+    const message = (e as { message?: unknown }).message;
+    const metaUnknown = (e as { meta?: unknown }).meta;
+
     if (
       id !== null &&
-      typeof e.ts === "string" &&
-      typeof e.message === "string" &&
+      typeof ts === "string" &&
+      typeof message === "string" &&
       (level === "info" || level === "warn" || level === "error" || level === "debug")
     ) {
-      const meta = isRecord((e as any).meta) ? ((e as any).meta as Record<string, unknown>) : null;
+      const meta = isRecord(metaUnknown)
+        ? (metaUnknown as Record<string, unknown>)
+        : null;
+
       out.push({
         id,
-        ts: e.ts,
+        ts,
         level: level as EventRow["level"],
-        message: e.message,
+        message,
         meta,
       });
     }
@@ -103,33 +115,38 @@ export default function JobRunner() {
   const [busy, setBusy] = useState(false);
   const lastEventIdRef = useRef<number>(0);
 
-  const startIngest = useCallback(async (sourceId?: number, limit?: number, debug?: boolean) => {
-    setBusy(true);
-    setEvents([]);
-    lastEventIdRef.current = 0;
+  const startIngest = useCallback(
+    async (sourceId?: number, limit?: number, debug?: boolean) => {
+      setBusy(true);
+      setEvents([]);
+      lastEventIdRef.current = 0;
 
-    const res = await fetch("/api/admin/jobs/ingest", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourceId, limit, debug }),
-    });
+      const res = await fetch("/api/admin/jobs/ingest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourceId, limit, debug }),
+      });
 
-    const data = (await safeJson(res)) as { ok?: boolean; job_id?: string; error?: string } | null;
+      const data = (await safeJson(res)) as
+        | { ok?: boolean; job_id?: string; error?: string }
+        | null;
 
-    if (!data?.ok || !data.job_id) {
-      setBusy(false);
-      throw new Error((data && data.error) || "Failed to start ingest");
-    }
+      if (!data?.ok || !data.job_id) {
+        setBusy(false);
+        throw new Error((data && data.error) || "Failed to start ingest");
+      }
 
-    setJob({
-      id: data.job_id,
-      status: "running",
-      progress_current: 0,
-      progress_total: null,
-      last_message: null,
-      error_detail: null,
-    });
-  }, []);
+      setJob({
+        id: data.job_id,
+        status: "running",
+        progress_current: 0,
+        progress_total: null,
+        last_message: null,
+        error_detail: null,
+      });
+    },
+    []
+  );
 
   // poll job status
   useEffect(() => {
@@ -156,7 +173,8 @@ export default function JobRunner() {
     if (!job?.id) return;
     const t = setInterval(async () => {
       try {
-        const after = lastEventIdRef.current > 0 ? `?after=${lastEventIdRef.current}` : "";
+        const after =
+          lastEventIdRef.current > 0 ? `?after=${lastEventIdRef.current}` : "";
         const res = await fetch(`/api/admin/jobs/${job.id}/events${after}`);
         if (!res.ok) return;
         const evs = parseEventsEnvelope(await safeJson(res));
@@ -200,7 +218,9 @@ export default function JobRunner() {
             const d = (document.getElementById("debug") as HTMLInputElement | null)?.checked ?? false;
             const sourceId = s ? Number(s) : undefined;
             const limit = l ? Number(l) : undefined;
-            startIngest(sourceId, limit, d).catch((e) => alert(e.message));
+            startIngest(sourceId, limit, d).catch((err: unknown) =>
+              alert(err instanceof Error ? err.message : String(err))
+            );
           }}
         >
           {busy ? "Running…" : "Run Ingest"}
@@ -226,7 +246,9 @@ export default function JobRunner() {
             ) : (
               events.map((e) => (
                 <div key={e.id} className="mb-1">
-                  <span className="text-gray-500 mr-2">{new Date(e.ts).toLocaleTimeString()}</span>
+                  <span className="text-gray-500 mr-2">
+                    {new Date(e.ts).toLocaleTimeString()}
+                  </span>
                   <span
                     className={
                       e.level === "error"

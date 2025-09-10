@@ -1,20 +1,45 @@
 // lib/enrichers/cbs.ts
 import * as cheerio from "cheerio";
 
+function safeHostname(href: string): string | null {
+  try {
+    return new URL(href).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function hasGoodTitle(t?: string | null): t is string {
+  return !!t && !/^\s*(see\s+full\s+article|read\s+more)\s*$/i.test(t);
+}
+
+function isSeeFullArticle(t: string): boolean {
+  return /see full article/i.test(t);
+}
+
+function extractHeadlineLike(node: unknown): string | null {
+  if (!node || typeof node !== "object") return null;
+  const rec = node as Record<string, unknown>;
+  const h = rec.headline;
+  const n = rec.name;
+  if (typeof h === "string" && !isSeeFullArticle(h)) return h.trim();
+  if (typeof n === "string" && !isSeeFullArticle(n)) return n.trim();
+  return null;
+}
+
 export async function fixCbsFantasyTitle(
   url: string,
   currentTitle?: string | null
 ): Promise<string | null> {
   const u = url || "";
+  const host = safeHostname(u);
+
   const looksCbsFantasy =
-    /(^|\.)cbssports\.com$/i.test(new URL(u).hostname) &&
-    /\/fantasy\/football\/news\//i.test(u);
+    !!host && /(^|\.)cbssports\.com$/i.test(host) && /\/fantasy\/football\/news\//i.test(u);
 
-  const bad =
-    !currentTitle ||
-    /^\s*see\s+full\s+article\s*$/i.test(currentTitle) ||
-    /^\s*read\s+more\s*$/i.test(currentTitle);
+  const bad = !hasGoodTitle(currentTitle);
 
+  // If it's not a CBS Fantasy News URL and the current title is fine, do nothing.
   if (!looksCbsFantasy && !bad) return null;
 
   try {
@@ -24,13 +49,13 @@ export async function fixCbsFantasyTitle(
 
     // 1) og:title / twitter:title
     const og = $('meta[property="og:title"]').attr("content");
-    if (og && !/see full article/i.test(og)) return og.trim();
+    if (og && !isSeeFullArticle(og)) return og.trim();
 
     const tw = $('meta[name="twitter:title"]').attr("content");
-    if (tw && !/see full article/i.test(tw)) return tw.trim();
+    if (tw && !isSeeFullArticle(tw)) return tw.trim();
 
-    // 2) JSON-LD NewsArticle.headline
-    const ld = $('script[type="application/ld+json"]')
+    // 2) JSON-LD NewsArticle.headline (or .name)
+    const ldBlobs: unknown[] = $('script[type="application/ld+json"]')
       .toArray()
       .map((el) => {
         try {
@@ -39,13 +64,13 @@ export async function fixCbsFantasyTitle(
           return null;
         }
       })
-      .filter(Boolean) as any[];
+      .filter((v): v is unknown => v != null);
 
-    for (const blob of ld) {
-      const nodes = Array.isArray(blob) ? blob : [blob];
+    for (const blob of ldBlobs) {
+      const nodes = Array.isArray(blob) ? (blob as unknown[]) : [blob];
       for (const n of nodes) {
-        const t = (n?.headline || n?.name) as string | undefined;
-        if (t && !/see full article/i.test(t)) return t.trim();
+        const t = extractHeadlineLike(n);
+        if (t) return t;
       }
     }
   } catch {
@@ -57,8 +82,9 @@ export async function fixCbsFantasyTitle(
     const slug = new URL(u).pathname.split("/").filter(Boolean).pop() || "";
     const words = slug
       .replace(/[-_]+/g, " ")
-      .replace(/\b([a-z])([a-z]+)/g, (_, a, b) => a.toUpperCase() + b) // title-case-ish
-      .replace(/\bNfl\b/g, "NFL");
+      .replace(/\b([a-z])([a-z]+)/g, (_m, a: string, b: string) => a.toUpperCase() + b) // title-case-ish
+      .replace(/\bNfl\b/g, "NFL")
+      .trim();
     return words.length ? words : null;
   } catch {
     return null;

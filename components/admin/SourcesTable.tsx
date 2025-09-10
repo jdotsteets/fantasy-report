@@ -229,17 +229,18 @@ export default function SourcesTable() {
       setOpen((m) => ({ ...m, [id]: { loading: false, error: msg, items: null } }));
     }
   }
-
-  function toggleRecent(id: number) {
-    const state = open[id];
-    if (state) {
-      const { [id]: _omit, ...rest } = open;
-      setOpen(rest);
-    } else {
-      void loadRecent(id);
+  
+function toggleRecent(id: number) {
+  setOpen(prev => {
+    if (prev[id]) {
+      const next = { ...prev };
+      delete next[id];
+      return next;
     }
-  }
-
+    void loadRecent(id);
+    return prev;
+  });
+}
   // number of columns (update if you add/remove headers)
   const COLS = 8;
 

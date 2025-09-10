@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import { dbQuery } from "@/lib/db";
-import { logIngestError, type IngestReason } from "@/lib/ingestLogs";
+import { logIngestError } from "@/lib/ingestLogs";
 
 export const runtime = "nodejs";         // ensure Node runtime (not edge)
 export const dynamic = "force-dynamic";  // NEVER prerender this route

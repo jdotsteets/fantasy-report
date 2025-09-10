@@ -1,7 +1,7 @@
 // app/api/admin/article-probe/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import * as pg from "pg";
-import { STATIC_TYPES } from "@/lib/staticTypes";
+
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 export const runtime = "nodejs";

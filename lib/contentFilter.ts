@@ -94,13 +94,6 @@ const NON_NFL_PATH_DENY: RegExp[] = [
   /(^|\/)(mlb|nba|nhl|ncaaf|ncaab|college|ncaa|mls|soccer|fifa|epl|ufc|mma|golf|nascar)\b/i,
 ];
 
-// Player page patterns to exclude from main feed
-const PLAYER_PAGE_DENY: RegExp[] = [
-  /\/player-news\b/i,
-  /\/players?\b/i,
-  /\/player\b/i,
-  /\/stats\/players?\b/i,
-];
 
 // Generic junk / non-article paths (feeds, sitemaps, tags, categories, pagers, etc.)
 const JUNK_PATH_DENY: RegExp[] = [

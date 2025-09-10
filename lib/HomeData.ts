@@ -1,11 +1,8 @@
 import { dbQuery } from "@/lib/db";
 import { pickBestImage } from "@/lib/images.server"; // server-only helper
 import { isWeakArticleImage } from "@/lib/images";   // safe favicon/placeholder detector
-import { normalizeTitle } from "@/lib/strings";
 
 type IdList = number[];
-
-const isProdBuild = process.env.NEXT_PHASE === "phase-production-build";
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -110,42 +107,7 @@ function derivePrimaryFromTopics(topics: string[]): CanonTopic | null {
   return null;
 }
 
-function toPlayerKeys(title: string, topics: string[] | null | undefined): string[] {
-  const keys: string[] = [];
-  const t = normalizeTitle(title);
 
-  const m = t.match(/\b([A-Z][a-z]+)\s([A-Z][a-z]+(?:\sJr\.?)?)\b/);
-  if (m) keys.push(`${m[1]}-${m[2]}`.toLowerCase().replace(/\s+/g, "-").replace(/\./g, ""));
-
-  if (Array.isArray(topics)) {
-    for (const raw of topics) {
-      const v = String(raw).trim().toLowerCase();
-      if (v.startsWith("player:")) keys.push(v.split(":")[1]);
-    }
-  }
-  return Array.from(new Set(keys)).filter(Boolean);
-}
-
-// (Top-level version, unused in main below but kept for parity with other modules)
-async function enhanceBucketTop(items: DbRow[], topic: CanonTopic | null) {
-  if (items.length === 0) return;
-  const enhanced = await Promise.all(
-    items.map(async (it) => {
-      const ok = it.image_url && !isWeakArticleImage(it.image_url);
-      const playerKeys = toPlayerKeys(it.title, it.topics);
-      const chosen = ok
-        ? (it.image_url as string)
-        : await pickBestImage({
-            articleImage: it.image_url ?? null,
-            domain: it.domain,
-            topic: topic ?? null,
-            playerKeys: playerKeys.length ? playerKeys : null,
-          });
-      return { ...it, image_url: chosen };
-    })
-  );
-  items.splice(0, items.length, ...enhanced);
-}
 
 const RE_STARTSIT = /(\bstart[\s/-]?sit\b|\bsleeper(s)?\b|who to (start|sit))/i;
 const RE_WAIVER   = /\b(waiver(s)?|pick[\s-]?ups?|adds?|wire)\b/i;

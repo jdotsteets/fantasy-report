@@ -3,7 +3,6 @@ import { Pool, PoolConfig, QueryResult, QueryResultRow } from "pg";
 
 /** Reuse the Pool across hot reloads/serverless invocations. */
 declare global {
-  // eslint-disable-next-line no-var
   var __pgPool: Pool | undefined;
 }
 
@@ -147,7 +146,6 @@ export async function dbQuery<T extends QueryResultRow = QueryResultRow>(
   let attempt = 0;
   const values: unknown[] = Array.from(params);
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       return await pool.query<T>(text, values);

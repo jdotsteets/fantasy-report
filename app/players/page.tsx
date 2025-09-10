@@ -1,3 +1,6 @@
+//app/players/page.tsx
+
+
 import PlayerMatrix from "@/components/players/PlayerMatrix";
 import { dbQuery } from "@/lib/db";
 
@@ -24,28 +27,31 @@ export default async function PlayersPage() {
     ORDER BY MAX(ts) DESC
     LIMIT $2
   `;
-  const rows = (await dbQuery<{ key: string; last_seen: string }>(playersSql, [
-    String(days),
-    limit,
-  ])).rows;
 
-  const links = await dbQuery<{ key: string; domain: string; url: string }>(`
-    SELECT REGEXP_REPLACE(key, '^nfl:name:', '') AS key, domain, url
-    FROM player_links
-  `).catch(() => ({ rows: [] as any[] }));
+  const { rows: playerRows } = await dbQuery<{ key: string; last_seen: string }>(
+    playersSql,
+    [String(days), limit]
+  );
+
+  const emptyLinks: Array<{ key: string; domain: string; url: string }> = [];
+  const { rows: linkRows } =
+    (await dbQuery<{ key: string; domain: string; url: string }>(`
+      SELECT REGEXP_REPLACE(key, '^nfl:name:', '') AS key, domain, url
+      FROM player_links
+    `).catch(() => ({ rows: emptyLinks })));
 
   const linkMap = new Map<string, Record<string, string>>();
-  for (const r of links.rows) {
+  for (const r of linkRows) {
     if (!linkMap.has(r.key)) linkMap.set(r.key, {});
     linkMap.get(r.key)![r.domain] = r.url;
   }
-  const domains = Array.from(new Set(links.rows.map((r) => r.domain))).sort();
+  const domains = Array.from(new Set(linkRows.map((r) => r.domain))).sort();
 
-  const players = rows.map((r) => {
+  const players = playerRows.map((r) => {
     const name = r.key
       .split("-")
       .filter(Boolean)
-      .map((p) => p[0]?.toUpperCase() + p.slice(1))
+      .map((p) => (p[0] ? p[0].toUpperCase() + p.slice(1) : p))
       .join(" ");
     return {
       key: r.key,

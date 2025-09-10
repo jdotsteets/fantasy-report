@@ -1,7 +1,7 @@
 // components/admin/ArticleProbePanel.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { STATIC_TYPES, staticTypeLabel, type StaticType } from "@/lib/staticTypes";
 
 /* ───────────── Types ───────────── */

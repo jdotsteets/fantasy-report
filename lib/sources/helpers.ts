@@ -1,6 +1,5 @@
 // lib/sources/helpers.ts
 import * as cheerio from "cheerio";
-import type { ProbeArticle } from "./types";
 import { httpGet } from "./shared";
 import { classifyUrl, PageSignals, UrlClassification } from "@/lib/contentFilter";
 

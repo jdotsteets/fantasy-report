@@ -17,14 +17,13 @@ export type SourceHealth = {
   suggestion: string | null;
 };
 
-
 export type PerSourceIngestRow = {
   source_id: number;
   source: string | null;
   inserted: number;
   updated: number;
   skipped: number;
-  lastAt: string | null;           // last successful ingest for this source
+  lastAt: string | null; // last successful ingest for this source
   allowed: boolean | null;
   homepage_url: string | null;
   rss_url: string | null;
@@ -57,11 +56,10 @@ export type HealthSummary = {
   updatedTotal?: number;
   skippedTotal?: number;
 
-  perSource: Array<any>;
-  errors?: Array<any>;
+  perSource: SourceHealth[];            // ← was Array<any>
+  errors?: ErrorDigest[];               // ← was Array<any>
   perSourceIngest?: PerSourceIngestRow[];
 };
-
 
 // ── Types ───────────────────────────────────────────────
 export type SourceIngestSummary = {
@@ -76,11 +74,18 @@ export type SourceIngestSummary = {
   lastAt: string | null; // last log timestamp for this source in window
 };
 
-
 export type IngestTalliesBySource = Record<
   number,
   { inserted: number; updated: number; skipped: number; lastAt: string | null }
 >;
+
+/* Normalize dbQuery results (T[] or { rows: T[] }) */
+type ResultLike<T> = T[] | { rows?: T[] };
+function toRows<T>(res: unknown): T[] {
+  const v = res as ResultLike<T>;
+  if (Array.isArray(v)) return v;
+  return Array.isArray(v.rows) ? v.rows : [];
+}
 
 function getPgCode(err: unknown): string | undefined {
   return typeof err === "object" &&
@@ -106,10 +111,6 @@ function clampHours(h: number): number {
   return Math.max(1, Math.min(h, 24 * 30));
 }
 
-
-const nz = (v: string | null) => (v ? Number(v) : 0);
-
-/** Compute per-source + total ingest tallies from ingest_logs. */
 /** Compute per-source + total ingest tallies from ingest_logs. */
 export async function getIngestTallies(
   windowHours = 72
@@ -128,89 +129,88 @@ export async function getIngestTallies(
       last_at: string | null;
     };
 
-    const rows = (
-      await dbQuery<Row>(
-        `
-        WITH win AS (
-          SELECT l.*
-          FROM ingest_logs l
-          WHERE l.created_at >= NOW() - ($1::int || ' hours')::interval
-        ),
-        -- normalize URL/domain -> host (lower, strip leading 'www.')
-        hosty AS (
-          SELECT
-            w.*,
-            NULLIF(
-              lower(regexp_replace(regexp_replace(w.url    , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')),
-              ''
-            ) AS url_host,
-            NULLIF(
-              lower(regexp_replace(regexp_replace(w.domain , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')),
-              ''
-            ) AS dom_host
-          FROM win w
-        ),
-        src_hosts AS (
-          SELECT
-            s.id,
-            lower(s.name) AS name_lc,
-            NULLIF(lower(regexp_replace(regexp_replace(s.homepage_url, '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')), '') AS home_host,
-            NULLIF(lower(regexp_replace(regexp_replace(s.rss_url     , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')), '') AS rss_host
-          FROM sources s
-        ),
-        resolved AS (
-          SELECT
-            COALESCE(
-              h.source_id,
-              s_name.id,
-              s_dom.id,
-              s_url.id
-            ) AS sid,
-            h.reason,
-            h.created_at
-          FROM hosty h
-          -- 1) exact name (case-insensitive)
-          LEFT JOIN LATERAL (
-            SELECT id
-            FROM src_hosts
-            WHERE name_lc = lower(h.source)
-            LIMIT 1
-          ) AS s_name ON h.source_id IS NULL
-          -- 2) domain column → match to home/rss host
-          LEFT JOIN LATERAL (
-            SELECT id
-            FROM src_hosts
-            WHERE h.dom_host IS NOT NULL
-              AND (home_host = h.dom_host OR rss_host = h.dom_host)
-            LIMIT 1
-          ) AS s_dom ON h.source_id IS NULL AND s_name.id IS NULL
-          -- 3) url column → match to home/rss host
-          LEFT JOIN LATERAL (
-            SELECT id
-            FROM src_hosts
-            WHERE h.url_host IS NOT NULL
-              AND (home_host = h.url_host OR rss_host = h.url_host)
-            LIMIT 1
-          ) AS s_url ON h.source_id IS NULL AND s_name.id IS NULL AND s_dom.id IS NULL
-        )
+    const res = await dbQuery<Row>(
+      `
+      WITH win AS (
+        SELECT l.*
+        FROM ingest_logs l
+        WHERE l.created_at >= NOW() - ($1::int || ' hours')::interval
+      ),
+      -- normalize URL/domain -> host (lower, strip leading 'www.')
+      hosty AS (
         SELECT
-          COALESCE(sid, 0) AS source_id,
-          -- accept both legacy and current reason strings
-          SUM(CASE WHEN reason IN ('ok_insert','inserted') THEN 1 ELSE 0 END)::bigint AS inserted,
-          SUM(CASE WHEN reason IN ('ok_update','updated') THEN 1 ELSE 0 END)::bigint AS updated,
-          SUM(CASE
-                WHEN reason IN ('invalid_item','skipped')
-                  OR reason LIKE 'skip_%'
-              THEN 1 ELSE 0 END
-          )::bigint AS skipped,
-          MAX(created_at) AS last_at
-        FROM resolved
-        GROUP BY COALESCE(sid, 0)
-        ORDER BY 1
-        `,
-        [wh]
+          w.*,
+          NULLIF(
+            lower(regexp_replace(regexp_replace(w.url    , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')),
+            ''
+          ) AS url_host,
+          NULLIF(
+            lower(regexp_replace(regexp_replace(w.domain , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')),
+            ''
+          ) AS dom_host
+        FROM win w
+      ),
+      src_hosts AS (
+        SELECT
+          s.id,
+          lower(s.name) AS name_lc,
+          NULLIF(lower(regexp_replace(regexp_replace(s.homepage_url, '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')), '') AS home_host,
+          NULLIF(lower(regexp_replace(regexp_replace(s.rss_url     , '^(?:[a-z]+://)?([^/:?#]+).*$', '\\1'), '^www\\.', '')), '') AS rss_host
+        FROM sources s
+      ),
+      resolved AS (
+        SELECT
+          COALESCE(
+            h.source_id,
+            s_name.id,
+            s_dom.id,
+            s_url.id
+          ) AS sid,
+          h.reason,
+          h.created_at
+        FROM hosty h
+        -- 1) exact name (case-insensitive)
+        LEFT JOIN LATERAL (
+          SELECT id
+          FROM src_hosts
+          WHERE name_lc = lower(h.source)
+          LIMIT 1
+        ) AS s_name ON h.source_id IS NULL
+        -- 2) domain column → match to home/rss host
+        LEFT JOIN LATERAL (
+          SELECT id
+          FROM src_hosts
+          WHERE h.dom_host IS NOT NULL
+            AND (home_host = h.dom_host OR rss_host = h.dom_host)
+          LIMIT 1
+        ) AS s_dom ON h.source_id IS NULL AND s_name.id IS NULL
+        -- 3) url column → match to home/rss host
+        LEFT JOIN LATERAL (
+          SELECT id
+          FROM src_hosts
+          WHERE h.url_host IS NOT NULL
+            AND (home_host = h.url_host OR rss_host = h.url_host)
+          LIMIT 1
+        ) AS s_url ON h.source_id IS NULL AND s_name.id IS NULL AND s_dom.id IS NULL
       )
-    ).rows;
+      SELECT
+        COALESCE(sid, 0) AS source_id,
+        -- accept both legacy and current reason strings
+        SUM(CASE WHEN reason IN ('ok_insert','inserted') THEN 1 ELSE 0 END)::bigint AS inserted,
+        SUM(CASE WHEN reason IN ('ok_update','updated') THEN 1 ELSE 0 END)::bigint AS updated,
+        SUM(CASE
+              WHEN reason IN ('invalid_item','skipped')
+                OR reason LIKE 'skip_%'
+            THEN 1 ELSE 0 END
+        )::bigint AS skipped,
+        MAX(created_at) AS last_at
+      FROM resolved
+      GROUP BY COALESCE(sid, 0)
+      ORDER BY 1
+      `,
+      [wh]
+    );
+    const rows = toRows<Row>(res);
 
     const bySource: IngestTalliesBySource = {};
     let ins = 0, upd = 0, skp = 0;
@@ -237,12 +237,10 @@ export async function getIngestTallies(
   }
 }
 
-
 /**
  * Compute health for all sources over a time window (default 72h).
  * If `ingestTallies` is omitted, this will compute totals from `ingest_logs`.
  */
-// lib/adminHealth.ts
 export async function getSourcesHealth(
   windowHours = 72,
   ingestTalliesArg?: IngestTalliesBySource
@@ -250,47 +248,49 @@ export async function getSourcesHealth(
   const wh = clampHours(windowHours);
 
   // Pull per-source recency + article counts
-  const rows = (
-    await dbQuery<{
-      id: number;
-      name: string | null;
-      allowed: boolean | null;
-      rss_url: string | null;
-      homepage_url: string | null;
-      scrape_selector: string | null;
-      last_discovered: string | null;
-      first_discovered: string | null;
-      in_window: string | null;
-      total_articles: string | null;
-    }>(
-      `
-      WITH win AS (
-        SELECT
-          s.id, s.name, s.allowed, s.rss_url, s.homepage_url, s.scrape_selector,
-          MAX(a.discovered_at) AS last_discovered,
-          MIN(a.discovered_at) AS first_discovered,
-          COUNT(*) FILTER (
-            WHERE a.discovered_at >= NOW() - ($1::int || ' hours')::interval
-          ) AS in_window,
-          COUNT(*) AS total_articles
-        FROM sources s
-        LEFT JOIN articles a ON a.source_id = s.id
-        GROUP BY s.id, s.name, s.allowed, s.rss_url, s.homepage_url, s.scrape_selector
-      )
-      SELECT * FROM win
-      ORDER BY id ASC
-      `,
-      [wh]
+  type SRow = {
+    id: number;
+    name: string | null;
+    allowed: boolean | null;
+    rss_url: string | null;
+    homepage_url: string | null;
+    scrape_selector: string | null;
+    last_discovered: string | null;
+    first_discovered: string | null;
+    in_window: string | null;
+    total_articles: string | null;
+  };
+
+  const resSources = await dbQuery<SRow>(
+    `
+    WITH win AS (
+      SELECT
+        s.id, s.name, s.allowed, s.rss_url, s.homepage_url, s.scrape_selector,
+        MAX(a.discovered_at) AS last_discovered,
+        MIN(a.discovered_at) AS first_discovered,
+        COUNT(*) FILTER (
+          WHERE a.discovered_at >= NOW() - ($1::int || ' hours')::interval
+        ) AS in_window,
+        COUNT(*) AS total_articles
+      FROM sources s
+      LEFT JOIN articles a ON a.source_id = s.id
+      GROUP BY s.id, s.name, s.allowed, s.rss_url, s.homepage_url, s.scrape_selector
     )
-  ).rows;
+    SELECT * FROM win
+    ORDER BY id ASC
+    `,
+    [wh]
+  );
+  const rows = toRows<SRow>(resSources);
 
   // Site-wide most recent / oldest
-  const siteAgg =
-    (
-      await dbQuery<{ most_recent: string | null; oldest: string | null }>(
-        `SELECT MAX(discovered_at) AS most_recent, MIN(discovered_at) AS oldest FROM articles`
-      )
-    ).rows[0] ?? { most_recent: null, oldest: null };
+  const resAgg = await dbQuery<{ most_recent: string | null; oldest: string | null }>(
+    `SELECT MAX(discovered_at) AS most_recent, MIN(discovered_at) AS oldest FROM articles`
+  );
+  const siteAgg = toRows<{ most_recent: string | null; oldest: string | null }>(resAgg)[0] ?? {
+    most_recent: null,
+    oldest: null,
+  };
 
   // ── ingest tallies (per-source + totals) ──────────────────────────
   let bySourceTallies: IngestTalliesBySource = {};
@@ -309,7 +309,7 @@ export async function getSourcesHealth(
       const t = await getIngestTallies(wh);
       bySourceTallies = t.bySource;
       totals = t.totals;
-    } catch (e) {
+    } catch (e: unknown) {
       // Safe fallback when ingest_logs table isn't present yet
       if (getPgCode(e) !== "42P01") {
         console.warn("[adminHealth] getIngestTallies failed:", getErrorMessage(e));
@@ -320,7 +320,7 @@ export async function getSourcesHealth(
   }
 
   // ── derive per-source health rows (recency + simple suggestions) ──
-  const perSource = rows.map((r) => {
+  const perSource: SourceHealth[] = rows.map((r) => {
     const inWindow = Number(r.in_window ?? 0);
     const total = Number(r.total_articles ?? 0);
 
@@ -358,11 +358,11 @@ export async function getSourcesHealth(
       totalArticles: total,
       status,
       suggestion,
-    } as SourceHealth;
+    };
   });
 
   // ── build the table rows used by /admin/sources (perSourceIngest) ──
-  const perSourceIngest = rows.map((s) => {
+  const perSourceIngest: PerSourceIngestRow[] = rows.map((s) => {
     const t = bySourceTallies[s.id] ?? {
       inserted: 0,
       updated: 0,
@@ -379,7 +379,7 @@ export async function getSourcesHealth(
       updated: t.updated,
       skipped: t.skipped,
       lastAt: t.lastAt,
-    } as PerSourceIngestRow;
+    };
   });
 
   const sourcesPulled = perSource.filter((s) => s.articlesInWindow > 0).length;
@@ -409,22 +409,22 @@ export async function getSourcesHealth(
     }
     summary.errors = [];
   }
-  // lib/adminHealth.ts  (inside getSourcesHealth, near the end, before return)
-try {
-  type R = {
-    source_id: number | null;
-    source: string | null;
-    allowed: boolean | null;
-    rss_url: string | null;
-    homepage_url: string | null;
-    inserted: string;
-    updated: string;
-    skipped: string;
-    last_at: string | null;
-  };
 
-  const ingestRows = (
-    await dbQuery<R>(
+  // (Optional) override perSourceIngest with window-scoped rollup if needed
+  try {
+    type R = {
+      source_id: number | null;
+      source: string | null;
+      allowed: boolean | null;
+      rss_url: string | null;
+      homepage_url: string | null;
+      inserted: string;
+      updated: string;
+      skipped: string;
+      last_at: string | null;
+    };
+
+    const resIngest = await dbQuery<R>(
       `
       WITH win AS (
         SELECT *
@@ -447,25 +447,25 @@ try {
       ORDER BY 1
       `,
       [wh]
-    )
-  ).rows;
+    );
+    const ingestRows = toRows<R>(resIngest);
 
-  summary.perSourceIngest = ingestRows
-    .filter(r => Number(r.source_id ?? 0) > 0)
-    .map(r => ({
-      source_id: Number(r.source_id ?? 0),
-      source: r.source ?? `#${r.source_id}`,
-      allowed: r.allowed,
-      rss_url: r.rss_url,
-      homepage_url: r.homepage_url,
-      inserted: Number(r.inserted ?? 0),
-      updated: Number(r.updated ?? 0),
-      skipped: Number(r.skipped ?? 0),
-      lastAt: r.last_at ?? null,
-    }));
-} catch {
-  summary.perSourceIngest = [];
-}
+    summary.perSourceIngest = ingestRows
+      .filter((r) => Number(r.source_id ?? 0) > 0)
+      .map((r): PerSourceIngestRow => ({
+        source_id: Number(r.source_id ?? 0),
+        source: r.source ?? `#${r.source_id}`,
+        allowed: r.allowed,
+        rss_url: r.rss_url,
+        homepage_url: r.homepage_url,
+        inserted: Number(r.inserted ?? 0),
+        updated: Number(r.updated ?? 0),
+        skipped: Number(r.skipped ?? 0),
+        lastAt: r.last_at ?? null,
+      }));
+  } catch {
+    summary.perSourceIngest = summary.perSourceIngest ?? [];
+  }
 
   return summary;
 }
@@ -474,50 +474,60 @@ try {
 export async function getSourceErrorDigests(windowHours = 72): Promise<ErrorDigest[]> {
   const wh = clampHours(windowHours);
 
-  const rows = (
-    await dbQuery<{
-      source_id: number;
-      source: string | null;
-      rss_url: string | null;
-      homepage_url: string | null;
-      allowed: boolean | null;
-      total: string;
-      last_at: string | null;
-      last_detail: string | null;
-      sample_url: string | null;
-    }>(
-      `
-      WITH errs AS (
-        SELECT
-          l.source_id,
-          COUNT(*) AS total,
-          MAX(l.created_at) AS last_at,
-          (ARRAY_AGG(l.detail ORDER BY l.created_at DESC))[1] AS last_detail,
-          (ARRAY_AGG(l.url    ORDER BY l.created_at DESC))[1] AS sample_url
-        FROM ingest_logs l
-        WHERE l.created_at >= NOW() - ($1::int || ' hours')::interval
-          AND l.reason IN ('fetch_error','parse_error','scrape_no_matches','invalid_item')
-        GROUP BY l.source_id
-      )
+  const res = await dbQuery<{
+    source_id: number;
+    source: string | null;
+    rss_url: string | null;
+    homepage_url: string | null;
+    allowed: boolean | null;
+    total: string;
+    last_at: string | null;
+    last_detail: string | null;
+    sample_url: string | null;
+  }>(
+    `
+    WITH errs AS (
       SELECT
-        e.source_id,
-        s.name     AS source,
-        s.rss_url,
-        s.homepage_url,
-        s.allowed,
-        e.total,
-        e.last_at,
-        e.last_detail,
-        e.sample_url
-      FROM errs e
-      JOIN sources s ON s.id = e.source_id
-      ORDER BY e.last_at DESC
-      `,
-      [wh]
+        l.source_id,
+        COUNT(*) AS total,
+        MAX(l.created_at) AS last_at,
+        (ARRAY_AGG(l.detail ORDER BY l.created_at DESC))[1] AS last_detail,
+        (ARRAY_AGG(l.url    ORDER BY l.created_at DESC))[1] AS sample_url
+      FROM ingest_logs l
+      WHERE l.created_at >= NOW() - ($1::int || ' hours')::interval
+        AND l.reason IN ('fetch_error','parse_error','scrape_no_matches','invalid_item')
+      GROUP BY l.source_id
     )
-  ).rows;
+    SELECT
+      e.source_id,
+      s.name     AS source,
+      s.rss_url,
+      s.homepage_url,
+      s.allowed,
+      e.total,
+      e.last_at,
+      e.last_detail,
+      e.sample_url
+    FROM errs e
+    JOIN sources s ON s.id = e.source_id
+    ORDER BY e.last_at DESC
+    `,
+    [wh]
+  );
 
-  return rows.map((r) => {
+  const rows = toRows<{
+    source_id: number;
+    source: string | null;
+    rss_url: string | null;
+    homepage_url: string | null;
+    allowed: boolean | null;
+    total: string;
+    last_at: string | null;
+    last_detail: string | null;
+    sample_url: string | null;
+  }>(res);
+
+  return rows.map((r): ErrorDigest => {
     const m =
       /Status code\s+(\d{3})/.exec(r.last_detail ?? "") ||
       /(\b\d{3}\b)/.exec(r.last_detail ?? "");

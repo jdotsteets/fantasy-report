@@ -40,19 +40,23 @@ export async function POST(req: NextRequest) {
     const isCreate = !existing?.id;
 
     // ---- Normalize updates --------------------------------------------------
-    // - If client provided paywall, coerce to boolean.
-    // - If creating and paywall is missing/undefined, default to false so INSERT never fails.
     const incoming = payload.updates ?? {};
+    // Keep the same shape as incoming but allow us to coerce paywall -> boolean.
     const normalized: typeof incoming & { paywall?: boolean } = { ...incoming };
 
     if ("paywall" in incoming) {
-      normalized.paywall = !!(incoming as any).paywall;
+      // Narrow unknown to boolean|unknown and coerce to boolean if provided
+      const v = (incoming as { paywall?: unknown }).paywall;
+      if (v !== undefined) normalized.paywall = !!v;
     } else if (isCreate) {
+      // On INSERT, default paywall=false so the row is coherent
       normalized.paywall = false;
     }
+
+    // Pass through adapter_endpoint untouched if present (already typed on CommitPayload)
     if (payload.updates?.adapter_endpoint) {
-  normalized.adapter_endpoint = payload.updates.adapter_endpoint;
-}
+      normalized.adapter_endpoint = payload.updates.adapter_endpoint;
+    }
     // ------------------------------------------------------------------------
 
     // Create or update the source and switch to the selected method.
@@ -65,8 +69,6 @@ export async function POST(req: NextRequest) {
       nameHint: payload.nameHint ?? null, // friendly default on INSERT
       sourceId: existing?.id,
       updates: normalized,
-
-
     });
 
     // Start an ingest run and return its tracking id.

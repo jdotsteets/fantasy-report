@@ -1,7 +1,7 @@
+// admin/sourceroweditor.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-
 
 type SourceRow = {
   id: number;
@@ -47,6 +47,19 @@ type TestAdapterResult = {
 
 const ADMIN_KEY = (process.env.NEXT_PUBLIC_ADMIN_KEY ?? "").trim();
 
+/* Small helpers (no `any`) */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function coerceNumber(u: unknown, fallback: number): number {
+  if (typeof u === "number" && Number.isFinite(u)) return u;
+  if (typeof u === "string") {
+    const n = Number(u);
+    if (Number.isFinite(n)) return n;
+  }
+  return fallback;
+}
+
 /* ——— JSON parser for adapter_config ——— */
 function parseAdapterConfig(
   text: string
@@ -55,8 +68,8 @@ function parseAdapterConfig(
     const trimmed = text.trim();
     if (!trimmed) return { ok: true, value: {} };
     const obj = JSON.parse(trimmed);
-    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-      return { ok: true, value: obj as Record<string, unknown> };
+    if (isRecord(obj)) {
+      return { ok: true, value: obj };
     }
     return { ok: false, error: "Config must be a JSON object (not array/string)." };
   } catch (e) {
@@ -246,7 +259,7 @@ export default function SourceRowEditor() {
         let err = "";
         try {
           const j = await resp.json();
-          err = j?.error ?? "";
+          err = (isRecord(j) && typeof j.error === "string") ? j.error : "";
         } catch {
           try {
             err = await resp.text();
@@ -281,7 +294,7 @@ export default function SourceRowEditor() {
       setTaResult({ ok: false, error: `Invalid adapter_config: ${parsed.error}` });
       return;
     }
-    const cfg = parsed.value as any;
+    const cfg: Record<string, unknown> = parsed.value;
 
     const key = (keyRef.current?.value ?? "").trim();
     if (!key) {
@@ -289,8 +302,8 @@ export default function SourceRowEditor() {
       return;
     }
 
-    const pageCount = Number(cfg.pageCount ?? 2) || 2;
-    const limit = Number(cfg.limit ?? 20) || 20;
+    const pageCount = coerceNumber(cfg.pageCount, 2);
+    const limit = coerceNumber(cfg.limit, 20);
 
     setTaLoading(true);
     try {
@@ -308,9 +321,11 @@ export default function SourceRowEditor() {
         }),
       });
 
-      const j = (await res.json().catch(() => ({}))) as TestAdapterResult;
+      const jUnknown = await res.json().catch<unknown>(() => ({}));
+      const j = isRecord(jUnknown) ? (jUnknown as unknown as TestAdapterResult) : { ok: false, error: "invalid JSON" };
+
       if (!res.ok) {
-        setTaResult({ ok: false, error: j.error ?? res.statusText });
+        setTaResult({ ok: false, error: (isRecord(jUnknown) && typeof jUnknown.error === "string") ? jUnknown.error : res.statusText });
       } else {
         setTaResult(j);
       }
@@ -320,7 +335,7 @@ export default function SourceRowEditor() {
       setTaLoading(false);
     }
   }
-  
+
   /* Test Ingest — saves first, then POSTs JSON to /api/admin/ingest */
   async function onTestIngest() {
     if (!src) return;
@@ -345,7 +360,7 @@ export default function SourceRowEditor() {
       });
 
       let text = "";
-      let json: any = undefined;
+      let json: unknown = undefined;
       try {
         json = await res.json();
       } catch {
@@ -357,11 +372,15 @@ export default function SourceRowEditor() {
       }
 
       if (res.ok) {
-        setTiMsg(
-          `OK — inserted=${json?.inserted ?? 0}, updated=${json?.updated ?? 0}, skipped=${json?.skipped ?? 0}`
-        );
+        const inserted = isRecord(json) && typeof json.inserted === "number" ? json.inserted : 0;
+        const updated = isRecord(json) && typeof json.updated === "number" ? json.updated : 0;
+        const skipped = isRecord(json) && typeof json.skipped === "number" ? json.skipped : 0;
+        setTiMsg(`OK — inserted=${inserted}, updated=${updated}, skipped=${skipped}`);
       } else {
-        const err = json?.error || json?.message || (text || res.statusText);
+        const err =
+          (isRecord(json) && typeof json.error === "string" && json.error) ||
+          (isRecord(json) && typeof json.message === "string" && json.message) ||
+          (text || res.statusText);
         setTiMsg(`Failed (${res.status}) — ${err}`);
       }
     } catch (e) {

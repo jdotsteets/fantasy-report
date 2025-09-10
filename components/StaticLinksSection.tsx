@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { StaticType } from "@/lib/staticTypes";
+import Image from "next/image";
 
 const CYCLE: StaticType[] = [
   "rankings_ros",
@@ -20,14 +21,45 @@ type StaticRow = {
   discovered_at?: string | null;
 };
 
+/* ───────── Type guards (no `any`) ───────── */
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null;
+
+const isNullableString = (v: unknown): v is string | null | undefined =>
+  typeof v === "string" || v === null || typeof v === "undefined";
+
+function isStaticRow(v: unknown): v is StaticRow {
+  if (!isRecord(v)) return false;
+  const id = v.id;
+  const title = v.title;
+  const url = v.url;
+  const discovered_at = (v as { discovered_at?: unknown }).discovered_at;
+  return (
+    typeof id === "number" &&
+    isNullableString(title) &&
+    isNullableString(url) &&
+    isNullableString(discovered_at)
+  );
+}
+
+function isStaticRowArray(v: unknown): v is StaticRow[] {
+  return Array.isArray(v) && v.every(isStaticRow);
+}
+
 function normalizeStatic(payload: unknown): StaticRow[] {
-  if (Array.isArray(payload)) return payload as StaticRow[];
-  if (payload && typeof payload === "object") {
-    const o = payload as Record<string, unknown>;
-    if (Array.isArray(o.items)) return o.items as StaticRow[];
-    if (Array.isArray(o.rows)) return o.rows as StaticRow[];
-    if (Array.isArray((o as any).articles)) return (o as any).articles as StaticRow[];
+  if (isStaticRowArray(payload)) return payload;
+
+  if (isRecord(payload)) {
+    const items = (payload as { items?: unknown }).items;
+    if (isStaticRowArray(items)) return items;
+
+    const rows = (payload as { rows?: unknown }).rows;
+    if (isStaticRowArray(rows)) return rows;
+
+    const articles = (payload as { articles?: unknown }).articles;
+    if (isStaticRowArray(articles)) return articles;
   }
+
   return [];
 }
 
@@ -85,13 +117,13 @@ export default function StaticLinksSection({ initial = "rankings_ros" as StaticT
         const res = await fetch(`/api/home/static?type=${kind}&limit=12&sport=nfl`, {
           cache: "no-store",
         });
-        const json = await res.json().catch(() => ({}));
+        const json: unknown = await res.json().catch(() => ({} as unknown));
         const list = normalizeStatic(json);
         if (!cancelled) setItems(list);
-      } catch (e) {
+      } catch (e: unknown) {
         if (!cancelled) {
           setItems([]);
-          setError((e as Error).message);
+          setError(e instanceof Error ? e.message : "Failed to load");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -146,27 +178,28 @@ export default function StaticLinksSection({ initial = "rankings_ros" as StaticT
               const title = a.title || a.url || "Untitled";
               return (
                 <li key={a.id} className="py-2">
-                    <a
-                      href={a.url ?? "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-2 cursor-pointer
-                                text-zinc-900 visited:text-zinc-900
-                                hover:text-emerald-700 focus-visible:text-emerald-700
-                                transition-colors"
-                    >
-                      {ico ? (
-                        <img
-                          src={ico}
-                          alt=""
-                          width={18}
-                          height={18}
-                          className="shrink-0 rounded"
-                          loading="lazy"
-                        />
-                      ) : null}
-                      <span className="break-words">{title}</span>
-                    </a>
+                  <a
+                    href={a.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 cursor-pointer
+                               text-zinc-900 visited:text-zinc-900
+                               hover:text-emerald-700 focus-visible:text-emerald-700
+                               transition-colors"
+                  >
+                    {ico ? (
+                      <Image
+                        src={ico}
+                        alt=""
+                        width={18}
+                        height={18}
+                        className="shrink-0 rounded"
+                        loading="lazy"
+                        unoptimized
+                      />
+                    ) : null}
+                    <span className="break-words">{title}</span>
+                  </a>
                 </li>
               );
             })}

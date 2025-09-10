@@ -78,6 +78,7 @@ export const FFTODAY_INGEST_ADAPTER = {
   key: "fftoday",
 
   async getIndex(_pages = 1, cfg?: AdapterConfig) {
+    void _pages;
     const limit = cfg?.limit ?? 40;
     const urls = await fftCollectIndex(limit, cfg);
     return urls.map((url) => ({ url }));
@@ -123,27 +124,29 @@ export const FFTODAY_SITE = {
   key: "fftoday",
   label: "FFToday (authors)",
   match: (base: URL) => base.hostname.endsWith("fftoday.com"),
-  async probePreview(base: URL) {
-    const hits = await FFTODAY_INGEST_ADAPTER.getIndex(1, { limit: 24 });
-    const arts = await Promise.all(
-      hits.slice(0, 24).map(async (h) => {
-        try {
-          const a = await FFTODAY_INGEST_ADAPTER.getArticle(h.url, {});
-          return {
-            title: a.title,
-            url: a.url,
-            imageUrl: a.imageUrl ?? null,
-            author: a.author ?? null,
-            publishedAt: a.publishedAt ?? null,
-            sourceHost: base.host,
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
-    return arts.filter(Boolean) as any[]; // ProbeArticle[]
-  },
+async probePreview(base: URL) {
+  const hits = await FFTODAY_INGEST_ADAPTER.getIndex(1, { limit: 24 });
+
+  const arts = await Promise.all(
+    hits.slice(0, 24).map(async (h): Promise<ProbeArticle | null> => {
+      try {
+        const a = await FFTODAY_INGEST_ADAPTER.getArticle(h.url, {});
+        return {
+          title: a.title,
+          url: a.url,
+          imageUrl: a.imageUrl ?? null,
+          author: a.author ?? null,
+          publishedAt: a.publishedAt ?? null,
+          sourceHost: base.host,
+        } satisfies ProbeArticle;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return arts.filter((x): x is ProbeArticle => x !== null);
+},
 } as const;
 
 
@@ -211,7 +214,8 @@ function withinHost(url: string, base: URL): boolean {
 export const WORDPRESS_GENERIC = {
   key: "wordpress-generic",
   label: "WordPress (generic)",
-  match(_base: URL) { return true; }, // decide inside probePreview
+  match(_base: URL) {void _base; return true; }, // decide inside probePreview
+  
   async probePreview(base: URL): Promise<ProbeArticle[]> {
     const html = await httpGet(base.toString());
     const $ = parseHtml(html);
@@ -266,7 +270,7 @@ export const WORDPRESS_GENERIC = {
 export const JSONLD_LIST = {
   key: "jsonld-list",
   label: "JSON-LD (ItemList/NewsArticle)",
-  match(_base: URL) { return true; },
+  match(_base: URL) {void _base; return true; },
   async probePreview(base: URL): Promise<ProbeArticle[]> {
     const html = await httpGet(base.toString());
     const $ = parseHtml(html);
@@ -307,7 +311,7 @@ export const JSONLD_LIST = {
 export const NEXT_DATA = {
   key: "next-data",
   label: "Next.js data",
-  match(_base: URL) { return true; },
+  match(_base: URL) {void _base; return true; },
   async probePreview(base: URL): Promise<ProbeArticle[]> {
     const html = await httpGet(base.toString());
     const $ = parseHtml(html);
@@ -346,7 +350,7 @@ export const NEXT_DATA = {
 export const SITEMAP_GENERIC = {
   key: "sitemap-generic",
   label: "Sitemap (generic)",
-  match(_base: URL) { return true; },
+  match(_base: URL) {void _base; return true; },
   async probePreview(base: URL): Promise<ProbeArticle[]> {
     const maps = await discoverSitemaps(base.origin);
     const seen = new Set<string>();
@@ -408,7 +412,6 @@ function parseLocs(xml: string): string[] {
   const locs: string[] = [];
   const re = /<loc>\s*([^<\s][^<]*)\s*<\/loc>/gi;
   let m: RegExpExecArray | null;
-  // eslint-disable-next-line no-cond-assign
   while ((m = re.exec(xml)) !== null) {
     locs.push(m[1]);
   }

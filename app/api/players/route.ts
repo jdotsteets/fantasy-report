@@ -1,3 +1,5 @@
+//app/api/players/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
@@ -13,20 +15,42 @@ function displayNameFromKey(k: string): string {
   return k
     .split("-")
     .filter(Boolean)
-    .map((p) => p[0]?.toUpperCase() + p.slice(1))
+    .map((p) => (p[0] ? p[0].toUpperCase() : "") + p.slice(1))
     .join(" ");
 }
 
+/* ───────── helpers to normalize dbQuery shapes ───────── */
+type ResultLike<T> = T[] | { rows?: T[] };
+function toRows<T>(res: unknown): T[] {
+  const v = res as ResultLike<T>;
+  if (Array.isArray(v)) return v;
+  return Array.isArray(v.rows) ? v.rows : [];
+}
+
+/* ───────── row types ───────── */
+type SeenRow = {
+  key: string;
+  last_seen: string;
+};
+type LinkRow = {
+  key: string;
+  domain: string;
+  url: string;
+};
+type PlayerOut = {
+  key: string;
+  name: string;
+  links: Record<string, string>;
+  lastSeen: string;
+};
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const days = Math.max(1, Math.min(Number(url.searchParams.get("days") || 60), 365));
-  const limitPlayers = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 500), 5000));
+  const days = Math.max(1, Math.min(Number(url.searchParams.get("days") ?? 60), 365));
+  const limitPlayers = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 500), 5000));
 
   // Pull keys from articles.players (array) over the time window, keep the most recent sighting
-  const { rows } = await dbQuery<{
-    key: string;
-    last_seen: string;
-  }>(
+  const seenRes = await dbQuery<SeenRow>(
     `
     WITH seen AS (
       SELECT
@@ -38,7 +62,6 @@ export async function GET(req: NextRequest) {
         AND COALESCE(published_at, discovered_at) >= NOW() - ($1 || ' days')::interval
     )
     SELECT
-      -- normalize keys so both 'nfl:name:slug' and 'slug' collapse together
       REGEXP_REPLACE(raw_key, '^nfl:name:', '') AS key,
       MAX(ts) AS last_seen
     FROM seen
@@ -48,33 +71,37 @@ export async function GET(req: NextRequest) {
     `,
     [String(days), limitPlayers]
   );
+  const seenRows = toRows<SeenRow>(seenRes);
 
-  // Optional: pull per-site player links if you keep them
-  // Expected schema: player_links(key text PRIMARY KEY, domain text, url text)
-  // It's OK if you don't have this table—returns 0 rows.
-  const linksRes = await dbQuery<{ key: string; domain: string; url: string }>(`
-    SELECT REGEXP_REPLACE(key, '^nfl:name:', '') AS key, domain, url
-    FROM player_links
-  `).catch(() => ({ rows: [] as any[] }));
+  // Optional: per-site player links (if the table exists)
+  let linkRows: LinkRow[] = [];
+  try {
+    const lr = await dbQuery<LinkRow>(`
+      SELECT REGEXP_REPLACE(key, '^nfl:name:', '') AS key, domain, url
+      FROM player_links
+    `);
+    linkRows = toRows<LinkRow>(lr);
+  } catch {
+    linkRows = [];
+  }
 
+  // Build map: player key -> { domain: url, ... }
   const linkMap = new Map<string, Record<string, string>>();
-  for (const r of linksRes.rows) {
-    const k = r.key;
-    if (!linkMap.has(k)) linkMap.set(k, {});
-    linkMap.get(k)![r.domain] = r.url;
+  for (const r of linkRows) {
+    const existing = linkMap.get(r.key) ?? {};
+    existing[r.domain] = r.url;
+    linkMap.set(r.key, existing);
   }
 
   // Collect distinct domains we know how to link to (table-driven)
-  const domains = Array.from(
-    new Set(linksRes.rows.map((r) => r.domain))
-  ).sort();
+  const domains = Array.from(new Set(linkRows.map((r) => r.domain))).sort();
 
-  const players = rows.map((r) => {
-    const key = normKey(r.key)!;
+  const players: PlayerOut[] = seenRows.map((r) => {
+    const normalized = normKey(r.key) ?? r.key;
     return {
-      key,
-      name: displayNameFromKey(key),
-      links: linkMap.get(key) ?? {},
+      key: normalized,
+      name: displayNameFromKey(normalized),
+      links: linkMap.get(normalized) ?? {},
       lastSeen: r.last_seen,
     };
   });
