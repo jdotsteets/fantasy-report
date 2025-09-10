@@ -4,7 +4,6 @@ import { dbQuery } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const preferredRegion = ["iad1"]; // match your DB/pooler region
 
 type StaticType =
   | "rankings_ros"
@@ -23,41 +22,17 @@ const ALLOWED: ReadonlyArray<StaticType> = [
   "stats",
 ];
 
-/* ───────────────────────── Utils ───────────────────────── */
-
-function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`route deadline ${ms}ms`)), ms);
-    p.then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        reject(e);
-      }
-    );
-  });
-}
-
-type ResultLike<T> = T[] | { rows?: T[] };
-
+// Normalize dbQuery results (T[] or { rows: T[] })
 function toRows<T>(res: unknown): T[] {
-  const v = res as ResultLike<T>;
-  if (Array.isArray(v)) return v;
-  return Array.isArray(v.rows) ? v.rows : [];
+  if (Array.isArray(res)) return res as T[];
+  const obj = res as { rows?: unknown };
+  return Array.isArray(obj?.rows) ? (obj.rows as T[]) : [];
 }
-
-/* ───────────────────────── Route ───────────────────────── */
 
 export async function GET(req: Request) {
   try {
-    // Keep pool warm / connectivity check
-    await withDeadline(dbQuery("select 1", []), 8000);
-
     const u = new URL(req.url);
-    const type = ((u.searchParams.get("type") || "rankings_ros") as StaticType);
+    const type = (u.searchParams.get("type") || "rankings_ros") as StaticType;
     const sport = u.searchParams.get("sport") || "nfl";
     const limit = Math.min(Math.max(parseInt(u.searchParams.get("limit") || "12", 10), 1), 50);
 
@@ -65,14 +40,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Invalid static type" }, { status: 400 });
     }
 
-    type Row = {
+    const res = await dbQuery<{
       id: number;
       title: string | null;
       url: string | null;
       discovered_at: string | null;
-    };
-
-    const res = await dbQuery<Row>(
+    }>(
       `
       SELECT id, title, url, discovered_at
       FROM articles
@@ -87,17 +60,12 @@ export async function GET(req: Request) {
       [type, sport, limit]
     );
 
-    const rows = toRows<Row>(res);
-
-    return NextResponse.json({ ok: true, items: rows });
-  } catch {
-    // 503 so vercel/clients back off instead of stampeding
-    return NextResponse.json(
-      { error: "temporarily unavailable" },
-      {
-        status: 503,
-        headers: { "Cache-Control": "max-age=0, s-maxage=15, stale-while-revalidate=60" },
-      }
-    );
+    const items = toRows(res);
+    return NextResponse.json({ ok: true, items }, { status: 200 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Return 200 with empty items so the client can still render gracefully,
+    // but include an error field for debugging in the UI.
+    return NextResponse.json({ ok: false, error: msg, items: [] as unknown[] }, { status: 200 });
   }
 }

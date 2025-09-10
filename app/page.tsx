@@ -31,9 +31,54 @@ type HomePayload = {
 
 type HeroData = { title: string; href: string; src: string; source: string };
 
+// ----- Waiver week (starts on Monday, America/Chicago) -----
+const TZ = "America/Chicago";
+
+/**
+ * Set this to the Monday that starts Week 1 (YYYY-MM-DD, Chicago local date).
+ * You can also put it in .env as NEXT_PUBLIC_WAIVER_WEEK1_MONDAY
+ * e.g. 2025 season example: 2025-09-01
+ */
+const WAIVER_WEEK1_MONDAY =
+  process.env.NEXT_PUBLIC_WAIVER_WEEK1_MONDAY ?? "2025-09-01";
+
+type YMD = { y: number; m: number; d: number };
+
+/** Get Y/M/D for a Date *in a specific time zone* (no DST surprises) */
+function getYMDInZone(d: Date, tz: string): YMD {
+  // en-CA gives YYYY-MM-DD which is easy to split
+  const s = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+  const [y, m, day] = s.split("-").map((n) => Number(n));
+  return { y, m, d: day };
+}
+
+/** Convert Y/M/D to a day count using UTC-midnight (timezone-agnostic) */
+function dayCountUTC({ y, m, d }: YMD): number {
+  return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
+}
+
+/** Waiver “current week”: # of Mondays elapsed since Week 1 Monday, +1 */
+function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
+  const [sy, sm, sd] = week1MondayYMD.split("-").map(Number);
+  if (!sy || !sm || !sd) return 1;
+
+  const start = dayCountUTC({ y: sy, m: sm, d: sd });          // Week 1 Monday
+  const today = dayCountUTC(getYMDInZone(now, TZ));             // today in Chicago
+  const weeks = Math.floor((today - start) / 7) + 1;            // Monday rollovers
+  return Math.max(1, weeks);
+}
+
+//const CURRENT_WAIVER_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
+
+
 const SPORT = "nfl";
 const DEFAULT_DAYS = 45;
-const CURRENT_WEEK = 1;
+const CURRENT_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
 const weekLabel = (wk: number) => `Week ${wk}`;
 
 const SECTION_KEYS = ["waivers", "rankings", "start-sit", "injury", "dfs", "advice", "news"] as const;

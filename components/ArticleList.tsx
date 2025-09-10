@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import { normalizeTitle } from "@/lib/strings";
+import SmartImage from "./SmartImage";
 
 type ImagesMode = "all" | "first" | "hero";
 const MODE_KEY = "ffa_images_mode";
@@ -133,7 +134,7 @@ export default function ArticleList({ items, title, className, filter }: Props) 
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
 <div className="flex items-center gap-2">
   {favicon ? (
-        <Image
+        <SmartImage
           src={favicon}
           alt=""
           width={18}

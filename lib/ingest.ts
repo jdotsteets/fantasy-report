@@ -397,7 +397,7 @@ export async function ingestSourceById(
   const adapters = await loadAdapters();
 
   // NEW: guard list + helper (tweak IDs as needed)
-  const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([6, 3135]);
+  const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([6, 3135, 3136]);
   const looksClearlyNFL = (url: string, title?: string | null) => {
     const u = (url || "").toLowerCase();
     const t = (title || "").toLowerCase();

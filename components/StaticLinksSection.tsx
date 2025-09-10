@@ -108,31 +108,37 @@ export default function StaticLinksSection({ initial = "rankings_ros" as StaticT
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/home/static?type=${kind}&limit=12&sport=nfl`, {
-          cache: "no-store",
-        });
-        const json: unknown = await res.json().catch(() => ({} as unknown));
-        const list = normalizeStatic(json);
-        if (!cancelled) setItems(list);
-      } catch (e: unknown) {
-        if (!cancelled) {
-          setItems([]);
-          setError(e instanceof Error ? e.message : "Failed to load");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/home/static?type=${kind}&limit=12&sport=nfl`, {
+        cache: "no-store",
+      });
+
+      const json = (await res.json()) as { ok?: boolean; items?: unknown; error?: string };
+
+      if (!res.ok || json.ok === false) {
+        throw new Error(json?.error || `HTTP ${res.status} ${res.statusText}`);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [kind]);
+
+      const list = normalizeStatic(json.items ?? json);
+      if (!cancelled) setItems(list);
+    } catch (e) {
+      if (!cancelled) {
+        setItems([]);
+        setError(e instanceof Error ? e.message : "Failed to load");
+      }
+    } finally {
+      if (!cancelled) setLoading(false);
+    }
+  })();
+  return () => {
+    cancelled = true;
+  };
+}, [kind]);
 
   const header = useMemo(() => labelFor(kind), [kind]);
 

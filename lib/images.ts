@@ -1,5 +1,3 @@
-// lib/images.ts
-
 /** Use a local static fallback image placed at /public/fallback.jpg */
 export const FALLBACK = "/fallback.jpg";
 
@@ -25,6 +23,7 @@ export function getSafeImageUrl(input?: string | null): string | null {
     // Filter obvious low-value images
     const p = u.pathname.toLowerCase();
     if (isLikelyFavicon(url)) return null;
+    if (isLikelyHeadshot(url)) return null;
     if (
       p.includes("sprite") ||
       p.includes("logo") ||
@@ -65,10 +64,24 @@ export function isWeakArticleImage(url?: string | null): boolean {
   }
 }
 
-
+/** New: reject author avatars/headshots */
+export function isLikelyHeadshot(url?: string | null): boolean {
+  if (!url) return false;
+  try {
+    const { pathname } = new URL(url);
+    const p = pathname.toLowerCase();
+    return (
+      /\/(avatar|headshot|author|byline|profile)\//i.test(p) ||
+      p.endsWith("/author.jpg") ||
+      p.endsWith("/profile.jpg") ||
+      p.endsWith("/headshot.jpg")
+    );
+  } catch {
+    return false;
+  }
+}
 
 const NAME_STOPWORDS = new Set([
-  // common fantasy/news words we don't want to treat as names
   "report", "reports", "breaking", "trade", "rumor", "rumors", "injury",
   "injuries", "waivers", "waiver", "week", "start", "sit", "ranks", "rankings",
   "mock", "draft", "profile", "news", "notes", "updates", "update",
@@ -76,42 +89,34 @@ const NAME_STOPWORDS = new Set([
   "nfl", "mlb", "nba", "nhl",
 ]);
 
-
-
 function toTitleCaseToken(tok: string): string {
   if (!tok) return tok;
   return tok.replace(/^[a-z]/, (m) => m.toUpperCase());
 }
 
 function isNameToken(tok: string): boolean {
-  // allow letters, apostrophes, and hyphens
   if (!/^[a-z][a-z'-]*$/i.test(tok)) return false;
   const lower = tok.toLowerCase();
   if (NAME_STOPWORDS.has(lower)) return false;
-  // disallow extremely short tokens unless suffix like "jr" or roman numerals
   if (lower.length <= 2 && !/^(jr|sr|ii|iii|iv|v)$/i.test(lower)) return false;
   return true;
 }
 
 function looksLikeFullName(words: string[]): boolean {
   if (words.length < 2) return false;
-  // First + Last, optionally suffix
   const [first, last, maybeSfx] = words;
   if (!isNameToken(first) || !isNameToken(last)) return false;
   if (maybeSfx && !/^(jr|sr|ii|iii|iv|v)$/i.test(maybeSfx)) return false;
   return true;
 }
 
-/** From the URL path, try to derive "First Last" (e.g., /nfl/players/patrick-mahomes-news). */
 export function extractNameFromUrlPath(u: string): string | null {
   try {
     const { pathname } = new URL(u);
-    // take the last 2-3 hyphen tokens that look like names
     const seg = pathname.split("/").filter(Boolean).pop() || "";
     const raw = seg.replace(/\.(html|htm|php)$/, "").split("?")[0];
     const toks = raw.split("-").filter(Boolean);
 
-    // scan windows of 2 or 3 tokens to find a name-like combo
     for (let w = 3; w >= 2; w--) {
       for (let i = 0; i + w <= toks.length; i++) {
         const slice = toks.slice(i, i + w);
@@ -127,13 +132,8 @@ export function extractNameFromUrlPath(u: string): string | null {
   }
 }
 
-
-/** From a title, best-effort find a "First Last" (optionally + suffix). */
 export function extractLikelyNameFromTitle(title: string | null | undefined): string | null {
   if (!title) return null;
-
-  // Heuristic: find two capitalized tokens next to each other, allow apostrophes/hyphens, optional suffix
-  // Examples: "Patrick Mahomes", "Ja'Marr Chase", "Amon-Ra St. Brown" (we'll catch "Amon-Ra Brown")
   const rx = /\b([A-Z][a-z'’-]+)\s+([A-Z][a-z'’-]+)(?:\s+(Jr|Sr|II|III|IV|V))?\b/g;
   let m: RegExpExecArray | null;
   while ((m = rx.exec(title))) {
@@ -142,7 +142,6 @@ export function extractLikelyNameFromTitle(title: string | null | undefined): st
     const parts = [first, last];
     if (sfx) parts.push(sfx);
     const candidate = parts.join(" ");
-    // filter false positives
     const tokens = candidate.split(/\s+/);
     if (looksLikeFullName(tokens.map(t => t.toLowerCase()))) {
       return candidate;
@@ -151,26 +150,20 @@ export function extractLikelyNameFromTitle(title: string | null | undefined): st
   return null;
 }
 
-/** New: prefer title, then URL; returns an array (future-proof) */
 export function extractPlayersFromTitleAndUrl(
   title?: string | null,
   url?: string | null
 ): string[] | null {
   const out = new Set<string>();
-
   const t = extractLikelyNameFromTitle(title ?? undefined);
   if (t) out.add(t);
-
   if (url && out.size === 0) {
     const u = extractNameFromUrlPath(url);
     if (u) out.add(u);
   }
-
   return out.size ? Array.from(out) : null;
 }
 
-
-/** Favicon/low-value image detector. */
 export function isLikelyFavicon(url?: string | null): boolean {
   if (!url) return false;
   try {
