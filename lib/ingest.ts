@@ -128,6 +128,11 @@ function mkLogger(jobId?: string) {
   };
 }
 
+function inferWeekFromText(title: string | null, url: string): number | null {
+  const hay = `${title ?? ""} ${url}`.toLowerCase();
+  const m = hay.match(/\bweek\s*:?\s*(\d{1,2})\b/);
+  return m ? Number(m[1]) : null;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DB helpers (articles)
@@ -565,15 +570,10 @@ export async function ingestSourceById(
         }
         scrapedImage = scraped?.image_url ?? null;
 
-        const klass = classifyArticle({
-          title: chosenTitle ?? undefined,
-          summary: (scraped as { summary?: string | null })?.summary ?? undefined,
-          url: canonical,
-          sourceName: src.name ?? undefined,
-        });
-
+        const klass = classifyArticle({ title: chosenTitle, url: canonical });
         const pageUrl = scraped.url ?? link;
         const isPlayerPage = looksLikePlayerPage(pageUrl, chosenTitle ?? undefined);
+        
 
         const res = await upsertArticle({
           canonical_url: canonical,
@@ -588,7 +588,7 @@ export async function ingestSourceById(
           topics: klass.topics,
           primary_topic: klass.primary,
           secondary_topic: klass.secondary,
-          week: klass.week,
+          week: inferWeekFromText(chosenTitle, canonical),
           players: chosenPlayers,
           is_player_page: isPlayerPage,
         });
@@ -619,11 +619,7 @@ export async function ingestSourceById(
     // 3) Fallback upsert with feed data + classification from feed title/URL
     await log.debug("Using fallback upsert (no scraper)", { link });
 
-    const klass = classifyArticle({
-      title: feedTitle ?? undefined,
-      url: link,
-      sourceName: src.name ?? undefined,
-    });
+    const klass = classifyArticle({ title: chosenTitle, url: canonical });
 
     const players = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
     const isPlayerPage = looksLikePlayerPage(link, feedTitle ?? undefined);
@@ -641,7 +637,7 @@ export async function ingestSourceById(
       topics: klass.topics,
       primary_topic: klass.primary,
       secondary_topic: klass.secondary,
-      week: klass.week,
+      week: inferWeekFromText(chosenTitle, canonical),
       players,
       is_player_page: isPlayerPage,
     });

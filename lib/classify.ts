@@ -1,289 +1,227 @@
 // lib/classify.ts
-import { normalizeTitle } from "@/lib/strings"; 
+// Canonical topic classifier with broader coverage and safe fallback to reduce NULLs.
+// No `any` types.
 
+export type Topic = "rankings" | "start-sit" | "waiver-wire" | "injury" | "dfs" | "advice";
 
-// Canonical section/topic tags we store in the DB
-export type Topic =
-  | "rankings"
-  | "start-sit"
-  | "waiver-wire"
-  | "injury"
-  | "dfs"
-  | "advice";
-
-export type Classification = {
-  primary: Topic | null;     // null => general/news
-  secondary: Topic | null;   // never equal to primary
-  topics: string[];          // flat tag list (sleepers, week:1, draft-prep, etc.)
-  confidence: number;
-  week: number | null;
+export type ClassifyResult = {
+  primary: Topic | null;
+  secondary: Topic | null;
+  topics: Topic[]; // canonical only
+  isStatic?: boolean;
+  isPlayerPage?: boolean;
 };
 
-type Input = {
-  title?: string | null;
-  summary?: string | null;
-  url?: string | null;         // URL fully used (path & query)
-  sourceName?: string | null;
-  week?: number | null;
+const CANON: Topic[] = ["rankings", "start-sit", "waiver-wire", "injury", "dfs", "advice"];
+
+// Keyword sets (matched against title + url). Keep simple RegExps for speed.
+// NOTE: add new patterns in the blocks below where commented. Keep them specific to avoid false positives.
+const KW: Record<Topic, RegExp[]> = {
+  rankings: [
+    /rankings?\b/i,
+    /ros\b/i,
+    /rest[-\s]?of[-\s]?season/i,
+    /tiers?\b/i,
+    /top\s*\d+\b/i,
+    /cheat\s*sheet/i,
+    /projections?\b/i,
+    // additions:
+    /big\s*board\b/i,   // e.g., "Big Board"
+    /\bECR\b/i          // Expert Consensus Rankings
+  ],
+  "start-sit": [
+    /start[-\s\/]?sit/i,
+    /sit[-\s\/]?start/i,
+    // handle straight + curly quotes + HTML entity for Start 'Em / Sit 'Em
+    /start\s*(?:'|’|&#8217;|&#39;|&#x27;)?em/i,
+    /sit\s*(?:'|’|&#8217;|&#39;|&#x27;)?em/i,
+    /who\s+to\s+start/i,
+    /who\s+should\s+i\s+start/i,
+    /must[-\s]?start/i,
+    // TODO: add house styles like "stard/sitd" if you encounter them
+  ],
+  "waiver-wire": [
+    /waiver[s-]?\s*wire/i,
+    /waivers?\b/i,
+    /pick\s*ups?\b/i,
+    /adds?\b/i,
+    /drops?\b/i,
+    /stream(?:er|ing|s)?\b/i,
+    /stash(?:es|ing)?\b/i,
+    /watch\s*list/i,
+    /faab\b/i,
+    /free\s*agents?\b/i,
+    // additions:
+    /\bFAB\b/i,
+    /claims?\b/i,
+    /adds?\/drops?/i,
+    /priority\s+pickups?\b/i,
+    // TODO: add site-specific acronyms if they become common
+  ],
+  injury: [
+    /injur(?:y|ies)\b/i,
+    /practice\s+report/i,
+    /inactives?\b/i,
+    /actives?\b/i,
+    /questionable\b/i,
+    /doubtful\b/i,
+    /probable\b/i,
+    /game[-\s]?time\s+decision/i,
+    /did\s+not\s+practice|\bDNP\b/i,
+    /limited\s+practice/i,
+    /out\s+for\s+week\b/i,
+    // additions (status & roster moves):
+    /return(?:ed)?\s+to\s+practice/i,
+    /back\s+(?:to|at)\s+practice/i,
+    /spotted\s+at\s+practice/i,
+    /full\s+(?:participant|practice)/i,
+    /injury\s+report/i,
+    /game\s+status/i,
+    /placed\s+on\s+(?:injured\s+reserve|IR)\b/i,
+    /activated\s+from\s+IR\b/i,
+    /designated\s+to\s+return/i,
+    /\bPUP\b|physically\s+unable\s+to\s+perform|\bNFI\b/i,
+    // additions (common ailments):
+    /concussion|hamstring|calf|groin|ankle|\bACL\b|\bMCL\b|\bPCL\b|high[\s-]*ankle/i,
+    // TODO: add more specific injury terms as they recur in your dataset
+  ],
+  dfs: [
+    /\bDFS\b/i,
+    /DraftKings?/i,
+    /FanDuel/i,
+    /yahoo\s+daily/i,
+    /PrizePicks?/i,
+    /\bUnderdog\b/i,
+    /\bGPP\b/i,
+    /cash\s+game/i,
+    /value\s+plays?/i,
+    /lineups?\b/i,
+    /prop[s]?\b/i,
+    // additions:
+    /showdown\b/i,
+    /player\s+pool\b/i,
+    /optimizer\b/i,
+    // TODO: add other DFS sites if you ingest them (e.g., SuperDraft)
+  ],
+  advice: [
+    /sleepers?\b/i,
+    /busts?\b/i,
+    /starts?\b/i,
+    /breakouts?\b/i,
+    /buy\s*low|sell\s*high/i,
+    /targets?\b/i,
+    /strategy\b/i,
+    /tips?\b/i,
+    /lessons|takeaways?/i,
+    // additions (picks/predictions/betting-ish analysis):
+    /picks?\b/i,
+    /score\s+predictions?\b/i,
+    /bold\s+predictions?\b/i,
+    /odds|spreads?|moneyline|over\/?under/i,
+    /grades?|reactions?|winners|losers/i,
+    // TODO: add content-series names you trust to map to advice
+  ]
 };
 
-const has = (re: RegExp, s: string) => re.test(s);
-
-// ────────────────────────────────────────────────────────────────────────────
-// Regex bank (URL-friendly; tolerant to hyphen/underscore/slash/space)
-const RE = {
-  // week in title or URL: week-3, wk_03, week3, etc.
-  week: /\b(?:wk|week)[\s\-._]*([0-9]{1,2})\b/i,
-
-  waiver:
-    /\b(waiver(?:[\s\-_]*wire)?|waivers?|pick[\s\-_]*ups?|adds?|drop(?:s|[\s\-_]*adds?)?|streamers?|faab|stash(?:es)?|deep[\s\-_]*adds?)\b/i,
-
-  rankings:
-    /\b(ranking|rankings|top[\s\-_]*\d+\s*(rb|wr|te|qb|dst|k)?|tiers?|big[\s\-_]*board|cheat[\s\-_]*sheet|ecr)\b/i,
-
-  startsit:
-    /\b(start[\s\-_\/]*sit|sit[\s\-_\/]*start|who[\s\-_]*to[\s\-_]*start|who[\s\-_]*to[\s\-_]*sit)\b/i,
-
-  sleepers: /\bsleeper(?:s)?\b/i,
-
-  trade:
-    /\b(trade(?:s|d)?|buy[\s\-_]*low|sell[\s\-_]*high|buy\/sell|trade[\s\-_]*targets?)\b/i,
-
-  injury:
-    /\b(injur(?:y|ies)|questionable|doubtful|out[\s\-_]*for|placed[\s\-_]*on[\s\-_]*(?:ir|pup|nfi)|activated|designation|concussion|acl|mcl|hamstring|ankle|groin|illness|inactives?)\b/i,
-
-  dfs: /\b(dfs|draftkings|fan(?:duel|[\s\-_]*duel)|lineups?|cash[\s\-_]*game|gpp|value[\s\-_]*plays?|optimizer)\b/i,
-
-  advice:
-    /\b(advice|tips?|guide|strategy|strategies|how[\s\-_]*to|primer|busts?|breakouts?|targets?|avoid|must[\s\-_]?draft|adp(?:[\s\-_]*(risers|fallers))?|auction|keeper|dynasty)\b/i,
-
-  // explicit draft-prep bucket (flat topic only; primary remains one of Topic)
-  draftprep:
-    /\b(mock[\s\-_]*drafts?|mock[\s\-_]*draft|draft[\s\-_]*(kit|guide|strategy|plan|tips|targets|values|board)|cheat[\s\-_]*sheets?)\b/i,
-
-  // dampeners (used only in the fallback score path)
-  notWaiver:
-    /\b(practice|camp|training[\s\-_]*camp|press[\s\-_]*conference|injur(?:y|ies)|transaction|signs?|re[\s\-_]*signs?|agrees[\s\-_]*to|extension|arrested|suspended)\b/i,
-
-  promoOrBetting:
-    /\b(promo|promotion|bonus[\s\-_]*code|sign[\s\-_]*up[\s\-_]*bonus|odds|best[\s\-_]*bets?|parlay|props?|sportsbook|betting)\b/i,
-
-  notAdvice:
-    /\b(injur(?:y|ies)|questionable|doubtful|out[\s\-_]*for|placed[\s\-_]*on[\s\-_]*(?:ir|pup|nfi)|activated|depth[\s\-_]*chart|status[\s\-_]*report)\b/i,
+// URL path tokens that act as strong hints
+// TIP: adding site-section paths here often boosts recall on vague titles.
+const PATH_HINTS: Partial<Record<Topic, RegExp>> = {
+  rankings: /\/(rankings?|projections?|tiers?)\//i,
+  "waiver-wire": /\/(waiver[-]?wire|waivers?)\//i,
+  "start-sit": /\/(start[-]?sit|sit[-]?start)\//i,
+  injury: /\/(injur(?:y|ies)|inactives?|injury[-]?report)\//i,
+  dfs: /\/(dfs|draftkings?|fanduel|prizepicks?|underdog)\//i,
+  // TODO: add paths used by your favorite sources (e.g., /fantasy/waiver-wire/)
 };
 
-// “Explicit-in-title-or-URL” detectors.
-// Order is the *priority* for choosing primary when multiple fire.
-const EXPLICIT_PRIORITY: { re: RegExp; topic: Topic }[] = [
-  { re: RE.sleepers, topic: "start-sit" }, // sleepers maps to start-sit, checked FIRST
-  { re: RE.startsit, topic: "start-sit" },
-  { re: RE.waiver,   topic: "waiver-wire" },
-  { re: RE.rankings, topic: "rankings" },
-  { re: RE.injury,   topic: "injury" },
-  { re: RE.dfs,      topic: "dfs" },
-  { re: RE.advice,   topic: "advice" },
-];
+// Lightweight site hints: treat these hosts *with /fantasy in the path* as fantasy-first
+const FANTASY_HOST_HINT = /(fantasypros\.com|rotoballer\.com|rotowire\.com|numberfire\.com|draftsharks\.com|razzball\.com)/i;
 
-// soft source priors (used only in fallback)
-const SOURCE_HINTS: Record<string, Partial<Record<Topic, number>>> = {
-  "Sharp Football": { rankings: 0.15, dfs: 0.15, advice: 0.1 },
-  "Razzball (NFL)": { "waiver-wire": 0.15, rankings: 0.15, advice: 0.1 },
-  "Rotoballer NFL": { "waiver-wire": 0.15, rankings: 0.15, advice: 0.1 },
-  "ESPN Fantasy": { advice: 0.05 },
-  "Yahoo Sports NFL": { advice: 0.05 },
-};
+function uniq<T>(arr: T[]): T[] { const s = new Set(arr); return Array.from(s); }
 
-// week extraction from any blob
-function extractWeek(text: string): number | null {
-  const m = text.match(RE.week);
-  if (!m) return null;
-  const w = Number(m[1]);
-  return Number.isFinite(w) ? w : null;
+// Minimal HTML-entity + punctuation normalizer to improve matching (e.g., Start &#8217;Em)
+function normalizeForMatching(s: string): string {
+  return s
+    .replace(/&amp;/gi, "&")
+    .replace(/&#8217;|&#39;|&#x27;/gi, "'")
+    .replace(/[’‘`´]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-export function classifyArticle(input: Input): Classification {
-  const title = normalizeTitle(input.title ?? "").trim();
-  const summary = (input.summary ?? "").trim();
-  const rawUrl = (input.url ?? "").trim();
+function scoreFromMatches(hay: string, urlPath: string): Partial<Record<Topic, number>> {
+  const score: Partial<Record<Topic, number>> = {};
+  function add(t: Topic, n = 1) { score[t] = (score[t] ?? 0) + n; }
 
-  // normalize URL parts to search (path + query only)
-  let urlParts = "";
-  if (rawUrl) {
-    try {
-      const u = new URL(rawUrl);
-      urlParts = `${u.pathname} ${u.search}`.toLowerCase();
-    } catch {
-      urlParts = rawUrl.toLowerCase();
-    }
+  for (const t of CANON) {
+    for (const rx of KW[t]) if (rx.test(hay)) add(t, 1);
   }
 
-  const blob = `${title}\n${summary}`.toLowerCase();
-  const titleUrl = `${title} ${urlParts}`.toLowerCase();
-  const allText = `${title} ${summary} ${urlParts}`.toLowerCase();
-
-  // ——————————————————————————————————————————————————————————————
-  // PHASE 1: Explicit-first branch (no scores/thresholds)
-  // If explicit keywords exist in title/URL, set primary/secondary directly.
-  const explicitHits: Topic[] = [];
-  for (const { re, topic } of EXPLICIT_PRIORITY) {
-    if (re.test(titleUrl)) explicitHits.push(topic);
-  }
-  // de-dupe explicit hits while preserving order
-  const seen = new Set<Topic>();
-  const explicitOrdered = explicitHits.filter((t) => (seen.has(t) ? false : (seen.add(t), true)));
-
-  // Build flat topics from explicit hits (plus related tags)
-  const flatTopics = new Set<string>(["nfl"]);
-  if (RE.rankings.test(allText)) flatTopics.add("rankings");
-  if (RE.startsit.test(allText) || RE.sleepers.test(allText)) {
-    flatTopics.add("start-sit");
-  }
-  if (RE.sleepers.test(allText)) flatTopics.add("sleepers");
-  if (RE.waiver.test(allText))   flatTopics.add("waiver-wire");
-  if (RE.injury.test(allText))   flatTopics.add("injury");
-  if (RE.dfs.test(allText))      flatTopics.add("dfs");
-  if (RE.advice.test(allText) || RE.trade.test(allText)) flatTopics.add("advice");
-  if (RE.draftprep.test(allText)) flatTopics.add("draft-prep");
-
-  // week from title/summary/url
-  const week =
-    input.week ??
-    extractWeek(allText);
-
-  if (week != null) flatTopics.add(`week:${week}`);
-
-  if (explicitOrdered.length > 0) {
-    // Primary is the first hit by priority; secondary is the next distinct hit if present
-    const primary = explicitOrdered[0]!;
-    const secondary = explicitOrdered.find((t) => t !== primary) ?? null;
-
-    return {
-      primary,
-      secondary,
-      topics: [...flatTopics],
-      confidence: 0.95, // explicit keywords → high confidence
-      week: week ?? null,
-    };
+  for (const [t, rx] of Object.entries(PATH_HINTS)) {
+    if (rx && (rx as RegExp).test(urlPath)) add(t as Topic, 2); // stronger weight for path hints
   }
 
-  // ——————————————————————————————————————————————————————————————
-  // PHASE 2: Fallback scoring (when explicit keywords are absent)
-  const score: Record<Topic, number> = {
-    "waiver-wire": 0,
-    rankings: 0,
-    "start-sit": 0,
-    injury: 0,
-    dfs: 0,
-    advice: 0,
-  };
+  return score;
+}
 
-  // Whitelist hits on title/summary and URL-aware
-  const hit = {
-    waiver:   has(RE.waiver, blob)   || has(RE.waiver, titleUrl),
-    rankings: has(RE.rankings, blob) || has(RE.rankings, titleUrl),
-    startsit: has(RE.startsit, blob) || has(RE.startsit, titleUrl),
-    sleepers: has(RE.sleepers, blob) || has(RE.sleepers, titleUrl),
-    trade:    has(RE.trade, blob)    || has(RE.trade, titleUrl),
-    injury:   has(RE.injury, blob)   || has(RE.injury, titleUrl),
-    dfs:      has(RE.dfs, blob)      || has(RE.dfs, titleUrl),
-    advice:   has(RE.advice, blob)   || has(RE.advice, titleUrl),
-    draftprep:has(RE.draftprep, blob)|| has(RE.draftprep, titleUrl),
-  };
+function pickTopicsFromScore(score: Partial<Record<Topic, number>>): Topic[] {
+  const entries = Object.entries(score) as Array<[Topic, number]>;
+  if (!entries.length) return [];
+  entries.sort((a, b) => b[1] - a[1]);
 
-  if (hit.rankings) flatTopics.add("rankings");
-  if (hit.startsit || hit.sleepers) flatTopics.add("start-sit");
-  if (hit.sleepers) flatTopics.add("sleepers");
-  if (hit.waiver) flatTopics.add("waiver-wire");
-  if (hit.injury) flatTopics.add("injury");
-  if (hit.dfs) flatTopics.add("dfs");
-  if (hit.advice || hit.trade) flatTopics.add("advice");
-  if (hit.draftprep) flatTopics.add("draft-prep");
+  // tie-breakers: more specific over general advice
+  const order: Topic[] = ["start-sit", "waiver-wire", "injury", "dfs", "rankings", "advice"];
+  const top = entries.filter(e => e[1] === entries[0][1]).map(e => e[0]);
+  top.sort((a, b) => order.indexOf(a) - order.indexOf(b));
 
-  // scoring (URL hits included implicitly via hit.*)
-  if (hit.waiver)   score["waiver-wire"] += 1.0;
-  if (hit.rankings) score.rankings       += 1.0;
-  if (hit.startsit) score["start-sit"]   += 1.0;
-  if (hit.sleepers) score["start-sit"]   += 0.9; // strong nudge
-  if (hit.injury)   score.injury         += 1.0;
-  if (hit.dfs)      score.dfs            += 1.0;
-  if (hit.advice)   score.advice         += 0.9;
-  if (hit.trade)    score.advice         += 0.6;
+  const topics: Topic[] = uniq([...top, ...entries.map(e => e[0])]).filter(t => CANON.includes(t));
+  return topics;
+}
 
-  // dampeners
-  if (score["waiver-wire"] > 0 && has(RE.notWaiver, blob)) score["waiver-wire"] -= 0.8;
-  if (score.dfs > 0 && has(RE.promoOrBetting, blob))       score.dfs           -= 0.8;
-  if (score.advice > 0 && has(RE.notAdvice, blob))         score.advice        -= 0.8;
-  if (has(RE.promoOrBetting, blob)) score.advice = Math.min(score.advice, 0.2);
-
-  // waiver must be explicit; hints can’t force it
-  if (!hit.waiver) score["waiver-wire"] = Math.min(score["waiver-wire"], 0.15);
-
-  // soft source priors
-  const hints = input.sourceName ? SOURCE_HINTS[input.sourceName] : undefined;
-  if (hints) for (const [k, v] of Object.entries(hints)) score[k as Topic] += v ?? 0;
-
-  // choose primary by score (softer thresholds than original)
-  const ordered = (Object.entries(score) as [Topic, number][])
-    .sort((a, b) => b[1] - a[1]);
-
-  const [bestKey, bestScore] = ordered[0]!;
-  const [secondKey, secondScore] = ordered[1]!;
-
-  const MIN_PRIMARY = 0.80;
-  const MIN_SECOND  = 0.60;
-  const CLOSE_RATIO = 0.55;
-
-  const primary: Topic | null = bestScore >= MIN_PRIMARY ? bestKey : null;
-
-  // For secondary, prefer an actually strong #2 that’s close to #1
-  let secondary: Topic | null = null;
-  if (primary) {
-    if (
-      secondKey !== primary &&
-      secondScore >= MIN_SECOND &&
-      secondScore >= bestScore * CLOSE_RATIO
-    ) {
-      secondary = secondKey;
-    }
+function toCanon(list: string[]): Topic[] {
+  const out: Topic[] = [];
+  for (const t of list) {
+    const k = t.toLowerCase();
+    if ((CANON as string[]).includes(k)) out.push(k as Topic);
   }
+  return uniq(out);
+}
 
-  const confidence = Math.max(0.1, Math.min(0.99, bestScore));
+export function looksLikePlayerPage(url: string, title: string | null | undefined): boolean {
+  const u = (url ?? "").toLowerCase();
+  if (/\b(player|profile|bio|stats)\b/.test(u) && /\/[a-z-]+\/?[a-z-]*\d*/.test(u)) return true;
+  return /\bprofile\b/i.test((title ?? "").toString());
+}
 
-  // If nothing cleared the bar, keep primary null (general/news)
-  const anyMeaningful =
-    bestScore >= MIN_PRIMARY ||
-    secondScore >= MIN_PRIMARY ||
-    ordered.some(([, v]) => v >= MIN_PRIMARY);
+export function looksStatic(url: string): boolean {
+  return /(\/tag\/|\/category\/|\/topics\/|\/series\/|fantasy-football-news\/?$)/i.test(url);
+}
+
+export function classifyArticle(args: { title?: string | null; url: string }): ClassifyResult {
+  const titleRaw = (args.title ?? "").toString();
+  const title = normalizeForMatching(titleRaw);
+  const url = args.url;
+  const hay = `${title} ${url}`.toLowerCase();
+
+  const urlObj = (() => { try { return new URL(url); } catch { return null as URL | null; } })();
+  const path = urlObj ? urlObj.pathname.toLowerCase() + "/" : "/";
+
+  const score = scoreFromMatches(hay, path);
+  let topics = pickTopicsFromScore(score);
+
+  // Safe fallback: if nothing matched but it's clearly fantasy content, default to advice
+  const fantasyish = /\bfantasy\b/i.test(hay) || (FANTASY_HOST_HINT.test(url) && /\/fantasy\//i.test(path));
+  if (topics.length === 0 && fantasyish) topics = ["advice"];
+
+  topics = toCanon(topics);
+  const primary = topics[0] ?? null;
+  const secondary = topics.find(t => t !== primary) ?? null;
 
   return {
-    primary: anyMeaningful ? primary : null,
+    primary,
     secondary,
-    topics: [...flatTopics],
-    confidence,
-    week: week ?? null,
+    topics,
+    isStatic: looksStatic(url),
+    isPlayerPage: looksLikePlayerPage(url, title)
   };
-}
-
-
-// lib/classify.ts
-export function looksLikePlayerPage(url?: string | null, title?: string | null, ): boolean {
-  const u = (url ?? "").toLowerCase();
-  const t = (title ?? "").trim();
-
-  if (!u && !t) return false;
-
-  // URL patterns
-  if (u.match(/fantasypros\.com\/.*\/nfl\/(players|stats|news)\/[a-z0-9-]+\.php/)) return true;
-  if (u.match(/nbcsports\.com\/.*\/nfl\/[a-z0-9-]+\/(\d+|[0-9a-f-]{36})/)) return true;
-  if (u.match(/sports\.yahoo\.com\/.*\/nfl\/players\/\d+/)) return true;
-  if (u.match(/espn\.com\/nfl\/player\/_\/id\/\d+/)) return true;
-  if (u.match(/pro-football-reference\.com\/players\/[A-Z]\/[A-Za-z0-9]+\.htm/)) return true;
-  if (u.match(/rotowire\.com\/football\/player\/[a-z0-9-]+-\d+/)) return true;
-
-  // Bare-name titles
-  if (t && /^[A-Z][A-Za-z.'-]+( [A-Z][A-Za-z.'-]+){0,3}( (?:Jr|Sr|II|III|IV)\.?)?$/.test(t)) {
-    return true;
-  }
-
-  return false;
 }

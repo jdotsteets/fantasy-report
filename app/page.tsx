@@ -75,7 +75,6 @@ function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
 
 const CURRENT_WAIVER_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
 
-const HERO_MAX = "48rem"; // <- pick your hero width (48rem ≈ max-w-3xl). Change once here.
 
 
 
@@ -279,32 +278,26 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
   return (
     <Suspense fallback={null}>
       <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
-            <div className="mx-auto w-full" style={{ ["--hero-w" as any]: HERO_MAX }}>
-              {/* Header: same width as hero; scale text to container width */}
-              <header className="mb-4">
-                <div
-                  className="mx-auto max-w-[var(--hero-w)] px-2 [container-type:inline-size]"
-                  /* ^ enables container query units for children */
-                >
-                  <h1
-                    className="
-                      whitespace-nowrap text-center font-extrabold tracking-tight leading-tight text-black
-                      text-[clamp(22px,8cqw,56px)]
-                      /*        ^^^^^ scales with container width (the same as hero) */
-                    "
-                  >
-                    The Fantasy Report
-                  </h1>
-                </div>
-              </header>
+            <header className="mb-4">
+              {/* same width as the Hero card: max-w-2xl */}
+              <div className="mx-auto max-w-2xl px-2">
+<h1
+  className="
+    text-center font-extrabold leading-tight tracking-tight text-black
+    !text-[clamp(28px,14cqw,84px)] lg:!text-7xl xl:!text-8xl
+  "
+>
+  The Fantasy Report
+</h1>
+              </div>
+            </header>
 
-              {/* Hero: same max width */}
-              {showHero && hero && (
-                <div className="mb-8 mx-auto max-w-[var(--hero-w)]">
-                  <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
-                </div>
-              )}
-            </div>
+
+        {showHero && hero && (
+          <div className="mb-8 mx-auto max-w-2xl">
+            <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 px-3 py-2">
           <ImageToggle />
