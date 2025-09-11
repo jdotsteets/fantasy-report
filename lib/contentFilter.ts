@@ -125,13 +125,57 @@ const STATIC_RANKING = /\b(rankings?|tiers?|ros|rest[- ]of[- ]season|ecr|expert 
 const SECTION_HUBS = /\/(?:rankings|tools|podcasts?|videos?|teams|injur(?:y|ies)|depth[- ]?charts?)\/?$/i;
 
 // Team sites (example keeps; extend as needed)
-const TEAM_HOST_PATTERNS: RegExp[] = [
+export const TEAM_HOST_PATTERNS: RegExp[] = [
+  // NFC West
+  /(^|\.)49ers\.com$/i,
+  /(^|\.)seahawks\.com$/i,
+  /(^|\.)therams\.com$/i,        // L.A. Rams official
+  /(^|\.)azcardinals\.com$/i,
+
+  // NFC East
   /(^|\.)philadelphiaeagles\.com$/i,
   /(^|\.)dallascowboys\.com$/i,
-  /(^|\.)patriots\.com$/i,
-  // add more official team domains if you want to block them completely
-];
+  /(^|\.)giants\.com$/i,         // NY Giants
+  /(^|\.)commanders\.com$/i,     // Washington
+  /(^|\.)washingtonfootball\.com$/i, // legacy
 
+  // NFC North
+  /(^|\.)packers\.com$/i,
+  /(^|\.)vikings\.com$/i,
+  /(^|\.)chicagobears\.com$/i,
+  /(^|\.)detroitlions\.com$/i,
+
+  // NFC South
+  /(^|\.)buccaneers\.com$/i,
+  /(^|\.)neworleanssaints\.com$/i,
+  /(^|\.)atlantafalcons\.com$/i,
+  /(^|\.)panthers\.com$/i,       // Carolina
+
+  // AFC West
+  /(^|\.)chiefs\.com$/i,
+  /(^|\.)raiders\.com$/i,
+  /(^|\.)chargers\.com$/i,
+  /(^|\.)denverbroncos\.com$/i,
+
+  // AFC East
+  /(^|\.)patriots\.com$/i,
+  /(^|\.)buffalobills\.com$/i,
+  /(^|\.)miamidolphins\.com$/i,
+  /(^|\.)newyorkjets\.com$/i,
+
+  // AFC North
+  /(^|\.)steelers\.com$/i,
+  /(^|\.)bengals\.com$/i,
+  /(^|\.)baltimoreravens\.com$/i,
+  /(^|\.)clevelandbrowns\.com$/i,
+
+  // AFC South
+  /(^|\.)colts\.com$/i,
+  /(^|\.)jaguars\.com$/i,
+  /(^|\.)houstontexans\.com$/i,
+  /(^|\.)tennesseetitans\.com$/i,
+  /(^|\.)titansonline\.com$/i,   // legacy
+];
 
 
 /** Gambling/DFS hosts: default block with narrow editorial allowlist */

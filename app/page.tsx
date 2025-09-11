@@ -191,7 +191,6 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
       case "rankings":
         return (
           <>
-            <StaticLinksSection initial="rankings_ros" />
             <LoadMoreSection
               title="Rankings"
               sectionKey="rankings"
@@ -228,7 +227,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
       case "news":
         return (
           <LoadMoreSection
-            title="News & Updates"
+            title="Headlines"
             sectionKey="news"
             initialItems={latestFiltered}
             days={days}
@@ -239,7 +238,6 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
       case "dfs":
         return (
           <>
-            <StaticLinksSection initial="rankings_ros" />
             <LoadMoreSection
               title="DFS"
               sectionKey="dfs"
@@ -368,6 +366,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sourceId={selectedSourceId ?? undefined}
                 provider={selectedProvider ?? undefined}   
               />
+              <StaticLinksSection initial="rankings_ros" />
               <Section title="Sites">
                 <FantasyLinks />
               </Section>

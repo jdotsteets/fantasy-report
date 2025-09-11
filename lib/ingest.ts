@@ -187,6 +187,45 @@ function pickNonEmpty<T extends string | null | undefined>(...vals: T[]): string
   return null;
 }
 
+// lib/ingest.ts
+
+function isGenericCanonical(canon: string, original?: string | null): boolean {
+  try {
+    const cu = new URL(canon);
+    const path = cu.pathname.replace(/\/+$/, "");
+    const generic = new Set([
+      "", "/", "/research", "/news", "/blog", "/articles",
+      "/sports", "/nfl", "/fantasy", "/fantasy-football",
+    ]);
+    if (generic.has(path)) return true;
+
+    if (original) {
+      const ou = new URL(original);
+      const cSeg = cu.pathname.split("/").filter(Boolean).length;
+      const oSeg = ou.pathname.split("/").filter(Boolean).length;
+      if (cu.host === ou.host && cSeg < 2 && oSeg >= 2) return true;
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Pick a canonical URL, guaranteed non-null.
+ * If the provided canonical looks like a generic section page,
+ * fall back to the real page URL.
+ */
+
+
+function chooseCanonical(
+  rawCanonical: string | null | undefined,
+  pageUrl: string | null | undefined
+): string | null {
+  const canon = (rawCanonical ?? "").trim() || null;
+  const page  = (pageUrl ?? "").trim() || null;
+  if (canon && !isGenericCanonical(canon, page)) return canon;
+  return page; // fall back to the real page URL
+}
+
 function toDateOrNull(v: unknown): Date | null {
   if (!v) return null;
   if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
@@ -198,19 +237,20 @@ function toDateOrNull(v: unknown): Date | null {
 }
 
 export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
-  // Choose primary URL
-  const primary = pickNonEmpty(row.canonical_url, row.url, row.link);
-  if (!primary) return { updated: true }; // nothing to do, treat as no-op
+  // Prefer the real page URL; use canonical only as a hint.
+  const pageUrl = pickNonEmpty(row.url, row.link, row.canonical_url);
+  if (!pageUrl) return { updated: true }; // nothing useful to write
 
-  const canonical = pickNonEmpty(row.canonical_url, primary)!;
-  const url = pickNonEmpty(row.url, primary)!;
+  // chooseCanonical must return a string (fallback to pageUrl when canonical is generic)
+  const canonical = chooseCanonical(row.canonical_url ?? null, pageUrl);
+  const url = pageUrl;
 
   const publishedAt = toDateOrNull(row.publishedAt ?? row.published_at);
 
-  const topicsArr = Array.isArray(row.topics) ? row.topics : null;
+  const topicsArr  = Array.isArray(row.topics)  ? row.topics  : null;
   const playersArr = Array.isArray(row.players) ? row.players : null;
 
-  const srcId = row.source_id ?? row.sourceId ?? null;
+  const srcId        = row.source_id ?? row.sourceId ?? null;
   const isPlayerPage = row.is_player_page ?? null;
 
   const params = [
@@ -222,7 +262,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
     publishedAt,              // $6 ::timestamptz
     row.image_url ?? null,    // $7
     row.domain ?? null,       // $8
-    row.sport ?? null, // $9
+    row.sport ?? null,        // $9
     topicsArr,                // $10 ::text[]
     row.primary_topic ?? null,// $11
     row.secondary_topic ?? null, // $12
@@ -268,6 +308,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   const inserted = !!rows?.[0]?.inserted;
   return inserted ? { inserted: true } : { updated: true };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sources
@@ -435,7 +476,7 @@ export async function ingestSourceById(
   const log = mkLogger(jobId);
   const adapters = await loadAdapters();
 
-  // NEW: guard list + helper (tweak IDs as needed)
+  // Guard list (now includes 3136)
   const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([6, 3135, 3136]);
   const looksClearlyNFL = (url: string, title?: string | null) => {
     const u = (url || "").toLowerCase();
@@ -465,13 +506,12 @@ export async function ingestSourceById(
     try { await setProgress(jobId, 0, limit); } catch {}
   }
 
-  // 1) Candidate items via your sources/index.ts
+  // 1) Candidate items
   await log.info("Fetching candidate items", { sourceId, limit });
   let items: Array<{ title: string; link: string; publishedAt?: Date | string | null }> = [];
   try {
     items = await fetchItemsForSource(sourceId, limit);
     await log.debug("Fetched feed items", { mode: "sources-index", count: items.length });
-    await log.debug("Fetched feed items", { mode: "fetchItemsForSource", count: items.length });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     await log.error("Failed to fetch candidates", { sourceId, error: msg });
@@ -494,40 +534,33 @@ export async function ingestSourceById(
       continue;
     }
 
-    // NEW: per-source non-NFL guard (blocks non-NFL before any scrape/upsert)
+    // Non-NFL guard
     if (NON_NFL_GUARD_SOURCE_IDS.has(src.id)) {
       if (!looksClearlyNFL(link, feedTitle)) {
         skipped++;
         await log.debug("non_nfl_guard: blocked", { sourceId: src.id, link, feedTitle });
-        await logIngest(src, "blocked_by_filter", link, {
-          title: feedTitle,
-          detail: "non_nfl_guard",
-        });
+        await logIngest(src, "blocked_by_filter", link, { title: feedTitle, detail: "non_nfl_guard" });
         continue;
       }
     }
 
-    // Optional routing (article vs index)
+    // Router / index checks
     await log.debug("Ingesting item", { link, feedTitle, sourceId });
     try {
       if (adapters.routeByUrl) {
         const routed = await adapters.routeByUrl(link);
         if (routed?.kind === "skip") {
           skipped++;
-          await log.debug("Router suggested skip", { link, suggested_reason: routed?.reason });
-          await log.debug("Router decision", { link, decision: routed?.kind, reason: routed?.reason });
-          await logIngest(src, `skip_router`, link, { title: feedTitle, detail: routed?.reason ?? null });
+          await logIngest(src, "skip_router", link, { title: feedTitle, detail: routed?.reason ?? null });
           continue;
         }
         if (routed?.kind === "index") {
           skipped++;
-          await log.debug("Skipped index/section page", { link, reason: routed?.reason, section: routed?.section });
-          await logIngest(src, `skip_index`, link, { title: feedTitle, detail: routed?.reason ?? null });
+          await logIngest(src, "skip_index", link, { title: feedTitle, detail: routed?.reason ?? null });
           continue;
         }
       } else if (isLikelyIndexOrNonArticle(link)) {
         skipped++;
-        await log.debug("Skipped non-article/index page", { link });
         await logIngest(src, "skip_index", link, { title: feedTitle });
         continue;
       }
@@ -543,8 +576,9 @@ export async function ingestSourceById(
       if (!Number.isNaN(d.valueOf())) publishedAt = d;
     }
 
-    // 2) Optional scrape enrich (canonical/title/summary/image/published_at)
-    let canonical = link;
+    // 2) Optional scrape enrich
+    // Ensure canonical is *always* a string
+    let canonical = chooseCanonical(null, link) ?? link;
     let chosenTitle = feedTitle;
     let scrapedImage: string | null = null;
     let chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
@@ -559,31 +593,33 @@ export async function ingestSourceById(
           gotTitle: !!scraped?.title,
           gotImage: !!scraped?.image_url,
         });
-        if (scraped?.canonical_url) canonical = scraped.canonical_url!;
+
+        // Use the real page URL for canonical fallback
+        const pageUrl = scraped?.url ?? link;
+        canonical = chooseCanonical(scraped?.canonical_url ?? null, pageUrl) ?? pageUrl;
+
         if (!publishedAt && scraped?.published_at) {
-          const d = new Date(scraped.published_at as string);
-          if (!Number.isNaN(d.valueOf())) publishedAt = d;
+          const d2 = new Date(scraped.published_at as string);
+          if (!Number.isNaN(d2.valueOf())) publishedAt = d2;
         }
-        if (scraped?.title) {
-          chosenTitle = scraped.title;
-          chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
-        }
+        if (scraped?.title) chosenTitle = scraped.title;
+
+        // Re-extract players now that canonical may have changed
+        chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
         scrapedImage = scraped?.image_url ?? null;
 
         const klass = classifyArticle({ title: chosenTitle, url: canonical });
-        const pageUrl = scraped.url ?? link;
         const isPlayerPage = looksLikePlayerPage(pageUrl, chosenTitle ?? undefined);
-        
 
         const res = await upsertArticle({
           canonical_url: canonical,
-          url: scraped.url ?? link,
+          url: pageUrl,
           source_id: sourceId,
           title: chosenTitle,
-          author: scraped.author ?? null,
+          author: scraped?.author ?? null,
           published_at: publishedAt,
           image_url: scrapedImage,
-          domain: hostnameOf(scraped.url ?? link) ?? null,
+          domain: hostnameOf(pageUrl) ?? null,
           sport: "nfl",
           topics: klass.topics,
           primary_topic: klass.primary,
@@ -608,7 +644,7 @@ export async function ingestSourceById(
           await upsertPlayerImage({ key, url: scrapedImage! });
         }
 
-        continue;
+        continue; // finished this item
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -616,9 +652,8 @@ export async function ingestSourceById(
       await logIngest(src, "parse_error", link, { title: feedTitle, detail: msg });
     }
 
-    // 3) Fallback upsert with feed data + classification from feed title/URL
-    await log.debug("Using fallback upsert (no scraper)", { link });
-
+    // 3) Fallback (no scraper)
+    canonical = chooseCanonical(null, link) ?? link;
     const klass = classifyArticle({ title: chosenTitle, url: canonical });
 
     const players = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
@@ -659,7 +694,7 @@ export async function ingestSourceById(
 
   async function backfillAfterUpsert(
     canon: string,
-    primaryTopic: string | null,
+    _primaryTopic: string | null,
     possiblePlayerName?: string | null
   ) {
     const rs = await dbQuery<{ id: number; image_url: string | null }>(
