@@ -1,5 +1,5 @@
 // app/api/players/[key]/articles/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -14,7 +14,7 @@ type Row = {
   source: string | null;
   primary_topic: string | null;
   is_player_page: boolean | null;
-  ts: string;                // ISO timestamp
+  ts: string;
   image_url: string | null;
 };
 
@@ -40,10 +40,14 @@ function toRows<T>(res: unknown): T[] {
   return Array.isArray(obj?.rows) ? obj.rows! : [];
 }
 
-export async function GET(req: NextRequest, ctx: { params: { key?: string } }) {
+// ✅ Correct App Router signature
+export async function GET(
+  req: Request,
+  { params }: { params: { key: string } }
+) {
   try {
     const url = new URL(req.url);
-    const rawKey = decodeURIComponent(ctx?.params?.key ?? "").trim().toLowerCase();
+    const rawKey = decodeURIComponent(params.key ?? "").trim().toLowerCase();
     if (!rawKey) {
       return NextResponse.json({ ok: false, error: "invalid_key", items: [] }, { status: 400 });
     }
@@ -54,7 +58,7 @@ export async function GET(req: NextRequest, ctx: { params: { key?: string } }) {
 
     const variants = keyVariants(rawKey);
 
-    // 1) Primary: use the players[] array overlap
+    // 1) Primary: articles.players overlap
     const primaryRes = await dbQuery<Row>(
       `
       SELECT
@@ -71,7 +75,7 @@ export async function GET(req: NextRequest, ctx: { params: { key?: string } }) {
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE COALESCE(a.published_at, a.discovered_at) >= NOW() - ($1::int || ' days')::interval
-        AND a.players && $2::text[]         -- any player key variant present
+        AND a.players && $2::text[]
         AND (a.sport IS NULL OR lower(a.sport) = $3)
       ORDER BY ts DESC NULLS LAST, a.id DESC
       LIMIT $4
@@ -81,7 +85,7 @@ export async function GET(req: NextRequest, ctx: { params: { key?: string } }) {
 
     let rows = toRows<Row>(primaryRes);
 
-    // 2) Fallback: if nothing in players[], try fuzzy title/url match
+    // 2) Fallback: fuzzy match on title/url if nothing in players[]
     if (rows.length === 0) {
       const name = displayNameFromKey(rawKey);
       const titleLike = `%${name}%`;
