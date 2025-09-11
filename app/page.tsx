@@ -73,7 +73,7 @@ function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
   return Math.max(1, weeks);
 }
 
-//const CURRENT_WAIVER_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
+const CURRENT_WAIVER_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
 
 
 const SPORT = "nfl";
@@ -119,21 +119,28 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const sectionParam = rawSection.toLowerCase().trim();
   const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
 
+
+  const selectedProviderRaw = (Array.isArray(sp.provider) ? sp.provider[0] : sp.provider) ?? "";
+  const selectedProvider = selectedProviderRaw && selectedProviderRaw.trim() !== "" ? selectedProviderRaw.trim() : null;
+
   const selectedSourceId =
     Number(Array.isArray(sp.sourceId) ? sp.sourceId[0] : sp.sourceId) || null;
   const isSourceMode = !!selectedSourceId;
 
   // widen window + limits when viewing a single source
-  const days = isSourceMode ? 365 : DEFAULT_DAYS;
+const isFilterMode = !!selectedSourceId || !!selectedProvider;
+
+  // widen window + limits when viewing a single source OR provider
+  const days = isFilterMode ? 365 : DEFAULT_DAYS;
   const limits = {
-    limitNews: isSourceMode ? 150 : 20,
-    limitRankings: isSourceMode ? 60 : 10,
-    limitStartSit: isSourceMode ? 60 : 12,
-    limitAdvice: isSourceMode ? 60 : 10,
-    limitDFS: isSourceMode ? 60 : 10,
-    limitWaivers: isSourceMode ? 60 : 10,
-    limitInjuries: isSourceMode ? 60 : 10,
-    limitHero: isSourceMode ? 24 : 12,
+    limitNews:     isFilterMode ? 150 : 20,
+    limitRankings: isFilterMode ? 60  : 10,
+    limitStartSit: isFilterMode ? 60  : 12,
+    limitAdvice:   isFilterMode ? 60  : 10,
+    limitDFS:      isFilterMode ? 60  : 10,
+    limitWaivers:  isFilterMode ? 60  : 10,
+    limitInjuries: isFilterMode ? 60  : 10,
+    limitHero:     isFilterMode ? 24  : 12,
   };
 
   const data: HomePayload = await getHomeData({
@@ -141,6 +148,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     days,
     week: CURRENT_WEEK,                 // only Waiver Wire uses this filter
     sourceId: selectedSourceId ?? undefined,
+    provider: selectedProvider ?? undefined, // ← NEW
+
     ...limits,
   });
 
@@ -187,6 +196,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
               initialItems={rankingsFiltered}
               days={days}
               sourceId={selectedSourceId ?? undefined}
+              provider={selectedProvider ?? undefined}   
             />
           </>
         );
@@ -198,6 +208,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             initialItems={startSitFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
+            provider={selectedProvider ?? undefined}   
           />
         );
       case "waivers":
@@ -209,6 +220,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             days={days}
             week={CURRENT_WEEK}
             sourceId={selectedSourceId ?? undefined}
+            provider={selectedProvider ?? undefined}   
           />
         );
       case "news":
@@ -219,6 +231,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             initialItems={latestFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
+            provider={selectedProvider ?? undefined}   
           />
         );
       case "dfs":
@@ -231,6 +244,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
               initialItems={dfsFiltered}
               days={days}
               sourceId={selectedSourceId ?? undefined}
+              provider={selectedProvider ?? undefined}   
             />
           </>
         );
@@ -242,6 +256,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             initialItems={adviceFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
+            provider={selectedProvider ?? undefined}   
           />
         );
       case "injury":
@@ -252,6 +267,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             initialItems={injuriesFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
+            provider={selectedProvider ?? undefined}   
           />
         );
     }
@@ -289,12 +305,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
                 sectionKey="rankings"
                 initialItems={rankingsFiltered}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
               <LoadMoreSection
                 title="Start/Sit & Sleepers"
                 sectionKey="start-sit"
                 initialItems={startSitFiltered}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
               <LoadMoreSection
                 title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}
@@ -302,6 +320,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
                 initialItems={waiversFiltered}
                 week={CURRENT_WEEK}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
             </div>
 
@@ -312,6 +331,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
                 sectionKey="news"
                 initialItems={latestFiltered}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
             </div>
 
@@ -323,18 +343,21 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
                 sectionKey="dfs"
                 initialItems={dfsFiltered}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
               <LoadMoreSection
                 title="Advice"
                 sectionKey="advice"
                 initialItems={adviceFiltered}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
               <LoadMoreSection
                 title="Injuries"
                 sectionKey="injury"
                 initialItems={injuriesFiltered}
                 sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
               />
               <Section title="Sites">
                 <FantasyLinks />

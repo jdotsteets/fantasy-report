@@ -63,6 +63,7 @@ export async function GET(req: NextRequest) {
         a.is_player_page,
         COALESCE(a.published_at, a.discovered_at) AS ts,
         a.image_url
+        s.provider
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE COALESCE(a.published_at, a.discovered_at) >= NOW() - ($1 || ' days')::interval

@@ -164,6 +164,7 @@ export async function GET(req: Request) {
         a.week,
         a.topics,
         s.name AS source,
+        s.provider
         COALESCE(a.published_at, a.discovered_at) AS order_ts
       FROM articles a
       JOIN sources s ON s.id = a.source_id

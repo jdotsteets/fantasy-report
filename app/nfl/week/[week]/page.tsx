@@ -27,6 +27,7 @@ export default async function WeekPage(
         a.week,
         a.image_url,
         s.name as source,
+        s.provider,
         coalesce(a.popularity_score, a.popularity, 0) as popularity
       from articles a
       join sources s on s.id = a.source_id

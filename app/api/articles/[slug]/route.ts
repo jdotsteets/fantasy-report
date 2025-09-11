@@ -39,6 +39,7 @@ export async function GET(
         a.week,
         a.topics,
         s.name AS source
+        s.provider
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE a.slug = $1

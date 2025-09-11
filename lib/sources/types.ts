@@ -106,6 +106,7 @@ export type ExistingSource = {
   scrape_selector: string | null;
   scrape_path: string | null;
   adapter_config: Record<string, unknown> | null; // jsonb
+  provider?: string | null;
 };
 
 export type ProbeResult = {
@@ -157,6 +158,7 @@ export type FeedItem = {
   imageUrl?: string | null;
   publishedAt?: Date | null;
   source_id?: number | null;
+  provider?: string | null;
 };
 
 
@@ -170,6 +172,7 @@ export type SourceConfig = {
   scrape_selector: string | null;
   adapter: string | null;
   fetch_mode: "auto" | "rss" | "sitemap" | "html" | null; // keep 'html' for future
+  provider?: string | null;
 };
 
 

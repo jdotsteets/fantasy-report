@@ -12,6 +12,7 @@ export type HomeParams = {
   week?: number | null;
   /** Optional: filter all sections down to a single source */
   sourceId: number | undefined;
+  provider?: string | undefined;
   limitNews: number;
   limitRankings: number;
   limitStartSit: number;
@@ -39,6 +40,7 @@ export type DbRow = {
   topics: string[] | null;
   players: string[] | null;
   source: string;
+  provider?: string | null;
 };
 
 type PoolRow = DbRow & {
@@ -132,12 +134,12 @@ const toDbRow = (r: PoolRow): DbRow => ({
   topics: r.topics,
   players: r.players,
   source: r.source,
+  provider: r.provider ?? null,
 });
 
 /* ───────────────────── SQL (recent pool) ───────────────────── */
 
 function buildPoolSql(): string {
-  // NOTE: exclude static pages from the main pool
   return `
     WITH base AS (
       SELECT
@@ -155,16 +157,17 @@ function buildPoolSql(): string {
         a.primary_topic,
         a.secondary_topic,
         s.name AS source,
+        s.provider,
         COALESCE(a.published_at, a.discovered_at) AS order_ts
       FROM articles a
       JOIN sources s ON s.id = a.source_id
       WHERE
         (
           (a.published_at IS NOT NULL
-            AND a.published_at >= NOW() - ($1 || ' days')::interval)
+            AND a.published_at >= NOW() - ($1::int || ' days')::interval)
           OR
           (a.published_at IS NULL
-            AND a.discovered_at >= NOW() - ($1 || ' days')::interval)
+            AND a.discovered_at >= NOW() - ($1::int || ' days')::interval)
         )
         AND a.is_static IS NOT TRUE
         AND a.is_player_page IS NOT TRUE
@@ -177,7 +180,9 @@ function buildPoolSql(): string {
             OR a.url ILIKE '%fantasy%football%'
           )
         )
-        AND ($3::int IS NULL OR a.source_id = $3)   -- ← optional source filter
+        AND ($3::int IS NULL OR a.source_id = $3::int)
+        AND ($4::text IS NULL OR s.provider = $4::text)     -- ← NEW provider filter
+
     ),
     ranked AS (
       SELECT *,
@@ -189,13 +194,18 @@ function buildPoolSql(): string {
     )
     SELECT
       id, title, url, canonical_url, domain, image_url, published_at, discovered_at, week, topics, players, source,
-      primary_topic, secondary_topic, order_ts::text
+      primary_topic, secondary_topic, order_ts::text, provider
     FROM ranked
     WHERE rn = 1
     ORDER BY order_ts DESC NULLS LAST, id DESC
-    LIMIT $2
+    LIMIT $2::int
   `;
 }
+
+
+//tiny helper for grouping key
+const groupOf = (r: { provider?: string | null; source: string }): string =>
+  (r.provider && r.provider.trim() !== "" ? r.provider : r.source);
 
 // Topic-targeted fetch used when a bucket is underfilled (also excludes static)
 async function fetchMoreByTopic(
@@ -204,71 +214,12 @@ async function fetchMoreByTopic(
   limit: number,
   excludeIds: IdList,
   week: number | null,       // only used for waivers
-  sourceId: number | undefined
+  sourceId: number | undefined,
+  provider?: string | undefined
 ) {
-  const { rows } = await dbQuery<DbRow>(
-    `
-    WITH base AS (
-      SELECT
-        a.id,
-        COALESCE(a.cleaned_title, a.title) AS title,
-        a.url,
-        a.canonical_url,
-        a.domain,
-        a.image_url,
-        a.published_at,
-        a.discovered_at,
-        a.week,
-        a.topics,
-        a.players,
-        s.name AS source,
-        COALESCE(a.published_at, a.discovered_at) AS order_ts
-      FROM articles a
-      JOIN sources s ON s.id = a.source_id
-      WHERE
-        (
-          (a.published_at IS NOT NULL
-            AND a.published_at >= NOW() - ($1 || ' days')::interval)
-          OR
-          (a.published_at IS NULL
-            AND a.discovered_at >= NOW() - ($1 || ' days')::interval)
-        )
-        AND a.is_static IS NOT TRUE
-        AND a.is_player_page IS NOT TRUE
-        AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
-        AND (
-          a.source_id NOT IN (3135, 3138, 3141) OR
-          COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%' OR
-          a.url ILIKE '%nfl%' OR
-          COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
-          a.url ILIKE '%fantasy%football%'
-        )
-        AND a.primary_topic = $2
-        AND ($3::int IS NULL OR a.week = $3)           -- only constrains waivers when week is provided
-        AND ($4::int IS NULL OR a.source_id = $4)      -- ← optional source filter
-        AND NOT (a.id = ANY($5::int[]))                -- don’t duplicate anything already placed
-    )
-    SELECT id, title, url, canonical_url, domain, image_url,
-           published_at, discovered_at, week, topics, source
-    FROM base
-    ORDER BY order_ts DESC NULLS LAST, id DESC
-    LIMIT $6
-    `,
-    [String(days), topic, week, sourceId ?? null, excludeIds, limit]
-  );
-
-  return rows;
-}
-
-// Dedicated static-page fetch (for the optional static section)
-async function fetchStaticPages(
-  days: number,
-  limit: number,
-  types: string[] | null | undefined,
-  sourceId: number | undefined
-): Promise<DbRow[]> {
-  const { rows } = await dbQuery<DbRow>(
-    `
+const { rows } = await dbQuery<DbRow>(
+  `
+  WITH base AS (
     SELECT
       a.id,
       COALESCE(a.cleaned_title, a.title) AS title,
@@ -281,36 +232,109 @@ async function fetchStaticPages(
       a.week,
       a.topics,
       a.players,
-      s.name AS source
+      s.name AS source,
+      s.provider,
+      COALESCE(a.published_at, a.discovered_at) AS order_ts
     FROM articles a
     JOIN sources s ON s.id = a.source_id
     WHERE
-      a.is_static IS TRUE
-      AND (a.published_at >= NOW() - ($1 || ' days')::interval
-           OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+      (
+        (a.published_at IS NOT NULL
+          AND a.published_at >= NOW() - ($1::int || ' days')::interval)
+        OR
+        (a.published_at IS NULL
+          AND a.discovered_at >= NOW() - ($1::int || ' days')::interval)
+      )
+      AND a.is_static IS NOT TRUE
+      AND a.is_player_page IS NOT TRUE
       AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
       AND (
-        a.source_id NOT IN (3135,3138,3141) OR
+        a.source_id NOT IN (3135, 3138, 3141) OR
         COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%' OR
         a.url ILIKE '%nfl%' OR
         COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
         a.url ILIKE '%fantasy%football%'
       )
-      AND (
-        $2::text[] IS NULL
-        OR a.static_type = ANY($2::text[])
-      )
-      AND ($3::int IS NULL OR a.source_id = $3)   -- ← optional source filter
-    ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
-    LIMIT $4
-    `,
-    [String(days), types && types.length ? types : null, sourceId ?? null, limit]
-  );
+      AND a.primary_topic = $2
+      AND ($3::int IS NULL OR a.week = $3::int)
+      AND ($4::int IS NULL OR a.source_id = $4::int)
+      AND ($5::text IS NULL OR s.provider = $5::text)     -- ← NEW
+        AND NOT (a.id = ANY($6::int[]))
+  )
+  SELECT id, title, url, canonical_url, domain, image_url,
+         published_at, discovered_at, week, topics, source, provider
+  FROM base
+  ORDER BY order_ts DESC NULLS LAST, id DESC
+  LIMIT $7::int
+  `,
+  [days, topic, week, sourceId ?? null, provider ?? null, excludeIds, limit]
+);
+
   return rows;
 }
 
-async function fetchPool(days: number, poolLimit: number, sourceId: number | undefined): Promise<PoolRow[]> {
-  const { rows } = await dbQuery<PoolRow>(buildPoolSql(), [String(days), poolLimit, sourceId ?? null]);
+// Dedicated static-page fetch (for the optional static section)
+async function fetchStaticPages(
+  days: number,
+  limit: number,
+  types: string[] | null | undefined,
+  sourceId: number | undefined
+): Promise<DbRow[]> {
+const { rows } = await dbQuery<DbRow>(
+  `
+  SELECT
+    a.id,
+    COALESCE(a.cleaned_title, a.title) AS title,
+    a.url,
+    a.canonical_url,
+    a.domain,
+    a.image_url,
+    a.published_at,
+    a.discovered_at,
+    a.week,
+    a.topics,
+    a.players,
+    s.name AS source,
+    s.provider
+  FROM articles a
+  JOIN sources s ON s.id = a.source_id
+  WHERE
+    a.is_static IS TRUE
+    AND (a.published_at >= NOW() - ($1::int || ' days')::interval
+         OR a.discovered_at >= NOW() - ($1::int || ' days')::interval)
+    AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
+    AND (
+      a.source_id NOT IN (3135,3138,3141) OR
+      COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%' OR
+      a.url ILIKE '%nfl%' OR
+      COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
+      a.url ILIKE '%fantasy%football%'
+    )
+    AND (
+      $2::text[] IS NULL
+      OR a.static_type = ANY($2::text[])
+    )
+    AND ($3::int IS NULL OR a.source_id = $3::int)
+  ORDER BY COALESCE(a.published_at, a.discovered_at) DESC NULLS LAST, a.id DESC
+  LIMIT $4::int
+  `,
+  [days, types && types.length ? types : null, sourceId ?? null, limit]
+);
+
+  return rows;
+}
+
+async function fetchPool(
+  days: number,
+  poolLimit: number,
+  sourceId: number | undefined,
+  provider?: string | undefined   // ← accept provider
+): Promise<PoolRow[]> {
+  const { rows } = await dbQuery<PoolRow>(
+    buildPoolSql(),
+    //    $1     $2         $3                  $4
+    [days, poolLimit, sourceId ?? null, provider ?? null]
+  );
   return rows;
 }
 
@@ -318,7 +342,7 @@ async function fetchPool(days: number, poolLimit: number, sourceId: number | und
 
 export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const {
-    days, week, sourceId,
+    days, week, sourceId, provider,
     limitNews, limitRankings, limitStartSit, limitAdvice, limitDFS, limitWaivers, limitInjuries, limitHero,
     staticSectionLimit = 0,
     staticTypes = null,
@@ -331,7 +355,7 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const poolSize = Math.max(sum * 3, 400);
 
   const [poolRaw, staticRaw] = await Promise.all([
-    fetchPool(days, poolSize, sourceId),
+    fetchPool(days, poolSize, sourceId, provider),
     staticSectionLimit > 0 ? fetchStaticPages(days, staticSectionLimit * 2, staticTypes, sourceId) : Promise.resolve([] as DbRow[]),
   ]);
 
@@ -360,6 +384,22 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const placed = new Set<number>(); // global de-dupe across sections
 
   // ── per-source caps to avoid one site dominating ─────────────
+  // per-provider caps to avoid one provider dominating
+const PER_PROVIDER_CAP: Record<CanonTopic, number> = {
+  rankings: 2,
+  "start-sit": 2,
+  "waiver-wire": 2,
+  dfs: 2,
+  injury: 2,
+  advice: 2,
+};
+
+const perProvider: Record<CanonTopic, Record<string, number>> = {
+  rankings: {}, "start-sit": {}, "waiver-wire": {}, dfs: {}, injury: {}, advice: {},
+};
+
+
+
   const PER_SOURCE_CAP: Record<CanonTopic, number> = {
     rankings: 2,
     "start-sit": 2,
@@ -371,18 +411,25 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   const perSource: Record<CanonTopic, Record<string, number>> = {
     rankings: {}, "start-sit": {}, "waiver-wire": {}, dfs: {}, injury: {}, advice: {},
   };
-  const canTakeFrom = (topic: CanonTopic, source: string) =>
-    (perSource[topic][source] ?? 0) < (PER_SOURCE_CAP[topic] ?? 99);
-  const inc = (topic: CanonTopic, source: string) =>
-    (perSource[topic][source] = (perSource[topic][source] ?? 0) + 1);
+  //onst canTakeFrom = (topic: CanonTopic, source: string) =>
+  //  (perSource[topic][source] ?? 0) < (PER_SOURCE_CAP[topic] ?? 99);
+  //const inc = (topic: CanonTopic, source: string) =>
+  //  (perSource[topic][source] = (perSource[topic][source] ?? 0) + 1);
+  const canTakeFrom = (topic: CanonTopic, group: string) =>
+  (perProvider[topic][group] ?? 0) < (PER_PROVIDER_CAP[topic] ?? 99);
+
+const inc = (topic: CanonTopic, group: string) =>
+  (perProvider[topic][group] = (perProvider[topic][group] ?? 0) + 1);
+
 
   const tryAssign = (topic: CanonTopic, bucket: DbRow[], cap: number, r: PoolRow) => {
     if (bucket.length >= cap) return false;
     if (placed.has(r.id)) return false;
-    if (!canTakeFrom(topic, r.source)) return false;
+    const grp = groupOf(r);
+    if (!canTakeFrom(topic, grp)) return false;
     bucket.push(toDbRow(r));
     placed.add(r.id);
-    inc(topic, r.source);
+    inc(topic, grp);
     return true;
   };
 
@@ -404,18 +451,26 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   // 2) Secondary / overflow top-ups (leftovers only)
   const leftovers = pool.filter((r) => !placed.has(r.id));
 
-  const topUp = (topic: CanonTopic, bucket: DbRow[], cap: number, pred: (r: PoolRow) => boolean) => {
-    if (bucket.length >= cap) return;
-    for (const r of leftovers) {
-      if (bucket.length >= cap) break;
-      if (placed.has(r.id)) continue;
-      if (!pred(r)) continue;
-      if (!canTakeFrom(topic, r.source)) continue;
-      bucket.push(toDbRow(r));
-      placed.add(r.id);
-      inc(topic, r.source);
-    }
-  };
+const topUp = (
+  topic: CanonTopic,
+  bucket: DbRow[],
+  cap: number,
+  pred: (r: PoolRow) => boolean
+) => {
+  if (bucket.length >= cap) return;
+  for (const r of leftovers) {
+    if (bucket.length >= cap) break;
+    if (placed.has(r.id)) continue;
+    if (!pred(r)) continue;
+
+    const grp = groupOf(r);
+    if (!canTakeFrom(topic, grp)) continue;
+
+    bucket.push(toDbRow(r));
+    placed.add(r.id);
+    inc(topic, grp);
+  }
+};
 
   // Rankings by secondary (keeps dynamic rankings)
   topUp("rankings", rankings, limitRankings, (r) => r.secondary_topic === "rankings");
@@ -449,33 +504,39 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
   topUp("advice",   advice,   limitAdvice,   (r) => r.secondary_topic === "advice");
 
   /* 2b) Guaranteed fill: if any bucket is still short, fetch directly by topic. */
-  async function guaranteeFill(
-    bucketTopic: CanonTopic,
-    bucket: DbRow[],
-    cap: number,
-    topic: CanonTopic,
-    weekForTopic: number | null = null
-  ) {
-    if (bucket.length >= cap) return;
-    const needed = cap - bucket.length;
-    const excludeIds = Array.from(placed);
-    const more = await fetchMoreByTopic(
-      topic,
-      days,
-      needed * 2,
-      excludeIds,
-      weekForTopic,
-      sourceId
-    );
-    for (const r of more) {
-      if (bucket.length >= cap) break;
-      if (placed.has(r.id)) continue;
-      if (!canTakeFrom(bucketTopic, r.source)) continue;
-      bucket.push(r);
-      placed.add(r.id);
-      inc(bucketTopic, r.source);
-    }
+async function guaranteeFill(
+  bucketTopic: CanonTopic,
+  bucket: DbRow[],
+  cap: number,
+  topic: CanonTopic,
+  weekForTopic: number | null = null
+) {
+  if (bucket.length >= cap) return;
+  const needed = cap - bucket.length;
+  const excludeIds = Array.from(placed);
+
+  const more = await fetchMoreByTopic(
+    topic,
+    days,
+    needed * 2,
+    excludeIds,
+    weekForTopic,
+    sourceId,
+    provider
+  );
+
+  for (const r of more) {
+    if (bucket.length >= cap) break;
+    if (placed.has(r.id)) continue;
+
+    const grp = groupOf(r);
+    if (!canTakeFrom(bucketTopic, grp)) continue;
+
+    bucket.push(r);
+    placed.add(r.id);
+    inc(bucketTopic, grp);
   }
+}
 
   await guaranteeFill("rankings", rankings, limitRankings, "rankings");
   await guaranteeFill("start-sit", startSit, limitStartSit, "start-sit");
@@ -522,6 +583,46 @@ export async function getHomeData(p: HomeParams): Promise<HomePayload> {
     }
   }
   await enhanceBucket(latest, null);
+
+
+  function interleaveByKey<T>(items: T[], keyFn: (x: T) => string): T[] {
+  const buckets = new Map<string, T[]>();
+  for (const it of items) {
+    const k = keyFn(it);
+    const arr = buckets.get(k);
+    if (arr) arr.push(it); else buckets.set(k, [it]);
+  }
+  const keys = Array.from(buckets.keys());
+  const out: T[] = [];
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const k of keys) {
+      const b = buckets.get(k)!;
+      if (b.length > 0) {
+        out.push(b.shift()!);
+        progressed = true;
+      }
+    }
+  }
+  return out;
+}
+
+// Right before the enhanceBucket(...) Promise.all:
+const keyFn = (x: DbRow) => (x.provider && x.provider.trim() !== "" ? x.provider : x.source);
+const rebalance = (arr: DbRow[]) => {
+  if (arr.length <= 2) return; // tiny lists don't need shuffling
+  const mixed = interleaveByKey(arr, keyFn);
+  arr.splice(0, arr.length, ...mixed);
+};
+
+rebalance(rankings);
+rebalance(startSit);
+rebalance(advice);
+rebalance(dfs);
+rebalance(waivers);
+rebalance(injuries);
+rebalance(latest);
 
   // 5) Optional Static section
   if (staticSectionLimit > 0 && staticRaw.length > 0) {

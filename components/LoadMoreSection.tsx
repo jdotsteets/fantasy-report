@@ -15,6 +15,7 @@ type Props = {
   days?: number;
   week?: number | null;
   sourceId?: number;
+  provider?: string;
 };
 
 export default function LoadMoreSection({
@@ -25,6 +26,7 @@ export default function LoadMoreSection({
   days = 45,
   week = null,
   sourceId,
+  provider,
 }: Props) {
   const [items, setItems] = useState<Article[]>(initialItems);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,7 @@ export default function LoadMoreSection({
     offsetRef.current = initialItems.length;
     setDone(initialItems.length < pageSize);
     setError(null);
-  }, [initialItems, pageSize, sectionKey, days, week, sourceId]);
+  }, [initialItems, pageSize, sectionKey, days, week, sourceId, provider]);
 
   const btnLabel = useMemo(() => `More ${title.replace(/ &.*/i, "")}`, [title]);
 
@@ -58,6 +60,8 @@ export default function LoadMoreSection({
       if (typeof sourceId === "number" && Number.isFinite(sourceId)) {
         params.set("sourceId", String(sourceId)); // must match API param name
       }
+      if (typeof provider === "string" && provider.trim() !== "") params.set("provider", provider); // ← NEW
+
 
       const res = await fetch(`/api/section?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

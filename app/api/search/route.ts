@@ -40,6 +40,7 @@ export async function GET(req: Request) {
       a.published_at,
       a.image_url,
       s.name AS source,
+      s.provider,
       ts_rank(a.tsv, (SELECT tsq FROM needle)) AS rank
     FROM articles a
     JOIN sources s ON s.id = a.source_id

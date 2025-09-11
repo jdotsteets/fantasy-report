@@ -387,6 +387,40 @@ function isLikelyIndexOrNonArticle(url: string) {
   );
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Non-NFL guard for specific sources (add IDs here only)
+// ─────────────────────────────────────────────────────────────────────────────
+export const NON_NFL_GUARD_SOURCE_IDS = new Set<number>([
+  6,     // (example)
+  3135,  // Yahoo source A
+  3136,  // Yahoo source B
+  3177,  // SI.com
+]);
+
+export function looksClearlyNFL(url: string, title?: string | null): boolean {
+  const u = (url || "").toLowerCase();
+  const t = (title || "").toLowerCase();
+
+  // Accept if URL or title strongly hints NFL/fantasy football
+  const okUrl =
+    u.includes("/nfl/") ||
+    u.includes("nfl") ||
+    u.includes("fantasy%20football") ||
+    u.includes("fantasy-football") ||
+    u.includes("waiver") ||
+    u.includes("fantasyfootball");
+
+  const okTitle =
+    t.includes("nfl") ||
+    t.includes("fantasy football") ||
+    t.includes("fantasy-football") ||
+    t.includes("waiver") ||
+    t.includes("fantasyfootball");
+
+  return okUrl || okTitle;
+}
+
 export async function ingestSourceById(
   sourceId: number,
   opts?: { jobId?: string; limit?: number }
@@ -459,6 +493,7 @@ export async function ingestSourceById(
     if (NON_NFL_GUARD_SOURCE_IDS.has(src.id)) {
       if (!looksClearlyNFL(link, feedTitle)) {
         skipped++;
+        await log.debug("non_nfl_guard: blocked", { sourceId: src.id, link, feedTitle });
         await logIngest(src, "blocked_by_filter", link, {
           title: feedTitle,
           detail: "non_nfl_guard",

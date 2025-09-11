@@ -18,6 +18,7 @@ type DbRow = {
   week: number | null;
   topics: string[] | null;
   source: string;
+  provider: string | null;
 };
 
 export const dynamic = "force-dynamic";
@@ -33,11 +34,13 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "invalid key" }, { status: 400 });
     }
 
-    const days     = clampInt(url.searchParams.get("days"),   1, 2000, 45);
-    const limit    = clampInt(url.searchParams.get("limit"),  1, 100,  10);
-    const offset   = clampInt(url.searchParams.get("offset"), 0, 10_000, 0);
-    const week     = toNullableInt(url.searchParams.get("week"));
-    const sourceId = toNullableInt(url.searchParams.get("sourceId")); // ← NEW
+    const days       = clampInt(url.searchParams.get("days"),   1, 2000, 45);
+    const limit      = clampInt(url.searchParams.get("limit"),  1, 100,  10);
+    const offset     = clampInt(url.searchParams.get("offset"), 0, 10_000, 0);
+    const week       = toNullableInt(url.searchParams.get("week"));
+    const sourceId   = toNullableInt(url.searchParams.get("sourceId"));
+    const providerQS = (url.searchParams.get("provider") || "").trim();
+    const provider   = providerQS.length ? providerQS : null;
 
     // ───────── NEWS ─────────
     if (key === "news") {
@@ -56,12 +59,13 @@ export async function GET(req: Request) {
             a.week,
             a.topics,
             s.name AS source,
+            s.provider,
             COALESCE(a.published_at, a.discovered_at) AS order_ts
           FROM articles a
           JOIN sources s ON s.id = a.source_id
           WHERE
-            (a.published_at >= NOW() - ($1 || ' days')::interval
-             OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+            (a.published_at >= NOW() - ($1::int || ' days')::interval
+             OR a.discovered_at >= NOW() - ($1::int || ' days')::interval)
             AND a.is_static IS NOT TRUE
             AND a.is_player_page IS NOT TRUE
             AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
@@ -73,7 +77,8 @@ export async function GET(req: Request) {
                 a.url ILIKE '%fantasy%football%'
               )
             )
-            AND ($4::int IS NULL OR a.source_id = $4)  -- ← NEW
+            AND ($4::int  IS NULL OR a.source_id = $4::int)
+            AND ($5::text IS NULL OR s.provider = $5::text)
         ),
         ranked AS (
           SELECT *,
@@ -84,14 +89,14 @@ export async function GET(req: Request) {
           FROM base
         )
         SELECT id, title, url, canonical_url, domain, image_url,
-               published_at, discovered_at, week, topics, source
+               published_at, discovered_at, week, topics, source, provider
         FROM ranked
         WHERE rn = 1
         ORDER BY order_ts DESC NULLS LAST, id DESC
-        OFFSET $3
-        LIMIT $2
+        OFFSET $3::int
+        LIMIT $2::int
         `,
-        [String(days), limit, offset, sourceId] // ← add sourceId as $4
+        [days, limit, offset, sourceId ?? null, provider] // $1..$5
       );
       return NextResponse.json({ items: rows }, { status: 200 });
     }
@@ -113,12 +118,13 @@ export async function GET(req: Request) {
           a.week,
           a.topics,
           s.name AS source,
+          s.provider,
           COALESCE(a.published_at, a.discovered_at) AS order_ts
         FROM articles a
         JOIN sources s ON s.id = a.source_id
         WHERE
-          (a.published_at >= NOW() - ($1 || ' days')::interval
-           OR a.discovered_at >= NOW() - ($1 || ' days')::interval)
+          (a.published_at >= NOW() - ($1::int || ' days')::interval
+           OR a.discovered_at >= NOW() - ($1::int || ' days')::interval)
           AND a.is_static IS NOT TRUE
           AND a.is_player_page IS NOT TRUE
           AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
@@ -132,19 +138,20 @@ export async function GET(req: Request) {
           AND (
             a.primary_topic = $4
             OR a.primary_topic = REPLACE($4, '-', '_')
-            OR ( $4 = 'waiver-wire' AND a.primary_topic IN ('waiver', 'waiver_wire') )
+            OR ($4 = 'waiver-wire' AND a.primary_topic IN ('waiver', 'waiver_wire'))
           )
-          AND ( $5::int IS NULL OR a.week = $5 )
-          AND ( $6::int IS NULL OR a.source_id = $6 )  -- ← NEW
+          AND ($5::int  IS NULL OR a.week = $5::int)
+          AND ($6::int  IS NULL OR a.source_id = $6::int)
+          AND ($7::text IS NULL OR s.provider = $7::text)
       )
       SELECT id, title, url, canonical_url, domain, image_url,
-             published_at, discovered_at, week, topics, source
+             published_at, discovered_at, week, topics, source, provider
       FROM base
       ORDER BY order_ts DESC NULLS LAST, id DESC
-      OFFSET $3
-      LIMIT $2
+      OFFSET $3::int
+      LIMIT $2::int
       `,
-      [String(days), limit, offset, topic, week, sourceId] // ← add sourceId as $6
+      [days, limit, offset, topic, week ?? null, sourceId ?? null, provider] // $1..$7
     );
 
     return NextResponse.json({ items: rows }, { status: 200 });
