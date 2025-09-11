@@ -1,4 +1,4 @@
-// components/SourceTab.tsx
+// components/SourceTab.tsx — bottom sheet on mobile, popover on desktop
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -104,18 +104,26 @@ export default function SourceTab() {
 
   // UI
   const [open, setOpen] = useState(false);
+  const [isSmall, setIsSmall] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
 
-  // Panel position
+  // Keep a responsive flag (changes on resize)
+  useEffect(() => {
+    const calc = () => setIsSmall(window.innerWidth < 640);
+    calc();
+    window.addEventListener("resize", calc);
+    return () => window.removeEventListener("resize", calc);
+  }, []);
+
+  // Desktop popover positioning
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const recalc = () => {
     const el = btnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    // Wider and taller on small screens
-    const isSmall = window.innerWidth < 640; // Tailwind sm breakpoint
-    const panelW = isSmall ? Math.min(Math.floor(window.innerWidth * 0.92), 420) : 340;
+    const panelW = 340;
     const margin = 8;
     const top = r.bottom + margin;
     const left = Math.min(Math.max(r.left, margin), window.innerWidth - panelW - margin);
@@ -123,25 +131,22 @@ export default function SourceTab() {
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isSmall) return;
     recalc();
     const on = () => recalc();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-
     const onDoc = (e: MouseEvent | TouchEvent) => {
       const target = e.target as Node | null;
       if (!target) return;
       if (panelRef.current?.contains(target)) return;
       if (btnRef.current?.contains(target)) return;
-      setOpen(false); // click outside closes — no full-screen overlay needed
+      setOpen(false);
     };
-
     window.addEventListener("resize", on);
     window.addEventListener("scroll", on, { passive: true });
     window.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("touchstart", onDoc, { passive: true });
-
     return () => {
       window.removeEventListener("resize", on);
       window.removeEventListener("scroll", on);
@@ -149,7 +154,7 @@ export default function SourceTab() {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("touchstart", onDoc);
     };
-  }, [open]);
+  }, [open, isSmall]);
 
   // Scroll active provider into view on open
   useEffect(() => {
@@ -196,6 +201,26 @@ export default function SourceTab() {
     setOpen(false);
   };
 
+  /* ───────── Sheet gestures (mobile) ───────── */
+  const [dragY, setDragY] = useState(0);
+  const [dragStart, setDragStart] = useState<number | null>(null);
+
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    setDragStart(e.touches[0].clientY);
+    setDragY(0);
+  };
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (dragStart == null) return;
+    const dy = e.touches[0].clientY - dragStart;
+    setDragY(Math.max(dy, 0)); // only drag down
+  };
+  const onTouchEnd = () => {
+    const threshold = 80; // px to close
+    if (dragY > threshold) setOpen(false);
+    setDragY(0);
+    setDragStart(null);
+  };
+
   const activeClass =
     "flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-xs bg-zinc-900 text-white";
   const idleClass =
@@ -214,26 +239,23 @@ export default function SourceTab() {
           className={currentProvider ? activeClass : idleClass}
           aria-expanded={open}
           aria-haspopup="dialog"
-       >
+        >
           <Filter size={18} aria-hidden="true" />
           <span className="hidden sm:block">Provider</span>
         </button>
       </li>
 
-      {/* Panel only (no full-screen overlay) */}
-      {open &&
-        typeof document !== "undefined" &&
+      {/* Desktop popover */}
+      {open && !isSmall && typeof document !== "undefined" &&
         createPortal(
           <div
             ref={panelRef}
-            className="fixed z-[101] w-[92vw] sm:w-[340px] max-h-[72vh] sm:max-h-[60vh] md:max-h-[70vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl"
+            className="fixed z-[101] w-[340px] max-h-[70vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl"
             style={{ top: coords.top, left: coords.left }}
             role="dialog"
             aria-modal="true"
           >
-            {/* header */}
             <div className="sticky top-0 bg-white/95 backdrop-blur px-2 py-2 border-b flex items-center gap-2">
-              <div className="mx-auto h-1.5 w-12 rounded-full bg-zinc-200 sm:hidden" aria-hidden="true" />
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -255,75 +277,147 @@ export default function SourceTab() {
                 <X size={16} />
               </button>
             </div>
+            <SheetList
+              filtered={filtered}
+              loading={loading}
+              currentProvider={currentProvider}
+              apply={apply}
+            />
+          </div>,
+          document.body
+        )}
 
-            {/* scroll area */}
-            <ul
-              className="p-1 overflow-y-auto max-h-[calc(100%-48px)] scroll-smooth overscroll-contain"
-              style={{ WebkitOverflowScrolling: "touch" as unknown as undefined }}
+      {/* Mobile bottom sheet */}
+      {open && isSmall && typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[101]">
+            {/* scrim */}
+            <button
+              aria-label="Close"
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setOpen(false)}
+            />
+            {/* sheet */}
+            <div
+              ref={sheetRef}
+              className="absolute inset-x-0 bottom-0 max-h-[88vh] h-[80vh] bg-white rounded-t-2xl shadow-2xl flex flex-col transition-transform"
+              style={{ transform: `translateY(${dragY}px)` }}
+              role="dialog"
+              aria-modal="true"
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
             >
-              <li>
-                <button
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-[14px] hover:bg-zinc-100 leading-tight"
-                  onClick={() => apply(null)}
-                >
-                  <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded border border-zinc-300" />
-                  <span className="font-medium text-emerald-700">All providers</span>
-                </button>
-              </li>
+              {/* grab handle + search */}
+              <div className="sticky top-0 bg-white/95 backdrop-blur px-4 pt-3 pb-2 border-b">
+                <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-zinc-300" aria-hidden="true" />
+                <div className="flex items-center gap-2">
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (filtered.length > 0) apply(filtered[0].provider);
+                        else apply(null);
+                      }
+                    }}
+                    placeholder="Search providers…"
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                    autoFocus
+                  />
+                  <button
+                    className="inline-flex items-center rounded-md px-2 py-2 text-zinc-600 hover:bg-zinc-100"
+                    onClick={() => setOpen(false)}
+                    aria-label="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
 
-              {loading ? (
-                <li className="px-3 py-3 text-sm text-zinc-500">Loading…</li>
-              ) : filtered.length === 0 ? (
-                <li className="px-3 py-3 text-sm text-zinc-500">No matches.</li>
-              ) : (
-                filtered.map((r) => {
-                  const isActive = currentProvider === r.provider;
-                  const iconUrl = faviconFromProvider(r.provider);
-                  return (
-                    <li key={r.provider} data-provider-id={r.provider}>
-                      <button
-                        className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] hover:bg-zinc-100 leading-tight ${
-                          isActive ? "bg-emerald-50" : ""
-                        }`}
-                        onClick={() => apply(r.provider)}
-                        title={r.provider}
-                      >
-                        {iconUrl ? (
-                          <img
-                            src={iconUrl}
-                            alt=""
-                            width={18}
-                            height={18}
-                            loading="lazy"
-                            className="shrink-0 rounded-sm"
-                            onError={(e) => {
-                              e.currentTarget.style.display = "none";
-                              const sib = e.currentTarget.nextElementSibling as HTMLElement | null;
-                              if (sib) sib.style.display = "inline-flex";
-                            }}
-                          />
-                        ) : null}
-                        <span
-                          className={iconUrl ? "hidden shrink-0 text-zinc-500" : "shrink-0 text-zinc-500"}
-                          style={{ display: iconUrl ? "none" : "inline-flex" }}
-                        >
-                          <FootballIcon />
-                        </span>
-
-                        <span className="truncate">{r.provider}</span>
-                        <span className="ml-auto shrink-0 flex items-center gap-1">
-                          <span className="text-[12px] text-zinc-500">{r.count}</span>
-                          {isActive && <Check size={16} className="text-emerald-600" aria-hidden="true" />}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })
-              )}
-            </ul>
+              <SheetList
+                filtered={filtered}
+                loading={loading}
+                currentProvider={currentProvider}
+                apply={apply}
+              />
+            </div>
           </div>,
           document.body
         )}
     </>
+  );
+}
+
+/* ───────── Shared list component ───────── */
+function SheetList({
+  filtered,
+  loading,
+  currentProvider,
+  apply,
+}: {
+  filtered: ProviderRow[];
+  loading: boolean;
+  currentProvider: string | undefined;
+  apply: (provider: string | null) => void;
+}) {
+  return (
+    <ul
+      className="p-1 overflow-y-auto max-h-[calc(100%-56px)] sm:max-h-[60vh] scroll-smooth overscroll-contain"
+      style={{ WebkitOverflowScrolling: "touch" as unknown as undefined }}
+    >
+      <li>
+        <button
+          className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-[15px] hover:bg-zinc-100 leading-tight"
+          onClick={() => apply(null)}
+        >
+          <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded border border-zinc-300" />
+          <span className="font-medium text-emerald-700">All providers</span>
+        </button>
+      </li>
+
+      {loading ? (
+        <li className="px-3 py-3 text-sm text-zinc-500">Loading…</li>
+      ) : filtered.length === 0 ? (
+        <li className="px-3 py-3 text-sm text-zinc-500">No matches.</li>
+      ) : (
+        filtered.map((r) => {
+          const isActive = currentProvider === r.provider;
+          const iconUrl = faviconFromProvider(r.provider);
+          return (
+            <li key={r.provider} data-provider-id={r.provider}>
+              <button
+                className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[15px] hover:bg-zinc-100 leading-tight ${
+                  isActive ? "bg-emerald-50" : ""
+                }`}
+                onClick={() => apply(r.provider)}
+                title={r.provider}
+              >
+                {iconUrl ? (
+                  <img
+                    src={iconUrl}
+                    alt=""
+                    width={18}
+                    height={18}
+                    loading="lazy"
+                    className="shrink-0 rounded-sm"
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <span className="shrink-0 text-zinc-500"><FootballIcon /></span>
+                )}
+                <span className="truncate">{r.provider}</span>
+                <span className="ml-auto shrink-0 flex items-center gap-1">
+                  <span className="text-[12px] text-zinc-500">{r.count}</span>
+                  {isActive && <Check size={16} className="text-emerald-600" aria-hidden="true" />}
+                </span>
+              </button>
+            </li>
+          );
+        })
+      )}
+    </ul>
   );
 }
