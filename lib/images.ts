@@ -39,31 +39,76 @@ export function getSafeImageUrl(input?: string | null): string | null {
   }
 }
 
-/** Heuristic for weak/likely-bad article images. */
-/** Very conservative "junk" detector — do NOT exclude OG/hero images. */
-export function isWeakArticleImage(url?: string | null): boolean {
-  if (!url) return false;
+
+
+const HEADSHOT_URL_RE = /\b(avatar|headshot|mugshot|mug|byline|profile|portrait|author|bio|staff|people|face|faces)\b/i;
+const HEADSHOT_HOST_RE = /\b(gravatar\.com|twimg\.com\/profile_images|graph\.facebook\.com|pbs\.twimg\.com)\b/i;
+const THUMB_URL_RE = /\b(thumbs?|thumbnail|icon|favicon|sprite|logo)\b/i;
+
+// Try to pull dimensions out of common query params or file names
+function parseWHFromUrl(u: string): { w?: number; h?: number } {
   try {
-    const { pathname } = new URL(url);
-    const p = pathname.toLowerCase();
+    const url = new URL(u);
+    const gp = url.searchParams;
+    const w = Number(gp.get("w") || gp.get("width") || gp.get("cw"));
+    const h = Number(gp.get("h") || gp.get("height") || gp.get("ch"));
 
-    // Only exclude true boilerplate
-    if (p === "/favicon.ico") return true;
-    if (p.includes("favicon")) return true;
-    if (p.includes("apple-touch-icon")) return true;
-    if (p.endsWith(".svg")) return true;
+    // Cloudinary-like .../w_640,h_640/...
+    const mCloud = u.match(/(?:[\/,])w_(\d{2,4}),h_(\d{2,4})(?:[\/,]|$)/i);
+    if (mCloud) return { w: Number(mCloud[1]), h: Number(mCloud[2]) };
 
-    // Keep "logo" / "placeholder" unless it's the *entire* image path name
-    // or the file name is obviously a sprite sheet.
-    const file = p.split("/").pop() ?? "";
-    if (file.includes("sprite")) return true;
+    // filename 640x360.jpg
+    const mName = u.match(/(?:^|[^\d])(\d{2,4})x(\d{2,4})(?=\D|$)/i);
+    if (mName) return { w: Number(mName[1]), h: Number(mName[2]) };
 
-    return false;
+    return {
+      w: Number.isFinite(w) ? w : undefined,
+      h: Number.isFinite(h) ? h : undefined,
+    };
   } catch {
-    return false;
+    return {};
   }
 }
 
+export function isLikelyAuthorHeadshot(url: string, alt?: string | null): boolean {
+  if (HEADSHOT_HOST_RE.test(url)) return true;
+  if (HEADSHOT_URL_RE.test(url)) return true;
+  if (alt && /\b(author|byline|headshot|mug|profile|portrait)\b/i.test(alt)) return true;
+
+  const { w, h } = parseWHFromUrl(url);
+  if (w && h) {
+    const ar = w / h;
+    const squareish = Math.abs(ar - 1) <= 0.2;
+    const tiny = Math.max(w, h) <= 220; // most byline avatars are <= 200–220px
+    if (squareish && tiny) return true;
+    // Reject very small/near-square editorial mug sizes even when bigger than 220
+    if (squareish && w * h < 140_000) return true; // e.g., 320x320
+  }
+  return false;
+}
+
+// Strengthen your existing weak check
+export function isWeakArticleImage(u: string, alt?: string | null): boolean {
+  const s = u.trim();
+
+  // reject non-http(s) and svgs as you already do
+  if (!/^https?:\/\//i.test(s)) return true;
+  if (/\.svg(\?|#|$)/i.test(s)) return true;
+
+  // explicit thumbs/logos/icons
+  if (THUMB_URL_RE.test(s)) return true;
+
+  // author headshots / avatars
+  if (isLikelyAuthorHeadshot(s, alt)) return true;
+
+  // extremely small by filename hints (like 120x120)
+  const { w, h } = parseWHFromUrl(s);
+  if (w && h) {
+    if (w < 240 || h < 160) return true; // too small for article hero
+  }
+
+  return false;
+}
 /** New: reject author avatars/headshots */
 export function isLikelyHeadshot(url?: string | null): boolean {
   if (!url) return false;

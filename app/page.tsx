@@ -344,7 +344,6 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
 
             {/* Right column */}
             <div className="order-3 md:order-3 space-y-4">
-              <StaticLinksSection initial="rankings_ros" />
               <LoadMoreSection
                 title="DFS"
                 sectionKey="dfs"
