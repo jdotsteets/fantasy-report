@@ -1,5 +1,4 @@
-//app/api/players/route.ts
-
+// app/api/players/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
@@ -11,7 +10,6 @@ function normKey(k: string | null): string | null {
   return k.startsWith("nfl:name:") ? k.slice("nfl:name:".length) : k;
 }
 function displayNameFromKey(k: string): string {
-  // "justin-jefferson" -> "Justin Jefferson"
   return k
     .split("-")
     .filter(Boolean)
@@ -28,28 +26,21 @@ function toRows<T>(res: unknown): T[] {
 }
 
 /* ───────── row types ───────── */
-type SeenRow = {
-  key: string;
-  last_seen: string;
-};
-type LinkRow = {
-  key: string;
-  domain: string;
-  url: string;
-};
-type PlayerOut = {
-  key: string;
-  name: string;
-  links: Record<string, string>;
-  lastSeen: string;
-};
+type SeenRow = { key: string; last_seen: string };
+type LinkRow = { key: string; domain: string; url: string };
+type PlayerOut = { key: string; name: string; links: Record<string, string>; lastSeen: string };
 
+/**
+ * SQL guards we apply:
+ *  - restrict to sport = 'nfl' rows (or sport null treated as non-NFL excluded)
+ *  - require a slug that looks like a first-last with >=2 chars each: ^[a-z][a-z0-9]+-[a-z][a-z0-9]+
+ *  - exclude common non-name prefixes (why/was/from/fantasy/executive/reboot/depth/schedule/latest/featured/power)
+ */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const days = Math.max(1, Math.min(Number(url.searchParams.get("days") ?? 60), 365));
   const limitPlayers = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 500), 5000));
 
-  // Pull keys from articles.players (array) over the time window, keep the most recent sighting
   const seenRes = await dbQuery<SeenRow>(
     `
     WITH seen AS (
@@ -59,21 +50,35 @@ export async function GET(req: NextRequest) {
       FROM articles
       WHERE players IS NOT NULL
         AND array_length(players, 1) > 0
-        AND COALESCE(published_at, discovered_at) >= NOW() - ($1 || ' days')::interval
+        AND COALESCE(published_at, discovered_at) >= NOW() - ($1::int || ' days')::interval
+        AND COALESCE(sport, '') = 'nfl'    -- keep NFL only
+    ),
+    norm AS (
+      SELECT
+        REGEXP_REPLACE(raw_key, '^nfl:name:', '') AS key,
+        ts
+      FROM seen
     )
     SELECT
-      REGEXP_REPLACE(raw_key, '^nfl:name:', '') AS key,
+      key,
       MAX(ts) AS last_seen
-    FROM seen
-    GROUP BY 1
-    ORDER BY MAX(ts) DESC
+    FROM norm
+    WHERE
+      -- looks like first-last with at least 2 chars each token
+      key ~ '^[a-z][a-z0-9]+-[a-z][a-z0-9]+(?:-[a-z0-9]+)?$'
+      AND NOT (
+        -- block generic/section-y slugs
+        key ~ '^(why|was|from|fantasy|executive|executives|reboot|depth|schedule|latest|featured|power)(-|$)'
+      )
+    GROUP BY key
+    ORDER BY MAX(ts) DESC NULLS LAST
     LIMIT $2
     `,
     [String(days), limitPlayers]
   );
   const seenRows = toRows<SeenRow>(seenRes);
 
-  // Optional: per-site player links (if the table exists)
+  // Optional: per-site player links
   let linkRows: LinkRow[] = [];
   try {
     const lr = await dbQuery<LinkRow>(`
@@ -93,15 +98,15 @@ export async function GET(req: NextRequest) {
     linkMap.set(r.key, existing);
   }
 
-  // Collect distinct domains we know how to link to (table-driven)
+  // Distinct domains (for the UI)
   const domains = Array.from(new Set(linkRows.map((r) => r.domain))).sort();
 
   const players: PlayerOut[] = seenRows.map((r) => {
-    const normalized = normKey(r.key) ?? r.key;
+    const k = normKey(r.key) ?? r.key;
     return {
-      key: normalized,
-      name: displayNameFromKey(normalized),
-      links: linkMap.get(normalized) ?? {},
+      key: k,
+      name: displayNameFromKey(k),
+      links: linkMap.get(k) ?? {},
       lastSeen: r.last_seen,
     };
   });

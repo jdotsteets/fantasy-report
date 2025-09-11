@@ -215,7 +215,7 @@ export default function SourceTab() {
         createPortal(
           <div
             ref={panelRef}
-            className="fixed z-[101] w-[300px] h-[10vh] sm:max-h-[12vh] md:max-h-[28vh] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl"
+            className="fixed z-[101] w-[300px] max-h-[22vh] sm:max-h-[12vh] md:max-h-[28vh] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl"
             style={{ top: coords.top, left: coords.left }}
             role="dialog"
             aria-modal="true"

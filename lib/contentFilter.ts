@@ -132,6 +132,47 @@ const TEAM_HOST_PATTERNS: RegExp[] = [
   // add more official team domains if you want to block them completely
 ];
 
+
+
+/** Gambling/DFS hosts: default block with narrow editorial allowlist */
+type HostAllow = { rx: RegExp; allowPaths?: RegExp[]; blockAllElse?: boolean };
+
+const GAMBLING_HOST_RULES: HostAllow[] = [
+  // PrizePicks: block everything (no editorial we want)
+  { rx: /(^|\.)prizepicks\.com$/i, blockAllElse: true },
+
+  // FanDuel: allow only editorial at /research/
+  { rx: /(^|\.)fanduel\.com$/i, allowPaths: [/^\/research\//], blockAllElse: true },
+
+  // DraftKings: allow only editorial at /playbook/
+  { rx: /(^|\.)draftkings\.com$/i, allowPaths: [/^\/playbook\//], blockAllElse: true },
+
+  // Add others here as you encounter them:
+  // { rx: /(^|\.)underdogfantasy\.com$/i, blockAllElse: true },
+];
+
+function gamblingHostBlocked(host: string, path: string): boolean {
+  for (const rule of GAMBLING_HOST_RULES) {
+    if (!rule.rx.test(host)) continue;
+    if (rule.allowPaths && rule.allowPaths.some(rx => rx.test(path))) return false;
+    return !!rule.blockAllElse;
+  }
+  return false;
+}
+
+/** Marketing/policy/house-rules/offer pages we don’t want */
+const MARKETING_RULES_DENY: RegExp[] = [
+  /\/(policy|policies|privacy|terms|tos|help|support|faq)s?\/?/i,
+  /\/(rules|house[-_]?rules|contest[-_]?rules)\/?/i,
+  /\/(how[-_]?it[-_]?works|what[-_]?is|about|company|careers)\/?/i,
+  /\/(promotions?|offers?|bonus|bonuses|deposit|withdrawals?)\/?/i,
+  /\/(refer|referral|affiliates?)\/?/i,
+  /\/responsible[-_]?gaming\/?/i,
+  // very specific “reboot policy” type pages
+  /reboot[-_]?policy/i,
+];
+
+
 function getHost(u: string): string | null {
   try {
     return new URL(u).hostname.toLowerCase();
@@ -195,6 +236,12 @@ export function allowItem(item: FeedLike, url: string): boolean {
 
   // Block other sports
   if (NON_NFL_PATH_DENY.some((rx) => rx.test(path))) return false;
+
+  // Block gambling/DFS marketing except known editorial paths
+  if (gamblingHostBlocked(host, path)) return false;
+
+  // Block obvious marketing/policy pages even if host passed
+  if (MARKETING_RULES_DENY.some(rx => rx.test(path))) return false;
  
   // Block obvious junk (sitemaps, feeds, tags/categories, pagers, etc.)
   if (JUNK_PATH_DENY.some((rx) => rx.test(url))) return false;
@@ -213,6 +260,9 @@ export function allowItem(item: FeedLike, url: string): boolean {
   // Fallback: use title/description text for NFL/fantasy hints
   const t = `${item.title ?? ""} ${item.description ?? ""}`;
   if (NFL_WORD.test(t) || FANTASY_FOOTBALL.test(t)) return true;
+
+
+
 
   // By default, do not ingest
   return false;
@@ -302,6 +352,15 @@ export function classifyUrl(
   if (NON_HTML_EXT.test(u.pathname)) return { decision: "discard", reason: "blocked_extension" };
   if (JUNK_PATH_DENY.some((rx) => rx.test(rawUrl))) return { decision: "discard", reason: "blocked_path" };
   if (NON_NFL_PATH_DENY.some((rx) => rx.test(text))) return { decision: "discard", reason: "other_sport" };
+  if (gamblingHostBlocked(u.hostname.toLowerCase(), u.pathname.toLowerCase())) {
+    return { decision: "discard", reason: "gambling_marketing" };
+  }
+
+  // Marketing/policy/house-rules/offer pages
+  if (MARKETING_RULES_DENY.some(rx => rx.test(u.pathname))) {
+    return { decision: "discard", reason: "marketing_policy" };
+  }
+  
 
   const looksStaticRanking = looksStaticRankingFrom(text);
   const looksHub = looksSectionHubPath(u.pathname) && !signals.hasArticleSchema && !signals.hasPublishedMeta;
@@ -309,6 +368,8 @@ export function classifyUrl(
   const hasNFLKeyword = NFL_WORD.test(text);
   const hasFantasyKeyword = FANTASY_FOOTBALL.test(text);
   const league: "nfl" | "other" = hasNFLKeyword || hasFantasyKeyword ? "nfl" : "other";
+
+
 
   // Section hubs → capture for UI, not articles feed
   if (looksHub) {

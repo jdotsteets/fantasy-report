@@ -7,13 +7,14 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import {
   Newspaper, TrendingUp, Stethoscope, Scale, Coins, Lightbulb, Users,
   LucideIcon,
+  UserPlus,
 } from "lucide-react";
 import SourceTab from "@/components/SourceTab";
 
 type Item = { slug: string; label: string; icon: LucideIcon; route?: string };
 
 const items: ReadonlyArray<Item> = [
-  { slug: "waivers",   label: "Waivers",   icon: Users },
+  { slug: "waivers",   label: "Waivers",   icon: UserPlus },
   { slug: "rankings",  label: "Rankings",  icon: TrendingUp },
   { slug: "start-sit", label: "Start/Sit", icon: Scale },
   { slug: "advice",    label: "Advice",    icon: Lightbulb },
@@ -79,12 +80,13 @@ function ToolbarInner() {
               const isActive = item.route ? onPlayers : activeSection === slug;
               const href = item.route
                 ? item.route // optional: strip sourceId for /players if you don't want it there
-                : (slug === "" ? makeHref(undefined) : makeHref(slug));
+                : makeHref(isActive ? undefined : slug);
               return (
                 <li key={slug} className="flex-1 min-w-[68px]">
                   <Link
                     href={href}
                     aria-current={isActive ? "page" : undefined}
+                    title={isActive ? "Clear section filter" : label}
                     className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-xs transition-colors ${
                       isActive ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-100"
                     }`}

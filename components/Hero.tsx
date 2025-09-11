@@ -6,7 +6,6 @@ import Link from "next/link";
 import { getSafeImageUrl, FALLBACK } from "@/lib/images";
 import { normalizeTitle } from "@/lib/strings";
 
-
 export type HeroProps = {
   title: string;
   href: string;
@@ -14,21 +13,24 @@ export type HeroProps = {
   source: string;
 };
 
-
-
-
 export default function Hero({ title, href, src, source }: HeroProps) {
   const img = getSafeImageUrl(src) || FALLBACK;
   const display = normalizeTitle(title);
 
-
-    console.log("Hero image check:", { src, safeValue: img });
+  const iconUrl = (() => {
+    try {
+      const host = new URL(href).hostname.replace(/^www\./, "");
+      return `https://icons.duckduckgo.com/ip3/${host}.ico`;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <Link
       href={href}
       target="_blank"
-      rel="noreferrer"
+      rel="noopener noreferrer"
       className="group block overflow-hidden rounded-lg border border-zinc-200 bg-white hover:shadow-md transition-shadow"
     >
       <div className="relative aspect-[16/9] w-full">
@@ -48,18 +50,24 @@ export default function Hero({ title, href, src, source }: HeroProps) {
         />
       </div>
 
-                {/* Headline */}
-                <h3
-                className="mt-2 ml-2 line-clamp-2 text-[20px] leading-snug text-black hover:text-green-900"
-                title={display}
-                >
-                {display}
-                </h3>
+      {/* Headline row with favicon */}
+      <div className="mt-2 mx-2 flex items-start gap-2">
 
-                {/* Meta row */}
-                <div className="mt-1 mb-2 ml-2.5 flex flex-wrap items-center gap-x-6 text-[10px] leading-tight text-zinc-700" >
-                  <span>{source}</span>
-                </div>
+
+        <h3
+          className="line-clamp-2 text-black hover:text-green-900 leading-snug
+                     text-[clamp(16px,4.6vw,22px)]"
+          title={display}
+          style={{ textWrap: "balance" as any }}
+        >
+          {display}
+        </h3>
+      </div>
+
+      {/* Meta row */}
+      <div className="mt-1 mb-2 ml-2.5 flex flex-wrap items-center gap-x-6 text-[10px] leading-tight text-zinc-700">
+        <span>{source}</span>
+      </div>
     </Link>
   );
 }
