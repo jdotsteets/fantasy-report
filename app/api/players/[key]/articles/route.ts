@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 type Row = {
   id: number;
-  title: string;
+  title: string | null;
   url: string | null;
   canonical_url: string | null;
   domain: string | null;
@@ -33,33 +33,40 @@ function displayNameFromKey(k: string): string {
     .join(" ");
 }
 
-// normalize dbQuery result shape (T[] or { rows: T[] })
+// Normalize dbQuery results (T[] or { rows: T[] })
 function toRows<T>(res: unknown): T[] {
   if (Array.isArray(res)) return res as T[];
   const obj = res as { rows?: T[] };
-  return Array.isArray(obj?.rows) ? obj.rows! : [];
+  return Array.isArray(obj?.rows) ? (obj.rows as T[]) : [];
 }
 
-// ✅ Correct App Router signature
-export async function GET(
-  req: Request,
-  { params }: { params: { key: string } }
-) {
+/** Extract `[key]` from /api/players/<key>/articles using the request URL. */
+function extractKeyFromUrl(reqUrl: string): string {
+  const { pathname } = new URL(reqUrl);
+  // matches “…/api/players/<key>/articles” (with or without trailing slash)
+  const m = pathname.match(/\/api\/players\/([^/]+)\/articles\/?$/);
+  return decodeURIComponent(m?.[1] ?? "");
+}
+
+export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const rawKey = decodeURIComponent(params.key ?? "").trim().toLowerCase();
+    const rawKey = extractKeyFromUrl(req.url).trim().toLowerCase();
     if (!rawKey) {
-      return NextResponse.json({ ok: false, error: "invalid_key", items: [] }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "invalid_key", items: [] },
+        { status: 400 }
+      );
     }
 
-    const days  = Math.max(1, Math.min(Number(url.searchParams.get("days")  ?? 60), 365));
+    const days = Math.max(1, Math.min(Number(url.searchParams.get("days") ?? 60), 365));
     const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 50), 200));
     const sport = (url.searchParams.get("sport") || "nfl").toLowerCase();
 
     const variants = keyVariants(rawKey);
 
-    // 1) Primary: articles.players overlap
-    const primaryRes = await dbQuery<Row>(
+    // Primary: articles that have the player key in the players[] column
+    const primary = await dbQuery<Row>(
       `
       SELECT
         a.id,
@@ -83,15 +90,15 @@ export async function GET(
       [String(days), variants, sport, limit]
     );
 
-    let rows = toRows<Row>(primaryRes);
+    let rows = toRows<Row>(primary);
 
-    // 2) Fallback: fuzzy match on title/url if nothing in players[]
+    // Fallback: fuzzy match on title/url if nothing in players[]
     if (rows.length === 0) {
       const name = displayNameFromKey(rawKey);
       const titleLike = `%${name}%`;
-      const slugLike  = `%${bareKey(rawKey)}%`;
+      const slugLike = `%${bareKey(rawKey)}%`;
 
-      const fbRes = await dbQuery<Row>(
+      const fallback = await dbQuery<Row>(
         `
         SELECT
           a.id,
@@ -118,7 +125,8 @@ export async function GET(
         `,
         [String(days), sport, titleLike, slugLike, limit]
       );
-      rows = toRows<Row>(fbRes);
+
+      rows = toRows<Row>(fallback);
     }
 
     return NextResponse.json({ ok: true, items: rows }, { status: 200 });
