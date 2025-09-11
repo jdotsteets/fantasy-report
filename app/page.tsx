@@ -135,7 +135,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
   // widen window + limits when viewing a single source OR provider
   const days = isFilterMode ? 365 : DEFAULT_DAYS;
   const limits = {
-    limitNews:     isFilterMode ? 150 : 20,
+    limitNews:     isFilterMode ? 150 : 12,
     limitRankings: isFilterMode ? 60  : 10,
     limitStartSit: isFilterMode ? 60  : 12,
     limitAdvice:   isFilterMode ? 60  : 10,

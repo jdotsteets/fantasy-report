@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
-import { Filter, Check } from "lucide-react";
+import { Filter, Check, X } from "lucide-react";
 
 /* ───────── Types ───────── */
 type ProviderRow = { provider: string; count: number };
@@ -113,7 +113,9 @@ export default function SourceTab() {
     const el = btnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    const panelW = 300; // slightly narrower
+    // Wider and taller on small screens
+    const isSmall = window.innerWidth < 640; // Tailwind sm breakpoint
+    const panelW = isSmall ? Math.min(Math.floor(window.innerWidth * 0.92), 420) : 340;
     const margin = 8;
     const top = r.bottom + margin;
     const left = Math.min(Math.max(r.left, margin), window.innerWidth - panelW - margin);
@@ -148,6 +150,15 @@ export default function SourceTab() {
       document.removeEventListener("touchstart", onDoc);
     };
   }, [open]);
+
+  // Scroll active provider into view on open
+  useEffect(() => {
+    if (!open || !currentProvider) return;
+    const el = document.querySelector<HTMLElement>(
+      `[data-provider-id="${CSS.escape(currentProvider)}"]`
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [open, currentProvider]);
 
   // Data
   const [rows, setRows] = useState<ProviderRow[]>([]);
@@ -203,7 +214,7 @@ export default function SourceTab() {
           className={currentProvider ? activeClass : idleClass}
           aria-expanded={open}
           aria-haspopup="dialog"
-        >
+       >
           <Filter size={18} aria-hidden="true" />
           <span className="hidden sm:block">Provider</span>
         </button>
@@ -215,46 +226,63 @@ export default function SourceTab() {
         createPortal(
           <div
             ref={panelRef}
-            className="fixed z-[101] w-[300px] max-h-[22vh] sm:max-h-[12vh] md:max-h-[28vh] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl"
+            className="fixed z-[101] w-[92vw] sm:w-[340px] max-h-[72vh] sm:max-h-[60vh] md:max-h-[70vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl"
             style={{ top: coords.top, left: coords.left }}
             role="dialog"
             aria-modal="true"
           >
             {/* header */}
-            <div className="sticky top-0 bg-white/95 backdrop-blur px-2 py-1.5 border-b">
+            <div className="sticky top-0 bg-white/95 backdrop-blur px-2 py-2 border-b flex items-center gap-2">
+              <div className="mx-auto h-1.5 w-12 rounded-full bg-zinc-200 sm:hidden" aria-hidden="true" />
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (filtered.length > 0) apply(filtered[0].provider);
+                    else apply(null);
+                  }
+                }}
                 placeholder="Search providers…"
-                className="w-full rounded-md border border-zinc-300 px-2 py-[6px] text-sm"
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
                 autoFocus
               />
+              <button
+                className="ml-1 inline-flex items-center rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
             </div>
 
             {/* scroll area */}
-            <ul className="p-1 overflow-y-auto max-h-[calc(100%-42px)] scroll-smooth">
+            <ul
+              className="p-1 overflow-y-auto max-h-[calc(100%-48px)] scroll-smooth overscroll-contain"
+              style={{ WebkitOverflowScrolling: "touch" as unknown as undefined }}
+            >
               <li>
                 <button
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-[12px] hover:bg-zinc-100 leading-tight"
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-[14px] hover:bg-zinc-100 leading-tight"
                   onClick={() => apply(null)}
                 >
-                  <span className="inline-flex h-[16px] w-[16px] items-center justify-center rounded border border-zinc-300" />
+                  <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded border border-zinc-300" />
                   <span className="font-medium text-emerald-700">All providers</span>
                 </button>
               </li>
 
               {loading ? (
-                <li className="px-2 py-2 text-sm text-zinc-500">Loading…</li>
+                <li className="px-3 py-3 text-sm text-zinc-500">Loading…</li>
               ) : filtered.length === 0 ? (
-                <li className="px-2 py-2 text-sm text-zinc-500">No matches.</li>
+                <li className="px-3 py-3 text-sm text-zinc-500">No matches.</li>
               ) : (
                 filtered.map((r) => {
                   const isActive = currentProvider === r.provider;
                   const iconUrl = faviconFromProvider(r.provider);
                   return (
-                    <li key={r.provider}>
+                    <li key={r.provider} data-provider-id={r.provider}>
                       <button
-                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] hover:bg-zinc-100 leading-tight ${
+                        className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] hover:bg-zinc-100 leading-tight ${
                           isActive ? "bg-emerald-50" : ""
                         }`}
                         onClick={() => apply(r.provider)}
@@ -264,8 +292,8 @@ export default function SourceTab() {
                           <img
                             src={iconUrl}
                             alt=""
-                            width={16}
-                            height={16}
+                            width={18}
+                            height={18}
                             loading="lazy"
                             className="shrink-0 rounded-sm"
                             onError={(e) => {
@@ -284,8 +312,8 @@ export default function SourceTab() {
 
                         <span className="truncate">{r.provider}</span>
                         <span className="ml-auto shrink-0 flex items-center gap-1">
-                          <span className="text-[11px] text-zinc-500">{r.count}</span>
-                          {isActive && <Check size={14} className="text-emerald-600" aria-hidden="true" />}
+                          <span className="text-[12px] text-zinc-500">{r.count}</span>
+                          {isActive && <Check size={16} className="text-emerald-600" aria-hidden="true" />}
                         </span>
                       </button>
                     </li>
