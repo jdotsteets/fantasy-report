@@ -11,28 +11,40 @@ export default function Section({
   return (
     <section
       className={[
-        // Square edges on mobile; card-like ≥sm
         "border border-zinc-200 bg-white",
-        "rounded-none sm:rounded-2xl",
+        "rounded-none",                // ⟵ no rounded corners anywhere
         "shadow-none sm:shadow-sm",
-        // 🔴 accent bar
-        "border-t-2 border-t-red-600",
         className,
       ].join(" ")}
     >
-      <header className="relative border-b border-zinc-200 rounded-t-none sm:rounded-t-2xl">
-        {/* 🔴 stronger red header wash so it's clearly visible */}
+      <header
+        className="
+          relative
+          border-t-2 border-black     // ⟵ black top border
+          border-b border-zinc-200
+          rounded-none
+        "
+      >
+        {/* subtle red wash */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 bg-gradient-to-b from-red-600/15 to-red-600/0 rounded-t-none sm:rounded-t-2xl"
+          className="pointer-events-none absolute inset-0 bg-gradient-to-b from-red-600/10 to-red-600/0"
         />
-        <h2 className="relative px-2 sm:px-3 py-2 sm:py-2.5 text-base sm:text-lg font-semibold text-zinc-900 tracking-tight">
+        <h2
+          className="
+            relative
+            px-3 sm:px-4
+            py-3.5 sm:py-4           // ⟵ slightly taller on mobile
+            text-base sm:text-lg
+            font-semibold text-zinc-900
+          "
+        >
           {title}
         </h2>
       </header>
 
-      {/* Tight content padding: none on mobile; light padding ≥sm */}
-      <div className="p-0 sm:p-2">{children}</div>
+      {/* a hair more left padding to push favicons off the edge */}
+      <div className="pl-4 pr-3 py-2 sm:px-4 sm:py-3">{children}</div>
     </section>
   );
 }

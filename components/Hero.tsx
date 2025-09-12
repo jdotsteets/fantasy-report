@@ -31,7 +31,7 @@ export default function Hero({ title, href, src, source }: HeroProps) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="group block overflow-hidden rounded-lg border border-zinc-200 bg-white hover:shadow-md transition-shadow"
+      className="group block overflow-hidden rounded-lg border border-zinc-200 bg-transparent hover:shadow-md transition-shadow"
     >
       <div className="relative aspect-[16/9] w-full">
         <Image
@@ -50,23 +50,24 @@ export default function Hero({ title, href, src, source }: HeroProps) {
         />
       </div>
 
-      {/* Headline row with favicon */}
-      <div className="mt-2 mx-2 flex items-start gap-2">
-
-
+      {/* Black text bar */}
+      <div className="bg-black text-white px-3 py-3">
         <h3
-          className="line-clamp-2 text-black hover:text-green-900 leading-snug
-                     text-[clamp(16px,4.6vw,22px)]"
+          className="line-clamp-2 leading-snug text-white text-[clamp(16px,4.6vw,22px)]"
           title={display}
-          style={{ textWrap: "balance" as any }}
+          style={{ textWrap: "balance" as unknown as undefined }}
         >
           {display}
         </h3>
-      </div>
 
-      {/* Meta row */}
-      <div className="mt-1 mb-2 ml-2.5 flex flex-wrap items-center gap-x-6 text-[10px] leading-tight text-zinc-700">
-        <span>{source}</span>
+        {/* Meta row */}
+        <div className="mt-1 flex items-center gap-2 text-[10px] leading-tight text-white/70">
+          {iconUrl ? (
+            // using img here is fine for tiny favicons
+            <img src={iconUrl} alt="" className="h-3 w-3 " />
+          ) : null}
+          <span>{source}</span>
+        </div>
       </div>
     </Link>
   );

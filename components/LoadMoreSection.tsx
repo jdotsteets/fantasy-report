@@ -87,27 +87,27 @@ export default function LoadMoreSection({
     <Section title={title}>
       <ArticleList items={items} />
 
-      <div className="mt-2">
-        {error ? (
-          <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </div>
-        ) : null}
-
-        {!done ? (
-          <button
-            onClick={loadMore}
-            className="w-full rounded-lg border px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-60"
-            disabled={loading}
-          >
-            {loading ? "Loading…" : btnLabel}
-          </button>
-        ) : (
-          <div className="w-full select-none px-3 py-2 text-center text-xs text-zinc-500">
-            No more {title.toLowerCase()}.
-          </div>
-        )}
+     <div className="mt-2 px-2 sm:px-3">  {/* ← add horizontal padding */}
+    {error ? (
+      <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        {error}
       </div>
+    ) : null}
+
+    {!done ? (
+      <button
+        onClick={loadMore}
+        className="w-full rounded-lg border px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-60"
+        disabled={loading}
+      >
+        {loading ? "Loading…" : btnLabel}
+      </button>
+    ) : (
+      <div className="w-full select-none px-3 py-2 text-center text-xs text-zinc-500">
+        No more {title.toLowerCase()}.
+      </div>
+    )}
+  </div>
     </Section>
   );
 }

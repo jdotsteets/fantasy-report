@@ -140,7 +140,7 @@ export default function ArticleList({ items, title, className, filter }: Props) 
           width={18}
           height={18}
           unoptimized
-          className="h-[18px] w-[18px] shrink-0 rounded -translate-y-0.5"
+          className="h-[18px] w-[18px] shrink-0  -translate-y-0.5"
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
