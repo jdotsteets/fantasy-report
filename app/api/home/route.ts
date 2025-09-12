@@ -6,6 +6,8 @@ export const runtime = "nodejs";         // ensure Node runtime (not edge)
 export const dynamic = "force-dynamic";  // NEVER prerender this route
 export const revalidate = 0;             // disable caching for the route
 
+/* ───────────────────────── Helpers ───────────────────────── */
+
 function toIntOrUndef(v: string | null): number | undefined {
   if (v == null || v.trim() === "") return undefined;
   const n = Number(v);
@@ -18,23 +20,15 @@ function parseWeek(v: string | null): number | undefined {
   return Number.isFinite(n) ? Math.trunc(n) : undefined;
 }
 
-// ───────────────────────────────────────────────────────────
-// Tiny per-instance cache (helps burst traffic a bit)
-// ───────────────────────────────────────────────────────────
-type CacheEntry = { body: unknown; ts: number };
-type CacheStore = Map<string, CacheEntry>;
+function parseProviderParam(raw: string | null): string | undefined {
+  if (!raw) return undefined;
+  const plusFixed = raw.replace(/\+/g, " ");
+  let decoded = plusFixed;
+  try { decoded = decodeURIComponent(plusFixed); } catch { /* noop */ }
+  const out = decoded.trim();
+  return out ? out : undefined;
+}
 
-declare global { /* eslint-disable no-var */ var __HOME_CACHE__: CacheStore | undefined; }
-
-const CACHE: CacheStore = global.__HOME_CACHE__ ?? new Map();
-if (!global.__HOME_CACHE__) global.__HOME_CACHE__ = CACHE;
-
-const TTL_MS = 30_000;       // serve from cache for 30s
-const STALE_MS = 5 * 60_000; // serve stale for up to 5m if DB fails
-
-// ───────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────
 function clampInt(
   raw: string | null,
   def: number,
@@ -46,13 +40,24 @@ function clampInt(
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
-// ───────────────────────────────────────────────────────────
-// Route
-// ───────────────────────────────────────────────────────────
-export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams;
+/* ───────────────── In-memory cache (per instance) ───────────────── */
 
-  const u = new URL(req.url);
+type CacheEntry = { body: unknown; ts: number };
+type CacheStore = Map<string, CacheEntry>;
+
+// eslint-disable-next-line no-var
+declare global { var __HOME_CACHE__: CacheStore | undefined; }
+
+const CACHE: CacheStore = global.__HOME_CACHE__ ?? new Map();
+if (!global.__HOME_CACHE__) global.__HOME_CACHE__ = CACHE;
+
+const TTL_MS = 30_000;       // serve from cache for 30s
+const STALE_MS = 5 * 60_000; // serve stale for up to 5m if DB fails
+
+/* ───────────────────────── Route ───────────────────────── */
+
+export async function GET(req: NextRequest) {
+  const u = req.nextUrl; // NextRequest provides a URL-like object
   const cacheKey = u.search;
 
   // quick hit from in-memory cache
@@ -66,12 +71,9 @@ export async function GET(req: NextRequest) {
   const sport = (u.searchParams.get("sport") ?? "nfl").toLowerCase() as "nfl";
 
   const days       = clampInt(u.searchParams.get("days"), 45, 1, 365);
-  const week       = parseWeek(u.searchParams.get("week"));           // number | undefined
-  const sourceId   = toIntOrUndef(sp.get("sourceId"));                // number | undefined
-  const provider   = (() => {
-    const raw = u.searchParams.get("provider");
-    return raw && raw.trim() !== "" ? raw.trim() : undefined;         // string | undefined
-  })();
+  const week       = parseWeek(u.searchParams.get("week"));                // number | undefined
+  const sourceId   = toIntOrUndef(u.searchParams.get("sourceId"));         // number | undefined
+  const provider   = parseProviderParam(u.searchParams.get("provider"));   // string | undefined
 
   const limitNews     = clampInt(u.searchParams.get("limitNews"),     60, 1, 100);
   const limitRankings = clampInt(u.searchParams.get("limitRankings"), 10, 1, 100);
@@ -86,9 +88,9 @@ export async function GET(req: NextRequest) {
     const body = await getHomeData({
       sport,
       days,
-      week,                // number | undefined
-      sourceId,            // number | undefined
-      provider,            // string | undefined
+      week,
+      sourceId,
+      provider,
       limitNews,
       limitRankings,
       limitStartSit,

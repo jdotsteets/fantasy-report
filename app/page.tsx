@@ -73,6 +73,20 @@ function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
   return Math.max(1, weeks);
 }
 
+
+function parseProviderParam(raw: string | string[] | undefined): string | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (!v) return null;
+  // Convert + to space, then decode percent-escapes, then trim
+  const plusFixed = v.replace(/\+/g, " ");
+  let decoded = plusFixed;
+  try { decoded = decodeURIComponent(plusFixed); } catch { /* ignore */ }
+  const out = decoded.trim();
+  return out.length ? out : null;
+}
+
+
+
 const CURRENT_WAIVER_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
 
 
@@ -123,7 +137,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
 
 
   const selectedProviderRaw = (Array.isArray(sp.provider) ? sp.provider[0] : sp.provider) ?? "";
-  const selectedProvider = selectedProviderRaw && selectedProviderRaw.trim() !== "" ? selectedProviderRaw.trim() : null;
+  const selectedProvider = parseProviderParam(sp.provider);
 
   const selectedSourceId =
     Number(Array.isArray(sp.sourceId) ? sp.sourceId[0] : sp.sourceId) || null;

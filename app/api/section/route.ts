@@ -2,173 +2,133 @@
 import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
-// Keep in sync with your Home sections
-const KEYS = new Set(["rankings", "start-sit", "waiver-wire", "dfs", "injury", "advice", "news"] as const);
-type SectionKey = typeof KEYS extends Set<infer T> ? T : never;
+type SectionKey = "rankings" | "start-sit" | "waiver-wire" | "dfs" | "injury" | "advice" | "news";
 
-type DbRow = {
+type Row = {
   id: number;
   title: string;
   url: string;
   canonical_url: string | null;
-  domain: string;
+  domain: string | null;
   image_url: string | null;
   published_at: string | null;
   discovered_at: string | null;
-  week: number | null;
-  topics: string[] | null;
-  source: string;
-  provider: string | null;
+  source: string | null;
+  ts: string | null;
 };
 
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-export const revalidate = 0;
+const VALID: ReadonlySet<string> = new Set([
+  "rankings","start-sit","waiver-wire","dfs","injury","advice","news"
+]);
+
+function parseProviderParam(raw: string | null): string | undefined {
+  if (!raw) return undefined;
+  const plusFixed = raw.replace(/\+/g, " ");
+  let decoded = plusFixed;
+  try { decoded = decodeURIComponent(plusFixed); } catch {}
+  const out = decoded.trim();
+  return out ? out : undefined;
+}
+
 
 export async function GET(req: Request) {
-  try {
-    const url = new URL(req.url);
+  const url = new URL(req.url);
+  const key = (url.searchParams.get("key") ?? "").toLowerCase();
+  if (!VALID.has(key)) return NextResponse.json({ items: [] }, { status: 200 });
 
-    const key = (url.searchParams.get("key") || "").toLowerCase().trim() as SectionKey;
-    if (!KEYS.has(key)) {
-      return NextResponse.json({ error: "invalid key" }, { status: 400 });
-    }
+  const limit    = clampInt(url.searchParams.get("limit"), 10, 1, 100);
+  const offset   = clampInt(url.searchParams.get("offset"), 0, 0, 10_000);
+  const days     = clampInt(url.searchParams.get("days"), 45, 1, 365);
+  const week     = toIntOrUndef(url.searchParams.get("week"));
+  const sourceId = toIntOrUndef(url.searchParams.get("sourceId"));
+  const provider = parseProviderParam(url.searchParams.get("provider"));
+  const cap      = clampInt(url.searchParams.get("perSourceCap"), 2, 1, 10);
 
-    const days       = clampInt(url.searchParams.get("days"),   1, 2000, 45);
-    const limit      = clampInt(url.searchParams.get("limit"),  1, 100,  10);
-    const offset     = clampInt(url.searchParams.get("offset"), 0, 10_000, 0);
-    const week       = toNullableInt(url.searchParams.get("week"));
-    const sourceId   = toNullableInt(url.searchParams.get("sourceId"));
-    const providerQS = (url.searchParams.get("provider") || "").trim();
-    const provider   = providerQS.length ? providerQS : null;
-
-    // ───────── NEWS ─────────
-    if (key === "news") {
-      const { rows } = await dbQuery<DbRow>(
-        `
-        WITH base AS (
-          SELECT
-            a.id,
-            COALESCE(a.cleaned_title, a.title) AS title,
-            a.url,
-            a.canonical_url,
-            a.domain,
-            a.image_url,
-            a.published_at,
-            a.discovered_at,
-            a.week,
-            a.topics,
-            s.name AS source,
-            s.provider,
-            COALESCE(a.published_at, a.discovered_at) AS order_ts
-          FROM articles a
-          JOIN sources s ON s.id = a.source_id
-          WHERE
-            (a.published_at >= NOW() - ($1::int || ' days')::interval
-             OR a.discovered_at >= NOW() - ($1::int || ' days')::interval)
-            AND a.is_static IS NOT TRUE
-            AND a.is_player_page IS NOT TRUE
-            AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
-            AND (
-              a.source_id NOT IN (3135,3138,3141) OR (
-                COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%' OR
-                a.url ILIKE '%nfl%' OR
-                COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
-                a.url ILIKE '%fantasy%football%'
-              )
-            )
-            AND ($4::int  IS NULL OR a.source_id = $4::int)
-            AND ($5::text IS NULL OR s.provider = $5::text)
-        ),
-        ranked AS (
-          SELECT *,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY COALESCE(canonical_url, url)
-                   ORDER BY order_ts DESC NULLS LAST, id DESC
-                 ) AS rn
-          FROM base
-        )
-        SELECT id, title, url, canonical_url, domain, image_url,
-               published_at, discovered_at, week, topics, source, provider
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY order_ts DESC NULLS LAST, id DESC
-        OFFSET $3::int
-        LIMIT $2::int
-        `,
-        [days, limit, offset, sourceId ?? null, provider] // $1..$5
-      );
-      return NextResponse.json({ items: rows }, { status: 200 });
-    }
-
-    // ───────── TOPIC SECTIONS ─────────
-    const topic = key;
-    const { rows } = await dbQuery<DbRow>(
-      `
-      WITH base AS (
-        SELECT
-          a.id,
-          COALESCE(a.cleaned_title, a.title) AS title,
-          a.url,
-          a.canonical_url,
-          a.domain,
-          a.image_url,
-          a.published_at,
-          a.discovered_at,
-          a.week,
-          a.topics,
-          s.name AS source,
-          s.provider,
-          COALESCE(a.published_at, a.discovered_at) AS order_ts
-        FROM articles a
-        JOIN sources s ON s.id = a.source_id
-        WHERE
-          (a.published_at >= NOW() - ($1::int || ' days')::interval
-           OR a.discovered_at >= NOW() - ($1::int || ' days')::interval)
-          AND a.is_static IS NOT TRUE
-          AND a.is_player_page IS NOT TRUE
-          AND NOT (a.domain ILIKE '%nbcsports.com%' AND a.url NOT ILIKE '%/nfl/%')
-          AND (
-            a.source_id NOT IN (3135,3138,3141) OR
-            COALESCE(a.cleaned_title, a.title) ILIKE '%nfl%' OR
-            a.url ILIKE '%nfl%' OR
-            COALESCE(a.cleaned_title, a.title) ILIKE '%fantasy%football%' OR
-            a.url ILIKE '%fantasy%football%'
-          )
-          AND (
-            a.primary_topic = $4
-            OR a.primary_topic = REPLACE($4, '-', '_')
-            OR ($4 = 'waiver-wire' AND a.primary_topic IN ('waiver', 'waiver_wire'))
-          )
-          AND ($5::int  IS NULL OR a.week = $5::int)
-          AND ($6::int  IS NULL OR a.source_id = $6::int)
-          AND ($7::text IS NULL OR s.provider = $7::text)
+// app/api/section/route.ts (snippet – filt CTE only)
+  const sql = `
+  WITH filt AS (
+    SELECT
+      a.id, a.title, a.url, a.canonical_url, a.domain, a.image_url,
+      a.published_at, a.discovered_at,
+      s.name AS source,
+      COALESCE(a.published_at, a.discovered_at) AS ts,
+      a.primary_topic, a.topics, a.week
+    FROM articles a
+    JOIN sources s ON s.id = a.source_id
+    WHERE a.sport = 'nfl'
+      AND (
+        a.published_at    >= NOW() - ($1::text || ' days')::interval
+        OR a.discovered_at >= NOW() - ($1::text || ' days')::interval
       )
-      SELECT id, title, url, canonical_url, domain, image_url,
-             published_at, discovered_at, week, topics, source, provider
-      FROM base
-      ORDER BY order_ts DESC NULLS LAST, id DESC
-      OFFSET $3::int
-      LIMIT $2::int
-      `,
-      [days, limit, offset, topic, week ?? null, sourceId ?? null, provider] // $1..$7
-    );
+      AND ($2::int  IS NULL OR a.source_id = $2::int)
+      -- ✅ exact, case-insensitive match on sources.provider
+      AND ($3::text IS NULL OR LOWER(s.provider) = LOWER($3::text))
+  ),
+  bucket_pre AS (
+    SELECT *,
+           row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
+    FROM filt
+    WHERE ($4::text = 'news')
+       OR ($4::text = 'rankings'    AND (primary_topic='rankings'    OR 'rankings'    = ANY(topics)))
+       OR ($4::text = 'start-sit'   AND (primary_topic='start-sit'   OR 'start-sit'   = ANY(topics)))
+       OR ($4::text = 'waiver-wire' AND (primary_topic='waiver-wire' OR 'waiver-wire' = ANY(topics))
+                                        AND ($5::int IS NULL OR week = $5::int))
+       OR ($4::text = 'dfs'         AND (primary_topic='dfs'         OR 'dfs'         = ANY(topics)))
+       OR ($4::text = 'injury'      AND (primary_topic='injury'      OR 'injury'      = ANY(topics)))
+       OR ($4::text = 'advice'      AND (primary_topic='advice'      OR 'advice'      = ANY(topics)))
+  ),
+  capped AS (
+    SELECT * FROM bucket_pre WHERE rn <= $6::int ORDER BY ts DESC LIMIT 400
+  )
+  SELECT id, title, url, canonical_url, domain, image_url,
+         published_at, discovered_at, source, ts
+  FROM capped
+  ORDER BY ts DESC;
+  `;
 
-    return NextResponse.json({ items: rows }, { status: 200 });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "server error";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  const { rows } = await dbQuery<Row>(
+    sql,
+    [String(days), sourceId ?? null, provider ?? null, key, week ?? null, cap],
+    "section"
+  );
+
+  const interleaved = roundRobinBySource(rows, limit, offset);
+  return NextResponse.json({ items: interleaved }, { status: 200 });
 }
 
-/* utils */
-function clampInt(raw: string | null, min: number, max: number, dflt: number) {
-  const n = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(n)) return dflt;
-  return Math.max(min, Math.min(max, Math.trunc(n)));
-}
-function toNullableInt(raw: string | null): number | null {
-  if (raw == null || raw === "") return null;
+/* helpers */
+function clampInt(raw: string | null, def: number, min: number, max: number): number {
   const n = Number(raw);
-  return Number.isFinite(n) ? Math.trunc(n) : null;
+  if (!Number.isFinite(n)) return def;
+  const i = Math.trunc(n);
+  return Math.min(max, Math.max(min, i));
+}
+function toIntOrUndef(v: string | null): number | undefined {
+  if (v == null || v.trim() === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+}
+function strOrUndef(v: string | null): string | undefined {
+  return v && v.trim() !== "" ? v.trim() : undefined;
+}
+function roundRobinBySource(rows: Row[], limit: number, offset: number): Row[] {
+  const groups = new Map<string, Row[]>();
+  for (const r of rows) (groups.get(r.source ?? "unknown") ?? groups.set(r.source ?? "unknown", []).get(r.source ?? "unknown")!) .push(r);
+  const sources = Array.from(groups.keys()).sort((a, b) => {
+    const ta = groups.get(a)![0]?.ts ?? "";
+    const tb = groups.get(b)![0]?.ts ?? "";
+    return (tb > ta ? 1 : tb < ta ? -1 : 0);
+  });
+  const cursors = new Map<string, number>(sources.map(s => [s, 0]));
+  const out: Row[] = [];
+  while (out.length < offset + limit) {
+    let progressed = false;
+    for (const s of sources) {
+      const i = cursors.get(s)!;
+      const g = groups.get(s)!;
+      if (i < g.length) { out.push(g[i]); cursors.set(s, i + 1); progressed = true; if (out.length >= offset + limit) break; }
+    }
+    if (!progressed) break;
+  }
+  return out.slice(offset, offset + limit);
 }

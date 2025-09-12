@@ -11,12 +11,16 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 // eslint-disable-next-line no-var
 declare global { var __pgPool__: Pool | undefined }
 
+const url =
+  process.env.DATABASE_URL ??
+  process.env.DATABASE_URL_POOLER;
+
 const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? "10", 10);
 const IDLE = Number.parseInt(process.env.PG_IDLE_TIMEOUT_MS ?? "30000", 10); // 30s
 const ACQUIRE = Number.parseInt(process.env.PG_ACQUIRE_TIMEOUT_MS ?? "8000", 10); // 8s
 
 export const pool: Pool = globalThis.__pgPool__ ?? new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: url,
   max: Number.isFinite(MAX) ? MAX : 10,
   idleTimeoutMillis: Number.isFinite(IDLE) ? IDLE : 30_000,
   connectionTimeoutMillis: Number.isFinite(ACQUIRE) ? ACQUIRE : 8_000,
