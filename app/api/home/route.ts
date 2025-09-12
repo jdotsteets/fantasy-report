@@ -6,12 +6,17 @@ export const runtime = "nodejs";         // ensure Node runtime (not edge)
 export const dynamic = "force-dynamic";  // NEVER prerender this route
 export const revalidate = 0;             // disable caching for the route
 
-
 function toIntOrUndef(v: string | null): number | undefined {
+  if (v == null || v.trim() === "") return undefined;
   const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
 }
 
+function parseWeek(v: string | null): number | undefined {
+  if (v == null || v.trim() === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+}
 
 // ───────────────────────────────────────────────────────────
 // Tiny per-instance cache (helps burst traffic a bit)
@@ -19,8 +24,7 @@ function toIntOrUndef(v: string | null): number | undefined {
 type CacheEntry = { body: unknown; ts: number };
 type CacheStore = Map<string, CacheEntry>;
 
-
-declare global { var __HOME_CACHE__: CacheStore | undefined; }
+declare global { /* eslint-disable no-var */ var __HOME_CACHE__: CacheStore | undefined; }
 
 const CACHE: CacheStore = global.__HOME_CACHE__ ?? new Map();
 if (!global.__HOME_CACHE__) global.__HOME_CACHE__ = CACHE;
@@ -42,17 +46,11 @@ function clampInt(
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
-function parseWeek(raw: string | null): number | null {
-  if (raw == null) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.trunc(n) : null;
-}
-
 // ───────────────────────────────────────────────────────────
 // Route
 // ───────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-    const sp = req.nextUrl.searchParams;
+  const sp = req.nextUrl.searchParams;
 
   const u = new URL(req.url);
   const cacheKey = u.search;
@@ -67,10 +65,13 @@ export async function GET(req: NextRequest) {
   // inputs (sanitized)
   const sport = (u.searchParams.get("sport") ?? "nfl").toLowerCase() as "nfl";
 
-  const days          = clampInt(u.searchParams.get("days"), 45, 1, 365);
-  const week          = parseWeek(u.searchParams.get("week")); // only Waivers uses this
-  const sourceId = toIntOrUndef(sp.get("sourceId")); // <-- add this
-
+  const days       = clampInt(u.searchParams.get("days"), 45, 1, 365);
+  const week       = parseWeek(u.searchParams.get("week"));           // number | undefined
+  const sourceId   = toIntOrUndef(sp.get("sourceId"));                // number | undefined
+  const provider   = (() => {
+    const raw = u.searchParams.get("provider");
+    return raw && raw.trim() !== "" ? raw.trim() : undefined;         // string | undefined
+  })();
 
   const limitNews     = clampInt(u.searchParams.get("limitNews"),     60, 1, 100);
   const limitRankings = clampInt(u.searchParams.get("limitRankings"), 10, 1, 100);
@@ -85,8 +86,9 @@ export async function GET(req: NextRequest) {
     const body = await getHomeData({
       sport,
       days,
-      week, 
-      sourceId,              // null is fine; Waivers handler uses it
+      week,                // number | undefined
+      sourceId,            // number | undefined
+      provider,            // string | undefined
       limitNews,
       limitRankings,
       limitStartSit,
