@@ -275,19 +275,20 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
 
   return (
     <Suspense fallback={null}>
-      <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 py-6">
-            <header className="mb-4">
-              {/* same width as the Hero card: max-w-2xl */}
-              <div className="mx-auto max-w-2xl px-2">
-<h1
-  className="
-    text-center font-extrabold leading-tight tracking-tight text-black
-    !text-[clamp(28px,14cqw,84px)] lg:!text-7xl xl:!text-8xl
-  "
->
-  The Fantasy Report
-</h1>
-              </div>
+      <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 pt-2 pb-4">
+             <header className="mt-0 mb-3">
+              {/* Full-width masthead (wider than hero), forced single line */}
+              <h1
+                className="
+                  mx-auto w-full
+                  text-center font-extrabold leading-none tracking-[-0.02em] text-zinc-900
+                  whitespace-nowrap
+                  text-[clamp(24px,9vw,112px)]
+                  md:text-[clamp(48px,8vw,120px)]
+                "
+              >
+                The Fantasy Report
+              </h1>
             </header>
 
 
@@ -340,6 +341,13 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sourceId={selectedSourceId ?? undefined}
                 provider={selectedProvider ?? undefined}   
               />
+              <LoadMoreSection
+                title="Advice"
+                sectionKey="advice"
+                initialItems={adviceFiltered}
+                sourceId={selectedSourceId ?? undefined}
+                provider={selectedProvider ?? undefined}   
+              />
             </div>
 
             {/* Right column */}
@@ -351,13 +359,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sourceId={selectedSourceId ?? undefined}
                 provider={selectedProvider ?? undefined}   
               />
-              <LoadMoreSection
-                title="Advice"
-                sectionKey="advice"
-                initialItems={adviceFiltered}
-                sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
-              />
+
               <LoadMoreSection
                 title="Injuries"
                 sectionKey="injury"
