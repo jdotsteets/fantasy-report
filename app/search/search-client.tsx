@@ -51,7 +51,7 @@ export default function SearchClient() {
           value={q}
           onChange={(e) => { setQ(e.target.value); runSearch(e.target.value); }}
           onKeyDown={(e) => { if (e.key === "Enter") runSearch(q); }}
-          placeholder='Search players, e.g. “CeeDee Lamb”'
+          placeholder='Search players/topics, e.g. “Bijan, tiers”'
           className="w-full rounded-lg border px-3 py-2"
         />
         <button

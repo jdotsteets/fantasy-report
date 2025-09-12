@@ -6,6 +6,8 @@ import Link from "next/link";
 import TopToolbar from "@/components/TopToolbar";
 import { Search as SearchIcon } from "lucide-react"; // NEW
 import ImageToggle from "@/components/ImageToggle";
+import SearchToggle from "@/components/HeaderSearch";
+
 
 export const metadata: Metadata = {
   title: "The Fantasy Report",
@@ -56,17 +58,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
               {/* Icon-only Search button */}
               <div className="flex items-center gap-2">
-                <Link
-                  href="/search"
-                  aria-label="Search"
-                  className="
-                    inline-flex h-8 w-8 items-center justify-center
-                    rounded-md border border-zinc-700 bg-zinc-900 text-white
-                    hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-red-600/40
-                  "
-                >
-                  <SearchIcon size={16} />
-                </Link>
+<div className="flex items-center gap-2">
+  <SearchToggle />
+</div>
                           <ImageToggle />
               </div>
 
