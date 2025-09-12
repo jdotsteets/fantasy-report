@@ -50,8 +50,8 @@ export default function Hero({ title, href, src, source }: HeroProps) {
         />
       </div>
 
-      {/* Black text bar */}
-      <div className="bg-black text-white px-3 py-3">
+      {/* Black text bar + thin white separator line to image */}
+      <div className="border-t border-white/70 bg-black text-white px-3 py-2 sm:py-2.5">
         <h3
           className="line-clamp-2 leading-snug text-white text-[clamp(16px,4.6vw,22px)]"
           title={display}
@@ -60,12 +60,9 @@ export default function Hero({ title, href, src, source }: HeroProps) {
           {display}
         </h3>
 
-        {/* Meta row */}
+        {/* Meta row (compact) */}
         <div className="mt-1 flex items-center gap-2 text-[10px] leading-tight text-white/70">
-          {iconUrl ? (
-            // using img here is fine for tiny favicons
-            <img src={iconUrl} alt="" className="h-3 w-3 " />
-          ) : null}
+          {iconUrl ? <img src={iconUrl} alt="" className="h-3 w-3 rounded-[2px]" /> : null}
           <span>{source}</span>
         </div>
       </div>
