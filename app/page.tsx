@@ -289,7 +289,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
 
   return (
     <Suspense fallback={null}>
-      <main className="mx-auto max-w-[100%] px-2 sm:px-6 lg:px-8 pt-2 pb-4">
+      <main className="mx-auto max-w-[100%] px-0 sm:px-4 lg:px-8 pt-2 pb-4">
              <header className="mt-0 mb-3">
               {/* Full-width masthead (wider than hero), forced single line */}
               <h1

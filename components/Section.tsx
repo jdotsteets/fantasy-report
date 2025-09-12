@@ -11,22 +11,23 @@ export default function Section({
   return (
     <section
       className={[
-        "rounded-2xl border border-zinc-200 bg-white shadow-sm",
+        "border border-zinc-200 bg-white",
+        "rounded-none sm:rounded-2xl",
+        "shadow-none sm:shadow-sm",
         className,
       ].join(" ")}
     >
-      <header className="relative rounded-t-2xl border-b border-zinc-200">
-        {/* very light emerald-800 wash behind the header */}
+      <header className="relative border-b border-zinc-200 rounded-t-none sm:rounded-t-2xl">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-t-2xl bg-gradient-to-b from-emerald-800/10 to-emerald-800/0"
+          className="pointer-events-none absolute inset-0 bg-gradient-to-b from-red-700/10 to-red-700/0 rounded-t-none sm:rounded-t-2xl"
         />
-        <h2 className="relative px-4 py-3 text-lg font-semibold text-zinc-900">
+        <h2 className="relative px-3 sm:px-4 py-2.5 sm:py-3 text-base sm:text-lg font-semibold text-zinc-900">
           {title}
         </h2>
       </header>
 
-      <div className="p-2">{children}</div>
+      <div className="px-3 py-2 sm:p-3">{children}</div>
     </section>
   );
 }
