@@ -21,7 +21,6 @@ export default function Section({
         className="
           relative
           border-t-2 border-black     // ⟵ black top border
-          border-b border-zinc-200
           rounded-none
         "
       >

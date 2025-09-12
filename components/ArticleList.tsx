@@ -134,13 +134,13 @@ export default function ArticleList({ items, title, className, filter }: Props) 
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
 <div className="flex items-center gap-2">
   {favicon ? (
-        <SmartImage
+        <Image
           src={favicon}
           alt=""
           width={18}
           height={18}
           unoptimized
-          className="h-[18px] w-[18px] shrink-0  -translate-y-0.5"
+          className="h-[18px] w-[18px] shrink-0 -translate-y-0.5"
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
