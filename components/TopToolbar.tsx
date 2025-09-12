@@ -87,20 +87,22 @@ function ToolbarInner() {
                     href={href}
                     aria-current={isActive ? "page" : undefined}
                     title={isActive ? "Clear section filter" : label}
-                    className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-xs transition-colors ${
+                    className={`group flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-xs transition-colors ${
                       isActive ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-100"
                     }`}
                   >
                     <Icon size={18} aria-hidden="true" />
                     <span
-                        className="
-                          block                     /* show on mobile */
-                          text-[10px] leading-tight /* small, compact line-height */
-                          font-normal               /* non-bold */
-                          text-zinc-600             /* clear but not shouty */
-                          sm:text-xs                /* a touch larger on desktop */
-                        "
-                      >{label}
+                      className="
+                        block                      /* show on mobile */
+                        text-[10px] leading-tight  /* small, compact */
+                        font-normal                /* non-bold */
+                        text-zinc-600              /* subtle on light bg */
+                        group-aria-[current=page]:text-white  /* white when active */
+                        sm:text-xs                 /* a touch bigger on desktop */
+                      "
+                    >
+                      {label}
                     </span>
                   </Link>
                 </li>
