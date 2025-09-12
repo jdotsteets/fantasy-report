@@ -1,169 +1,83 @@
 // lib/db.ts
-import { Pool, PoolConfig, QueryResult, QueryResultRow } from "pg";
+// Shared Postgres pool for Next.js (server) with keepalive + sane timeouts.
+// - Reuses a single Pool across HMR/SSR
+// - Avoids connection storms on serverless
+// - Cancels long‑running queries server‑side
+// No `any` types.
 
-/** Reuse the Pool across hot reloads/serverless invocations. */
-declare global {
-  var __pgPool: Pool | undefined;
-}
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
-/** Prefer pooled connection string when available. */
-function getConnectionString(): string {
-  const url = process.env.DATABASE_URL_POOLER || process.env.DATABASE_URL;
-  if (!url) throw new Error("Missing DATABASE_URL (or DATABASE_URL_POOLER)");
-  return url;
-}
+// Reuse a single pool between reloads
+// eslint-disable-next-line no-var
+declare global { var __pgPool__: Pool | undefined }
 
-/** SSL config as in your version (unchanged). */
-function getSSLConfig(cs: string): PoolConfig["ssl"] | undefined {
-  const dbSSL = process.env.DB_SSL?.toLowerCase();
-  if (dbSSL === "false") return undefined;
-  if (dbSSL === "true") return { rejectUnauthorized: true };
+const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? "10", 10);
+const IDLE = Number.parseInt(process.env.PG_IDLE_TIMEOUT_MS ?? "30000", 10); // 30s
+const ACQUIRE = Number.parseInt(process.env.PG_ACQUIRE_TIMEOUT_MS ?? "8000", 10); // 8s
 
-  let sslmode: string | null = null;
-  try {
-    const u = new URL(cs);
-    sslmode = u.searchParams.get("sslmode");
-  } catch {}
+export const pool: Pool = globalThis.__pgPool__ ?? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: Number.isFinite(MAX) ? MAX : 10,
+  idleTimeoutMillis: Number.isFinite(IDLE) ? IDLE : 30_000,
+  connectionTimeoutMillis: Number.isFinite(ACQUIRE) ? ACQUIRE : 8_000,
+  keepAlive: true,
+  allowExitOnIdle: true,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+});
 
-  sslmode = (process.env.PGSSLMODE || process.env.DB_SSLMODE || sslmode || "").toLowerCase() || null;
+if (!globalThis.__pgPool__) globalThis.__pgPool__ = pool;
 
-  if (sslmode === "disable") return undefined;
-  if (sslmode === "no-verify" || sslmode === "allow" || sslmode === "prefer") {
-    return { rejectUnauthorized: false };
-  }
-  if (sslmode === "require" || sslmode === "verify-ca" || sslmode === "verify-full") {
-    return { rejectUnauthorized: true };
-  }
-
-  const isLocal = /(?:^|@)(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(cs);
-  if (isLocal) return undefined;
-
-  const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
-  return isProd ? { rejectUnauthorized: true } : { rejectUnauthorized: false };
-}
-
-type PoolConfigExtended = PoolConfig & {
-  keepAliveInitialDelayMillis?: number;
-  maxUses?: number;
-  allowExitOnIdle?: boolean;
-};
-
-function makePool(): Pool {
-  const connectionString = getConnectionString();
-
-  const cfg: PoolConfigExtended = {
-    connectionString,
-    ssl: getSSLConfig(connectionString),
-    max: Number(process.env.PG_MAX ?? 10),
-    idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS ?? 30_000),
-    connectionTimeoutMillis: Number(process.env.PG_CONN_TIMEOUT_MS ?? 12_000),
-    // Hard per-query client timeout to avoid hung requests:
-    query_timeout: Number(process.env.PG_QUERY_TIMEOUT_MS ?? 15_000),
-    keepAlive: true,
-    keepAliveInitialDelayMillis: Number(process.env.PG_KEEPALIVE_DELAY_MS ?? 10_000),
-    maxUses: Number(process.env.PG_MAX_USES ?? 7_500),
-    allowExitOnIdle: true,
-  };
-
-  const p = new Pool(cfg);
-
-  p.on("connect", (client) => {
-    void client
-      .query(
-        `
-        SET application_name = 'fantasy-report';
-        SET statement_timeout = '15s';
-        SET idle_in_transaction_session_timeout = '10s';
-        `
-      )
-      .catch(() => {});
-  });
-
-  p.on("error", (err) => {
-    const code = (err as { code?: string } | undefined)?.code;
-    const msg = String((err as { message?: string } | undefined)?.message ?? "").toLowerCase();
-
-    const benign =
-      code === "XX000" ||
-      code === "57P01" ||
-      /db_termination/.test(msg) ||
-      /server closed the connection/i.test(msg) ||
-      /terminat/.test(msg);
-
-    if (benign) {
-      console.warn("[pg] idle client closed (ignored)", { code });
-      return;
-    }
-    console.error("[pg] pool error", err);
-  });
-
-  if ((cfg.ssl as { rejectUnauthorized?: boolean } | undefined)?.rejectUnauthorized === false) {
-    console.warn("[pg] SSL: rejectUnauthorized=false (dev-only relaxed TLS)");
-  }
-
-  return p;
-}
-
-export const pool: Pool = global.__pgPool ?? (global.__pgPool = makePool());
-
-type NodeErr = Error & { code?: string };
-
-/** Transient/connection errors worth retrying. */
-function isTransient(err: NodeErr): boolean {
-  const pgCodes = new Set([
-    "57P01", // admin_shutdown
-    "57P02", // crash_shutdown
-    "57P03", // cannot_connect_now
-    "53300", // too_many_connections
-    "08006", // connection_failure
-    "08003", // connection_does_not_exist
-    "XX000", // unspecified/server terminated
-  ]);
-  const nodeCodes = new Set(["ETIMEDOUT", "ECONNRESET", "EPIPE"]);
-  const msg = (err.message || "").toLowerCase();
-
-  return (
-    (err.code !== undefined && (pgCodes.has(err.code) || nodeCodes.has(err.code))) ||
-    /db_termination|server closed the connection|timeout/.test(msg) ||
-    /connection terminated unexpectedly/.test(msg) ||
-    /connection terminated due to connection timeout/.test(msg)
+// Set per‑connection limits as soon as a client is created
+pool.on("connect", (client) => {
+  // Cancel statements taking longer than 20s; prevent idle tx from hogging the pool
+  void client.query(
+    "SET statement_timeout = 20000; SET idle_in_transaction_session_timeout = 5000;"
   );
-}
+});
 
-/** Exponential backoff with mild jitter: 300ms, 600ms, 1200ms… */
-function backoff(n: number): Promise<void> {
-  const base = 300 * 2 ** n;
-  const jitter = Math.floor(Math.random() * 75);
-  return new Promise((r) => setTimeout(r, base + jitter));
-}
+pool.on("error", (err) => {
+  // Log and continue — the pool will create a replacement connection on demand
+  console.error("[pg] idle client error", err);
+});
 
-/** Typed query helper. */
-export async function dbQuery<T extends QueryResultRow = QueryResultRow>(
+export async function dbQuery<T extends QueryResultRow>(
   text: string,
-  params: ReadonlyArray<unknown> = [],
-  attempts = Number(process.env.PG_QUERY_ATTEMPTS ?? 3)
+  values: ReadonlyArray<unknown> = [],
+  label?: string
 ): Promise<QueryResult<T>> {
-  let attempt = 0;
-  const values: unknown[] = Array.from(params);
-
-  while (true) {
-    try {
-      return await pool.query<T>(text, values);
-    } catch (e) {
-      const err = e as NodeErr;
-      if (attempt + 1 < attempts && isTransient(err)) {
-        await backoff(attempt++);
-        continue;
-      }
-      throw err;
+  const t0 = Date.now();
+  try {
+    const res = await pool.query<T>(text, values as unknown[]);
+    const ms = Date.now() - t0;
+    if (ms > 500) {
+      // Keep lightweight perf signal; adjust threshold as needed
+      console.log(`[db] slow ${ms}ms ${label ?? text.slice(0, 60).replace(/\s+/g, " ")}…`);
     }
+    return res;
+  } catch (err) {
+    console.error("[db] error", { label: label ?? text.slice(0, 60) });
+    throw err;
   }
 }
 
-/** Graceful shutdown helper for tests/scripts. */
-export async function closePool(): Promise<void> {
-  if (global.__pgPool) {
-    await global.__pgPool.end().catch(() => {});
-    global.__pgPool = undefined;
+// Optional helper for transactions without leaking clients
+export async function withTransaction<R>(fn: (client: PoolClientLike) => Promise<R>): Promise<R> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* noop */ }
+    throw e;
+  } finally {
+    client.release();
   }
 }
+
+// Narrow client surface used in transactions (no `any`)
+export type PoolClientLike = {
+  query<T extends QueryResultRow>(text: string, values?: ReadonlyArray<unknown>): Promise<QueryResult<T>>;
+  release(): void;
+};
