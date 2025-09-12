@@ -20,7 +20,6 @@ export default function Section({
       <header
         className="
           relative
-          border-t-2 border-black     // ⟵ black top border
           rounded-none
         "
       >
@@ -43,7 +42,7 @@ export default function Section({
       </header>
 
       {/* a hair more left padding to push favicons off the edge */}
-      <div className="pl-4 pr-3 py-2 sm:px-4 sm:py-3">{children}</div>
+      <div className="pl-2 pr-2 py-2 sm:px-2 sm:py-3">{children}</div>
     </section>
   );
 }

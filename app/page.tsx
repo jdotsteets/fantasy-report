@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import Section from "@/components/Section";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
-import ImageToggle from "@/components/ImageToggle";
+//import ImageToggle from "@/components/ImageToggle";
 import LoadMoreSection from "@/components/LoadMoreSection";
 import StaticLinksSection from "@/components/StaticLinksSection";
 
@@ -312,9 +312,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
           </div>
         )}
 
-        <div className="flex justify-end gap-2 px-3 py-2">
-          <ImageToggle />
-        </div>
+
 
         {selectedSection ? (
           <div className="mx-auto w-full max-w-3xl space-y-4">{renderSelected(selectedSection)}</div>
