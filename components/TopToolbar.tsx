@@ -92,7 +92,16 @@ function ToolbarInner() {
                     }`}
                   >
                     <Icon size={18} aria-hidden="true" />
-                    <span className="hidden sm:block">{label}</span>
+                    <span
+                        className="
+                          block                     /* show on mobile */
+                          text-[10px] leading-tight /* small, compact line-height */
+                          font-normal               /* non-bold */
+                          text-zinc-600             /* clear but not shouty */
+                          sm:text-xs                /* a touch larger on desktop */
+                        "
+                      >{label}
+                    </span>
                   </Link>
                 </li>
               );

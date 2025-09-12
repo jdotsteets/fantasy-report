@@ -335,7 +335,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
             {/* Middle column */}
             <div className="order-1 md:order-2 space-y-4">
               <LoadMoreSection
-                title="News & Updates"
+                title="Headlines"
                 sectionKey="news"
                 initialItems={latestFiltered}
                 sourceId={selectedSourceId ?? undefined}
