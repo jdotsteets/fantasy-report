@@ -61,7 +61,7 @@ export async function POST(req: Request, ctx: unknown) {
   const a = rows[0];
   if (!a) return new Response("Not found", { status: 404 });
 
-  if (!force && !isWeakArticleImage(a.image_url)) {
+  if (!force && a.image_url && !isWeakArticleImage(a.image_url)) {
     return json({ updated: false, reason: "existing image ok", id: a.id });
   }
 

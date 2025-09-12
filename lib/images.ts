@@ -88,8 +88,9 @@ export function isLikelyAuthorHeadshot(url: string, alt?: string | null): boolea
 }
 
 // Strengthen your existing weak check
-export function isWeakArticleImage(u: string, alt?: string | null): boolean {
-  const s = u.trim();
+export function isWeakArticleImage(url: string, alt?: string | null): boolean {
+  if (!url) return true;
+  const s = url.trim();
 
   // reject non-http(s) and svgs as you already do
   if (!/^https?:\/\//i.test(s)) return true;
