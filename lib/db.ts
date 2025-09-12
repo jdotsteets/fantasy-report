@@ -22,7 +22,7 @@ export const pool: Pool = globalThis.__pgPool__ ?? new Pool({
   connectionTimeoutMillis: Number.isFinite(ACQUIRE) ? ACQUIRE : 8_000,
   keepAlive: true,
   allowExitOnIdle: true,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+  ssl: { rejectUnauthorized: false },
 });
 
 if (!globalThis.__pgPool__) globalThis.__pgPool__ = pool;
