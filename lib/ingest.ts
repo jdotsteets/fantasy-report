@@ -14,7 +14,7 @@ import { fetchItemsForSource } from "@/lib/sources/index";
 import { classifyArticle, looksLikePlayerPage } from "@/lib/classify";
 import { upsertPlayerImage } from "@/lib/ingestPlayerImages"; // keeps player_images logic separate
 import { findArticleImage } from "@/lib/scrape-image";       // OG/Twitter/JSON-LD finder
-import { isWeakArticleImage, extractPlayersFromTitleAndUrl } from "@/lib/images";
+import { isWeakArticleImage, extractPlayersFromTitleAndUrl, isLikelyAuthorHeadshot, unproxyNextImage } from "@/lib/images";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Optional helpers/adapters (scrape canonical, route, etc.)
@@ -66,10 +66,44 @@ function toPlayerKey(name: string): string {
 
 function looksUsableImage(u: string | null | undefined): u is string {
   if (!u) return false;
+
   const s = u.trim();
-  if (!/^https?:\/\//i.test(s)) return false;
-  if (/\.svg(\?|#|$)/i.test(s)) return false;
+  if (!/^https?:\/\//i.test(s)) return false;           // only http(s)
+  if (/\.svg(\?|#|$)/i.test(s)) return false;           // skip SVGs (logos/icons)
+
+  // NEW: ban author/byline/avatars (e.g., USA Today gcdn authoring images, 48x48, etc.)
+  if (isLikelyAuthorHeadshot(s)) return false;
+
+  // Existing heuristic gate (tiny icons, favicons, etc.)
   return !isWeakArticleImage(s);
+}
+
+function normalizeImageForStorage(src?: string | null): string | null {
+  const un = unproxyNextImage(src ?? null);
+  if (!un) return null;
+  if (isLikelyAuthorHeadshot(un)) return null;   // block bylines/avatars
+  if (isWeakArticleImage(un)) return null;       // block favicons/tiny icons
+  return un;
+}
+
+async function resolveFinalUrl(input: string): Promise<string> {
+  // HEAD is cheaper; fall back to GET if some hosts don’t allow HEAD
+  try {
+    const r = await fetch(input, { method: "HEAD", redirect: "follow" });
+    if (r.ok) return r.url || input;
+  } catch { /* fall back */ }
+  const g = await fetch(input, { method: "GET", redirect: "follow" });
+  return g.url || input;
+}
+
+function isLikelyDeadRedirect(u: URL): boolean {
+  const host = u.hostname.toLowerCase();
+  const path = u.pathname.replace(/\/+$/, "").toLowerCase(); // strip trailing slash
+  // NumberFire → FanDuel soft redirects
+  if (host === "www.fanduel.com" && (path === "" || path === "/research")) return true;
+  // Generic “homepage” traps (extend as you see patterns)
+  if (path === "" || path === "/") return true;
+  return false;
 }
 
 async function loadAdapters(): Promise<Adapters> {
@@ -392,15 +426,18 @@ async function backfillArticleImage(
   canonicalUrl: string,
   currentImageUrl: string | null,
 ): Promise<string | null> {
-  const hasUsable = currentImageUrl && !isWeakArticleImage(currentImageUrl);
+  const hasUsable =
+    !!currentImageUrl &&
+    !isWeakArticleImage(currentImageUrl) &&
+    !isLikelyAuthorHeadshot(currentImageUrl);
   if (hasUsable) return currentImageUrl;
 
-  const best = await findArticleImage(canonicalUrl);
+  const raw = await findArticleImage(canonicalUrl);
+  const best = normalizeImageForStorage(raw);
+
   if (!best) {
     await dbQuery(
-      `UPDATE articles
-         SET image_checked_at = NOW()
-       WHERE id = $1`,
+      `UPDATE articles SET image_checked_at = NOW() WHERE id = $1`,
       [articleId]
     );
     return null;
@@ -408,10 +445,10 @@ async function backfillArticleImage(
 
   await dbQuery(
     `UPDATE articles
-        SET image_url = $2,
-            image_source = 'scraped',
-            image_checked_at = NOW()
-      WHERE id = $1`,
+       SET image_url = $2,
+           image_source = 'scraped',
+           image_checked_at = NOW()
+     WHERE id = $1`,
     [articleId, best]
   );
   return best;
@@ -568,6 +605,15 @@ export async function ingestSourceById(
       /* best-effort router */
     }
 
+const resolvedLink = await resolveFinalUrl(link);
+const resolvedUrl  = new URL(resolvedLink);
+
+if (isLikelyDeadRedirect(resolvedUrl)) {
+  skipped++;
+  await logIngest(src, "dead_redirect", link, { title: feedTitle, detail: resolvedLink });
+  continue;
+}
+
     // Normalize published_at
     let publishedAt: Date | null = null;
     const p = it?.publishedAt;
@@ -580,13 +626,12 @@ export async function ingestSourceById(
     // Ensure canonical is *always* a string
     let canonical = chooseCanonical(null, link) ?? link;
     let chosenTitle = feedTitle;
-    let scrapedImage: string | null = null;
     let chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
 
     try {
       if (adapters.scrapeArticle) {
         await log.debug("Calling scrapeArticle", { link });
-        const scraped = await adapters.scrapeArticle(link);
+        const scraped = await adapters.scrapeArticle(resolvedLink);
         await log.debug("Scrape result", {
           link,
           gotCanonical: !!scraped?.canonical_url,
@@ -595,8 +640,8 @@ export async function ingestSourceById(
         });
 
         // Use the real page URL for canonical fallback
-        const pageUrl = scraped?.url ?? link;
-        canonical = chooseCanonical(scraped?.canonical_url ?? null, pageUrl) ?? pageUrl;
+        const pageUrl = scraped?.url ?? resolvedLink;
+        canonical = chooseCanonical(scraped?.canonical_url ?? null, resolvedLink) ?? resolvedLink;
 
         if (!publishedAt && scraped?.published_at) {
           const d2 = new Date(scraped.published_at as string);
@@ -606,10 +651,14 @@ export async function ingestSourceById(
 
         // Re-extract players now that canonical may have changed
         chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
-        scrapedImage = scraped?.image_url ?? null;
+        
+
+        const scrapedImage = normalizeImageForStorage(scraped?.image_url ?? null);
+
+
 
         const klass = classifyArticle({ title: chosenTitle, url: canonical });
-        const isPlayerPage = looksLikePlayerPage(pageUrl, chosenTitle ?? undefined);
+        const isPlayerPage = looksLikePlayerPage(resolvedLink, chosenTitle ?? undefined);
 
         const res = await upsertArticle({
           canonical_url: canonical,
