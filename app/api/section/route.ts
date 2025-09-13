@@ -34,10 +34,8 @@ export async function GET(req: Request) {
       10
     );
 
-    const provider = (url.searchParams.get("provider") || "")
-      .toLowerCase()
-      .replace(/^www\./, "")
-      .trim();
+    const provider = (url.searchParams.get("provider") || "").trim().toLowerCase();
+
 
     const sourceId = url.searchParams.get("sourceId");
     const items = await fetchSectionItems({

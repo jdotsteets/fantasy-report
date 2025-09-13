@@ -112,7 +112,15 @@ export function isLikelyHeadshot(url?: string | null): boolean {
       /\/(avatar|headshot|author|byline|profile)\//i.test(p) ||
       p.endsWith("/author.jpg") ||
       p.endsWith("/profile.jpg") ||
-      p.endsWith("/headshot.jpg")
+      p.endsWith("/headshot.jpg") ||
+      p.includes("authoring-images") ||
+      p.includes("/byline/") ||
+      p.includes("/profile/") ||
+      p.includes("/profiles/") ||
+      p.includes("headshot") ||
+      p.includes("avatar") ||
+      p.includes("/authors/") ||
+      p.includes("/wp-content/uploads/avatars/")
     );
   } catch {
     return false;

@@ -49,9 +49,15 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const offset = Math.max(0, opts.offset ?? 0);
   const days = Math.max(1, Math.min(opts.days ?? 45, 365));
   const week = typeof opts.week === "number" ? Math.max(0, Math.min(opts.week, 30)) : null;
-  const provider = (opts.provider ?? "").toLowerCase().replace(/^www\./, "").trim();
+  // Per-provider cap: default = floor(limit/3), min 1, max 10
+  const defaultCap = Math.max(1, Math.floor(limit / 3));
+  const rawCap = opts.perProviderCap ?? defaultCap;
+  const perProviderCap = Math.max(1, Math.min(rawCap, 10));
+
+  // Provider comes from sources.provider (not URL host)
+  const provider = (opts.provider ?? "").toLowerCase().trim();
   const sourceId = opts.sourceId;
-  const perProviderCap = Math.max(1, Math.min(opts.perProviderCap ?? Math.floor(limit / 3)) || 1, 10);
+  const sport = (opts.sport ?? "").toLowerCase().trim();
 
   const params: unknown[] = [];
   let p = 0;
@@ -60,55 +66,37 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const where: string[] = [];
   where.push(`a.discovered_at >= NOW() - ($${push(days)} || ' days')::interval`);
   where.push(`COALESCE(a.is_player_page, false) = false`);
-
   if (typeof sourceId === "number") where.push(`a.source_id = $${push(sourceId)}`);
+  if (sport) where.push(`LOWER(a.sport) = $${push(sport)}`);
 
-  if (provider) {
-    // normalize provider from domain/host (strip "www.")
-    where.push(`
-      COALESCE(
-        NULLIF(LOWER(REGEXP_REPLACE(a.domain, '^www\\.', '')), ''),
-        LOWER(REGEXP_REPLACE(substring(a.canonical_url from 'https?://([^/]+)'), '^www\\.', '')),
-        LOWER(REGEXP_REPLACE(substring(a.url          from 'https?://([^/]+)'), '^www\\.', ''))
-      ) = $${push(provider)}
-    `);
-  }
+  // NEW: provider filter uses sources.provider (not URL host)
+  if (provider) where.push(`LOWER(COALESCE(s.provider, '')) = $${push(provider)}`);
 
   const restrictToTopic = Boolean(key && key !== "news");
   const isNews = key === "news";
-  
 
   const sql = `
     WITH canon(ordering) AS (
-      SELECT ARRAY[${ORDERED_SECTIONS.map(s => `'${s}'`).join(",")}]::text[]
+      SELECT ARRAY['start-sit','waiver-wire','injury','dfs','rankings','advice','news']::text[]
     ),
     base AS (
       SELECT
         a.*,
-        s.name AS source,
-        -- normalize provider key from domain/host (strip www.)
-        COALESCE(
-          NULLIF(LOWER(REGEXP_REPLACE(a.domain, '^www\\.', '')), ''),
-          LOWER(REGEXP_REPLACE(substring(a.canonical_url from 'https?://([^/]+)'), '^www\\.', '')),
-          LOWER(REGEXP_REPLACE(substring(a.url          from 'https?://([^/]+)'), '^www\\.', ''))
-        ) AS provider_key
+        s.name      AS source,
+        s.provider  AS provider,                          -- ← expose provider from sources
+        LOWER(COALESCE(NULLIF(s.provider,''), s.name)) AS provider_key  -- ← key for interleave/cap
       FROM articles a
-      JOIN sources s ON s.id = a.source_id
+      JOIN sources  s ON s.id = a.source_id
       , canon c
       WHERE ${where.join(" AND ")}
       ${
-        restrictToTopic
-          ? `
-        -- Only rows whose canonical *primary* topic == $key
+        restrictToTopic ? `
         AND a.topics @> ARRAY[$${push(key)}]::text[]
         AND array_position(c.ordering, $${push(key)}) = (
           SELECT MIN(array_position(c.ordering, t))
           FROM unnest(a.topics) AS t
           WHERE t = ANY (c.ordering)
-        )`
-          : isNews
-          ? `
-        -- "news" = rows with no canonical topic
+        )` : isNews ? `
         AND (
           a.topics IS NULL
           OR NOT EXISTS (
@@ -116,15 +104,14 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
             FROM unnest(a.topics) AS t
             WHERE t = ANY (c.ordering) AND t <> 'news'
           )
-        )`
-          : ``
+        )` : ``
       }
       ${week !== null ? `AND a.week = $${push(week)}` : ``}
     ),
     ranked AS (
       SELECT
         b.*,
-        ROW_NUMBER() OVER (
+        ROW_NUMBER() OVER (                          -- ← cap/interleave BY PROVIDER
           PARTITION BY b.provider_key
           ORDER BY b.published_at DESC NULLS LAST, b.id DESC
         ) AS rnk

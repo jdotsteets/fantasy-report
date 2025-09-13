@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Article } from "@/types/sources";
-import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
+import { getSafeImageUrl, FALLBACK, isLikelyFavicon, isLikelyHeadshot, isLikelyAuthorHeadshot } from "@/lib/images";
 import { normalizeTitle } from "@/lib/strings";
 import SmartImage from "./SmartImage";
 
@@ -102,7 +102,7 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
             // Image handling
             let candidate = getSafeImageUrl(r.image_url);
-            if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate)) {
+            if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate) || isLikelyAuthorHeadshot(candidate) ) {
               candidate = null;
             }
             const wantImage = mode === "all" ? true : mode === "first" ? idx === 0 : false;
