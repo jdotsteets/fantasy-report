@@ -8,11 +8,33 @@ import { Search as SearchIcon } from "lucide-react"; // NEW
 import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
 
-
 export const metadata: Metadata = {
   title: "The Fantasy Report",
   description: "The best free fantasy football links organized for you.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
+
+  // 👇 Add this block
+  openGraph: {
+    title: "The Fantasy Report",
+    description: "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
+    url: "https://thefantasyreport.com",
+    siteName: "The Fantasy Report",
+    images: [
+      {
+        url: "/og-image.png", // put this file in your /public folder
+        width: 1200,
+        height: 630,
+        alt: "The Fantasy Report",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "The Fantasy Report",
+    description: "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
+    images: ["/og-image.png"], // same image as Open Graph
+  },
 };
 
 export const viewport: Viewport = {
@@ -22,10 +44,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="h-full bg-white">
-      {/* Expose a smaller header height so the toolbar can stick right below it */}
       <body
         className="min-h-full text-zinc-900 antialiased"
-        style={{ ["--header-h" as any]: "56px" }}   // was ~64px before
+        style={{ ["--header-h" as any]: "56px" }}
       >
         <a
           href="#main"
@@ -34,19 +55,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
 
-        {/* Top bar / header — tighter paddings */}
         <header className="sticky top-0 z-30 border-b border-zinc-200 bg-black/95 backdrop-blur">
           <div className="relative mx-auto max-w-[100%] px-3 sm:px-4 lg:px-6 py-2">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 bg-black"
-            />
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-black" />
             <div className="relative z-10 flex items-center justify-between gap-2">
               <Link href="/" className="flex items-center gap-2 sm:gap-3">
                 <Image
                   src="/logo.png"
                   alt="The Fantasy Report"
-                  width={40}   // was 45
+                  width={40}
                   height={40}
                   priority
                 />
@@ -56,22 +73,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <span className="sr-only">The Fantasy Report</span>
               </Link>
 
-              {/* Icon-only Search button */}
               <div className="flex items-center gap-2">
-<div className="flex items-center gap-2">
-  <SearchToggle />
-</div>
-                          <ImageToggle />
+                <SearchToggle />
+                <ImageToggle />
               </div>
-
             </div>
           </div>
         </header>
 
-        {/* Section toolbar (sticks under the header) */}
         <TopToolbar />
 
-        {/* Page content */}
         <main id="main" className="mx-auto max-w-[100%] px-0 sm:px-4 lg:px-8 pt-2 pb-4">
           {children}
         </main>

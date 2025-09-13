@@ -40,40 +40,48 @@ export type FetchSectionOpts = {
   sourceId?: number;
   perProviderCap?: number; // cap per provider for interleaving
   sport?: string;
+  maxAgeHours?: number;
 };
 
 /** Shared provider-interleaved, primary-topic-only query used by API and HomeData. */
 export async function fetchSectionItems(opts: FetchSectionOpts): Promise<SectionRow[]> {
-  const key = opts.key;
-  const limit = Math.max(1, Math.min(opts.limit ?? 12, 100));
+  const limit  = Math.max(1, Math.min(opts.limit ?? 12, 100));
   const offset = Math.max(0, opts.offset ?? 0);
-  const days = Math.max(1, Math.min(opts.days ?? 45, 365));
-  const week = typeof opts.week === "number" ? Math.max(0, Math.min(opts.week, 30)) : null;
-  // Per-provider cap: default = floor(limit/3), min 1, max 10
-  const defaultCap = Math.max(1, Math.floor(limit / 3));
-  const rawCap = opts.perProviderCap ?? defaultCap;
-  const perProviderCap = Math.max(1, Math.min(rawCap, 10));
+  const days   = Math.max(1, Math.min(opts.days ?? 45, 365));
+  const week   = typeof opts.week === "number" ? Math.max(0, Math.min(opts.week, 30)) : null;
 
-  // Provider comes from sources.provider (not URL host)
+  const maxPerProvider = Math.max(1, Math.min(opts.perProviderCap ?? 2, 10));
   const provider = (opts.provider ?? "").toLowerCase().trim();
   const sourceId = opts.sourceId;
-  const sport = (opts.sport ?? "").toLowerCase().trim();
+  const sport    = (opts.sport ?? "").toLowerCase().trim();
+
+  // Default: NEWS must be <= 72h old (override via opts.maxAgeHours)
+  const key = opts.key;
+  const isNews = key === "news";
+  const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 72, 24 * 14)); // guard: <= 14 days
 
   const params: unknown[] = [];
   let p = 0;
   const push = (v: unknown) => { params.push(v); return ++p; };
 
   const where: string[] = [];
+  // broad window for discovery (safety net)
   where.push(`a.discovered_at >= NOW() - ($${push(days)} || ' days')::interval`);
+  // no player pages
   where.push(`COALESCE(a.is_player_page, false) = false`);
   if (typeof sourceId === "number") where.push(`a.source_id = $${push(sourceId)}`);
-  if (sport) where.push(`LOWER(a.sport) = $${push(sport)}`);
-
-  // NEW: provider filter uses sources.provider (not URL host)
+  if (sport)   where.push(`LOWER(a.sport) = $${push(sport)}`);
   if (provider) where.push(`LOWER(COALESCE(s.provider, '')) = $${push(provider)}`);
 
   const restrictToTopic = Boolean(key && key !== "news");
-  const isNews = key === "news";
+  const orderSql = isNews
+  ? `ORDER BY pub_ts DESC NULLS LAST, id DESC`                 // ← Headlines: strict newest-first
+  : `ORDER BY
+       rnk,
+       ((pidx + rnk) % uniq),                                   -- other sections: interleave providers
+       pub_ts DESC NULLS LAST,
+       id DESC`;
+
 
   const sql = `
     WITH canon(ordering) AS (
@@ -82,9 +90,10 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
     base AS (
       SELECT
         a.*,
-        s.name      AS source,
-        s.provider  AS provider,                          -- ← expose provider from sources
-        LOWER(COALESCE(NULLIF(s.provider,''), s.name)) AS provider_key  -- ← key for interleave/cap
+        s.name     AS source,
+        s.provider AS provider,
+        LOWER(COALESCE(NULLIF(s.provider,''), s.name)) AS provider_key,
+        COALESCE(a.published_at, a.discovered_at) AS pub_ts     -- ← unified recency
       FROM articles a
       JOIN sources  s ON s.id = a.source_id
       , canon c
@@ -100,29 +109,42 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
         AND (
           a.topics IS NULL
           OR NOT EXISTS (
-            SELECT 1
-            FROM unnest(a.topics) AS t
+            SELECT 1 FROM unnest(a.topics) AS t
             WHERE t = ANY (c.ordering) AND t <> 'news'
           )
-        )` : ``
+        )
+        AND COALESCE(a.published_at, a.discovered_at)
+              >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval  -- ← freshness gate for news
+        ` : ``
       }
       ${week !== null ? `AND a.week = $${push(week)}` : ``}
     ),
+
+    uniq AS ( SELECT GREATEST(COUNT(DISTINCT provider_key), 1) AS n FROM base ),
+
     ranked AS (
       SELECT
         b.*,
-        ROW_NUMBER() OVER (                          -- ← cap/interleave BY PROVIDER
-          PARTITION BY b.provider_key
-          ORDER BY b.published_at DESC NULLS LAST, b.id DESC
-        ) AS rnk
+        ROW_NUMBER() OVER (PARTITION BY b.provider_key ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC) AS rnk,
+        DENSE_RANK()  OVER (ORDER BY b.provider_key) - 1                                           AS pidx
       FROM base b
+    ),
+
+    capped AS (
+      SELECT
+        r.*,
+        u.n AS uniq,
+        LEAST($${push(maxPerProvider)}, GREATEST(1, CEIL($${push(limit)}::numeric / u.n))) AS cap
+      FROM ranked r
+      CROSS JOIN uniq u
     )
+
     SELECT
       id, title, url, canonical_url, domain, image_url,
       published_at, discovered_at, source, topics, week
-    FROM ranked
-    WHERE rnk <= $${push(perProviderCap)}
-    ORDER BY rnk, published_at DESC NULLS LAST, id DESC
+    FROM capped
+    WHERE rnk <= cap
+    ${orderSql} 
     LIMIT $${push(limit)} OFFSET $${push(offset)}
   `;
 

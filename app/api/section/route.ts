@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const revalidate = 0;
 
+
+
 function clampInt(val: string | number | null, def: number, min: number, max: number): number {
   const n = typeof val === "string" ? Number(val) : typeof val === "number" ? val : def;
   if (!Number.isFinite(n)) return def;
@@ -27,6 +29,11 @@ export async function GET(req: Request) {
     const weekParam = url.searchParams.get("week");
     const week = weekParam ? clampInt(weekParam, 0, 0, 30) : null;
 
+    const freshHoursParam = url.searchParams.get("freshHours");
+    const maxAgeHours = key === "news"
+      ? clampInt(freshHoursParam, 72, 1, 24*14)  // default 72h (3 days)
+      : undefined; 
+
     const perProviderCap = clampInt(
       url.searchParams.get("perProviderCap"),
       Math.max(1, Math.floor(limit / 3)),
@@ -47,6 +54,7 @@ export async function GET(req: Request) {
       perProviderCap,
       provider: provider || undefined,
       sourceId: sourceId ? Number(sourceId) : undefined,
+      maxAgeHours,
     });
 
     return NextResponse.json({ items });
