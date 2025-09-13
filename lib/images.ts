@@ -5,41 +5,33 @@ export const FALLBACK = "/fallback.jpg";
  * Return a valid, non-favicon HTTP(S) image URL — or null if we shouldn't render an <Image>.
  * (We do NOT auto-return FALLBACK here; choose to use FALLBACK in the caller if desired.)
  */
-export function getSafeImageUrl(input?: string | null): string | null {
-  if (!input) return null;
 
-  let url = input.trim();
 
-  // Fix protocol-relative URLs
-  if (url.startsWith("//")) url = "https:" + url;
-
-  // Must be http(s)
-  if (!/^https?:\/\//i.test(url)) return null;
-
+export function unproxyNextImage(u?: string | null): string | null {
+  if (!u) return null;
   try {
-    // Validate URL structure
-    const u = new URL(url);
-
-    // Filter obvious low-value images
-    const p = u.pathname.toLowerCase();
-    if (isLikelyFavicon(url)) return null;
-    if (isLikelyHeadshot(url)) return null;
-    if (
-      p.includes("sprite") ||
-      p.includes("logo") ||
-      p.includes("placeholder") ||
-      p.includes("stock")
-    ) {
-      return null;
+    const url = new URL(u);
+    if (url.pathname.startsWith("/_next/image")) {
+      const inner = url.searchParams.get("url");
+      if (inner) return decodeURIComponent(inner);
     }
-
-    return url;
+    return u;
   } catch {
-    return null;
+    return u ?? null;
   }
 }
 
+export function getSafeImageUrl(src?: string | null): string | null {
+  const s = (src ?? "").trim();
+  if (!s) return null;
+  const unproxied = unproxyNextImage(s) ?? "";
+  if (!unproxied) return null;
 
+  // strip obvious tracking params
+  const out = new URL(unproxied);
+  ["w","h","q","auto","fit","ixlib"].forEach((k) => out.searchParams.delete(k));
+  return out.toString();
+}
 
 const HEADSHOT_URL_RE = /\b(avatar|headshot|mugshot|mug|byline|profile|portrait|author|bio|staff|people|face|faces)\b/i;
 const HEADSHOT_HOST_RE = /\b(gravatar\.com|twimg\.com\/profile_images|graph\.facebook\.com|pbs\.twimg\.com)\b/i;

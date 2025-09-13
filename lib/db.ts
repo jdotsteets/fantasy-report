@@ -2,7 +2,7 @@
 // Shared Postgres pool for Next.js (server) with keepalive + sane timeouts.
 // - Reuses a single Pool across HMR/SSR
 // - Avoids connection storms on serverless
-// - Cancels long‑running queries server‑side
+// - Cancels long-running queries server-side
 // No `any` types.
 
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
@@ -31,7 +31,7 @@ export const pool: Pool = globalThis.__pgPool__ ?? new Pool({
 
 if (!globalThis.__pgPool__) globalThis.__pgPool__ = pool;
 
-// Set per‑connection limits as soon as a client is created
+// Set per-connection limits as soon as a client is created
 pool.on("connect", (client) => {
   // Cancel statements taking longer than 20s; prevent idle tx from hogging the pool
   void client.query(
@@ -44,6 +44,10 @@ pool.on("error", (err) => {
   console.error("[pg] idle client error", err);
 });
 
+/**
+ * Low-level query that returns the full pg QueryResult<T>.
+ * Prefer `dbQueryRows` for most callers.
+ */
 export async function dbQuery<T extends QueryResultRow>(
   text: string,
   values: ReadonlyArray<unknown> = [],
@@ -62,6 +66,19 @@ export async function dbQuery<T extends QueryResultRow>(
     console.error("[db] error", { label: label ?? text.slice(0, 60) });
     throw err;
   }
+}
+
+/**
+ * Convenience helper that returns just `rows` as T[].
+ * Safe to use anywhere that expects an array result.
+ */
+export async function dbQueryRows<T extends QueryResultRow>(
+  text: string,
+  values: ReadonlyArray<unknown> = [],
+  label?: string
+): Promise<T[]> {
+  const res = await dbQuery<T>(text, values, label);
+  return res.rows;
 }
 
 // Optional helper for transactions without leaking clients
@@ -85,3 +102,6 @@ export type PoolClientLike = {
   query<T extends QueryResultRow>(text: string, values?: ReadonlyArray<unknown>): Promise<QueryResult<T>>;
   release(): void;
 };
+
+// Optional alias if you want a clearer name for the full result:
+export { dbQuery as dbQueryResult };

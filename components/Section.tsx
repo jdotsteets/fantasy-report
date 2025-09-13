@@ -15,6 +15,7 @@ export default function Section({
         "rounded-t-lg sm:rounded-t-2xl", // rounded TOP corners
         "overflow-hidden",               // <-- KEY: clip header to the curve
         "shadow-none sm:shadow-sm",
+        "overflow-hidden",
         className,
       ].join(" ")}
     >
@@ -24,6 +25,7 @@ export default function Section({
           bg-black text-white
           border-b border-zinc-200
           rounded-t-lg sm:rounded-t-2xl   /* mirror top radius (optional but nice) */
+          overflow-hidden
         "
       >
         {/* HEADER HEIGHT: tweak py values below */}

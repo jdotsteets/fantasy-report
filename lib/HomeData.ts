@@ -1,171 +1,142 @@
 // lib/HomeData.ts
-import { dbQuery } from "@/lib/db";
+import {
+  fetchSectionItems,
+  type SectionKey,
+  type SectionRow,
+} from "@/lib/sectionQuery";
 
-export type DbRow = {
-  id: number;
-  title: string;
-  url: string;
-  canonical_url: string | null;
-  domain: string | null;
-  image_url: string | null;
-  published_at: string | null;
-  discovered_at: string | null;
-  source: string | null;
-};
+export type DbRow = SectionRow;
 
-export type HomeDataParams = {
-  sport: string;
-  days: number;
-  week?: number;
+export type HomeDataOptions = {
+  days?: number;
+  week?: number | null;
+  perProviderCap?: number;
+  limitPerSection?: number;
+  sport?: string;
   sourceId?: number;
   provider?: string;
-  limitNews: number;
-  limitRankings: number;
-  limitStartSit: number;
-  limitAdvice: number;
-  limitDFS: number;
-  limitWaivers: number;
-  limitInjuries: number;
-  limitHero: number;
-  perSourceCap?: number; // default 2
+  // per-section limit overrides
+  limitNews?: number;
+  limitRankings?: number;
+  limitStartSit?: number;
+  limitAdvice?: number;
+  limitDFS?: number;
+  limitWaivers?: number;
+  limitInjuries?: number;
+  // hero pool cap
+  limitHero?: number;
 };
 
-export type HomePayload = {
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function uniqById(rows: SectionRow[]): SectionRow[] {
+  const seen = new Set<number>();
+  const out: SectionRow[] = [];
+  for (const r of rows) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      out.push(r);
+    }
+  }
+  return out;
+}
+
+export async function getHomeData(
+  opts: HomeDataOptions = {},
+): Promise<{
   items: {
-    latest: DbRow[];
-    rankings: DbRow[];
-    startSit: DbRow[];
-    advice: DbRow[];
-    dfs: DbRow[];
-    waivers: DbRow[];
-    injuries: DbRow[];
-    heroCandidates: DbRow[];
+    latest: SectionRow[];
+    rankings: SectionRow[];
+    startSit: SectionRow[];
+    advice: SectionRow[];
+    dfs: SectionRow[];
+    waivers: SectionRow[];
+    injury: SectionRow[];      // keep for back-compat
+    injuries: SectionRow[];    // required by page.tsx HomePayload
+    heroCandidates: SectionRow[];
   };
-};
+}> {
+  const baseLimit = clamp(opts.limitPerSection ?? 12, 1, 50);
+  const perProviderCap = clamp(
+    opts.perProviderCap ?? Math.max(1, Math.floor(baseLimit / 3)),
+    1,
+    10,
+  );
+  const days = clamp(opts.days ?? 45, 1, 365);
+  const week = typeof opts.week === "number" ? clamp(opts.week, 0, 30) : null;
 
-type BucketRow = { bucket: string; row: DbRow };
+  const sport =
+    (opts.sport ?? "").toLowerCase().trim() || undefined;
+  const provider =
+    (opts.provider ?? "").toLowerCase().replace(/^www\./, "").trim() || undefined;
+  const sourceId =
+    typeof opts.sourceId === "number" ? opts.sourceId : undefined;
 
-export async function getHomeData(p: HomeDataParams): Promise<HomePayload> {
-  const {
-    sport, days, week, sourceId, provider,
-    limitNews, limitRankings, limitStartSit, limitAdvice, limitDFS,
-    limitWaivers, limitInjuries, limitHero,
-    perSourceCap = 2,
-  } = p;
-
- const sql = `
-  WITH filt AS (
-    SELECT
-      a.id, a.title, a.url, a.canonical_url, a.domain, a.image_url,
-      a.published_at, a.discovered_at,
-      s.name AS source,                    -- display name
-      COALESCE(a.published_at, a.discovered_at) AS ts,
-      a.primary_topic, a.topics, a.week
-    FROM articles a
-    JOIN sources s ON s.id = a.source_id
-    WHERE a.sport = $1::text
-      AND (
-        a.published_at    >= NOW() - ($2::text || ' days')::interval
-        OR a.discovered_at >= NOW() - ($2::text || ' days')::interval
-      )
-      AND ($3::int  IS NULL OR a.source_id = $3::int)
-      -- ✅ provider filter now uses sources.provider (not s.name)
-      AND ($4::text IS NULL OR LOWER(s.provider) = LOWER($4::text))
-  ),
-  latest_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-  ),
-  latest AS (
-    SELECT * FROM latest_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $5::int
-  ),
-  rankings_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-    WHERE primary_topic = 'rankings' OR 'rankings' = ANY(topics)
-  ),
-  rankings AS (
-    SELECT * FROM rankings_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $6::int
-  ),
-  start_sit_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-    WHERE primary_topic = 'start-sit' OR 'start-sit' = ANY(topics)
-  ),
-  start_sit AS (
-    SELECT * FROM start_sit_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $7::int
-  ),
-  advice_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-    WHERE primary_topic = 'advice' OR 'advice' = ANY(topics)
-  ),
-  advice AS (
-    SELECT * FROM advice_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $8::int
-  ),
-  dfs_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-    WHERE primary_topic = 'dfs' OR 'dfs' = ANY(topics)
-  ),
-  dfs AS (
-    SELECT * FROM dfs_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $9::int
-  ),
-  waivers_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-    WHERE (primary_topic = 'waiver-wire' OR 'waiver-wire' = ANY(topics))
-      AND ($10::int IS NULL OR week = $10::int)
-  ),
-  waivers AS (
-    SELECT * FROM waivers_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $11::int
-  ),
-  injuries_pre AS (
-    SELECT *, row_number() OVER (PARTITION BY source ORDER BY ts DESC) AS rn
-    FROM filt
-    WHERE primary_topic = 'injury' OR 'injury' = ANY(topics)
-  ),
-  injuries AS (
-    SELECT * FROM injuries_pre WHERE rn <= $14::int ORDER BY ts DESC LIMIT $12::int
-  ),
-  hero AS (
-    SELECT * FROM filt
-    WHERE image_url IS NOT NULL
-    ORDER BY ts DESC LIMIT $13::int
-  )
-  SELECT 'latest'::text AS bucket, to_jsonb(latest.*)        AS row FROM latest
-  UNION ALL SELECT 'rankings',       to_jsonb(rankings.*)     FROM rankings
-  UNION ALL SELECT 'startSit',       to_jsonb(start_sit.*)    FROM start_sit
-  UNION ALL SELECT 'advice',         to_jsonb(advice.*)       FROM advice
-  UNION ALL SELECT 'dfs',            to_jsonb(dfs.*)          FROM dfs
-  UNION ALL SELECT 'waivers',        to_jsonb(waivers.*)      FROM waivers
-  UNION ALL SELECT 'injuries',       to_jsonb(injuries.*)     FROM injuries
-  UNION ALL SELECT 'heroCandidates', to_jsonb(hero.*)         FROM hero;
-  `;
-
-  const args: (string | number | null)[] = [
-    sport,                // $1
-    String(days),         // $2
-    sourceId ?? null,     // $3
-    provider ?? null,     // $4
-    limitNews,            // $5
-    limitRankings,        // $6
-    limitStartSit,        // $7
-    limitAdvice,          // $8
-    limitDFS,             // $9
-    week ?? null,         // $10
-    limitWaivers,         // $11
-    limitInjuries,        // $12
-    limitHero,            // $13
-    perSourceCap,         // $14
-  ];
-
-  const { rows } = await dbQuery<BucketRow>(sql, args, "home-data");
-
-  const buckets: Record<string, DbRow[]> = {
-    latest: [], rankings: [], startSit: [], advice: [], dfs: [], waivers: [], injuries: [], heroCandidates: [],
+  const limits = {
+    news: clamp(opts.limitNews ?? baseLimit, 1, 50),
+    rankings: clamp(opts.limitRankings ?? baseLimit, 1, 50),
+    startSit: clamp(opts.limitStartSit ?? baseLimit, 1, 50),
+    advice: clamp(opts.limitAdvice ?? baseLimit, 1, 50),
+    dfs: clamp(opts.limitDFS ?? baseLimit, 1, 50),
+    waivers: clamp(opts.limitWaivers ?? baseLimit, 1, 50),
+    injuries: clamp(opts.limitInjuries ?? baseLimit, 1, 50),
   };
-  for (const r of rows) (buckets[r.bucket] ?? buckets.latest).push(r.row);
 
-  return { items: buckets as HomePayload["items"] };
+  const shared = { days, week, perProviderCap, sport, sourceId, provider };
+
+  // Fetch all sections in parallel using the shared (provider-interleaved, primary-topic) query
+  const [news, rankings, startSit, advice, dfs, waivers, injury] = await Promise.all([
+    fetchSectionItems({ key: "news",        limit: limits.news,      ...shared }),
+    fetchSectionItems({ key: "rankings",    limit: limits.rankings,  ...shared }),
+    fetchSectionItems({ key: "start-sit",   limit: limits.startSit,  ...shared }),
+    fetchSectionItems({ key: "advice",      limit: limits.advice,    ...shared }),
+    fetchSectionItems({ key: "dfs",         limit: limits.dfs,       ...shared }),
+    fetchSectionItems({ key: "waiver-wire", limit: limits.waivers,   ...shared }),
+    fetchSectionItems({ key: "injury",      limit: limits.injuries,  ...shared }),
+  ]);
+
+  // Build hero pool (deduped) and cap
+  const heroLimit = clamp(opts.limitHero ?? 24, 1, 100);
+  const heroCandidates = uniqById([
+    ...news,
+    ...rankings,
+    ...startSit,
+    ...advice,
+    ...dfs,
+    ...waivers,
+    ...injury,
+  ]).slice(0, heroLimit);
+
+  return {
+    items: {
+      latest: news,
+      rankings,
+      startSit,
+      advice,
+      dfs,
+      waivers,
+      injury,            // singular (back-compat)
+      injuries: injury,  // plural alias (required by HomePayload)
+      heroCandidates,
+    },
+  };
+}
+
+// Optional single section helper
+export async function getSectionItems(
+  key: SectionKey,
+  opts: {
+    limit?: number;
+    offset?: number;
+    days?: number;
+    week?: number | null;
+    perProviderCap?: number;
+    sport?: string;
+    sourceId?: number;
+    provider?: string;
+  } = {},
+): Promise<SectionRow[]> {
+  return fetchSectionItems({ key, ...opts });
 }
