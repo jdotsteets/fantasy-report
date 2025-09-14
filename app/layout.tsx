@@ -8,7 +8,7 @@ import { Search as SearchIcon } from "lucide-react"; // NEW
 import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
 
-export const metadata: Metadata = {
+export const BASE_METADATA: Metadata = {
   title: "The Fantasy Report",
   description: "The best free fantasy football links organized for you.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],

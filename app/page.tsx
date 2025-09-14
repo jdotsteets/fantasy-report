@@ -10,7 +10,7 @@ import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import { getHomeData, type DbRow } from "@/lib/HomeData";
 import { websiteJsonLd, itemListJsonLd } from "@/lib/seo/jsonld";
-import { BASE_METADATA } from "./layout";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +19,26 @@ export const revalidate = 0;
 /* ───────────────────────── SEO defaults ───────────────────────── */
 const SITE_ORIGIN = "https://thefantasyreport.com";
 
-const metadata: Metadata = {
+function mergeTitle(
+  base: Metadata["title"],
+  def: string
+): Metadata["title"] {
+  if (base && typeof base === "object") {
+    if ("template" in base && typeof base.template === "string") {
+      // Valid: DefaultTemplateString
+      return { template: base.template, default: def };
+    }
+    if ("absolute" in base && typeof base.absolute === "string") {
+      // Valid: AbsoluteTemplateString — keep absolute, ignore def
+      return { absolute: base.absolute };
+    }
+  }
+  // Valid: plain string branch of Metadata['title']
+  return def;
+}
+
+// after:
+const BASE_METADATA: Metadata = {
   metadataBase: new URL(SITE_ORIGIN),
   title: {
     default: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
@@ -35,29 +54,19 @@ const metadata: Metadata = {
     description:
       "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
     images: [
-      {
-        url: `${SITE_ORIGIN}/og/default.jpg`,
-        width: 1200,
-        height: 630,
-        alt: "The Fantasy Report",
-      },
+      { url: `${SITE_ORIGIN}/og/default.jpg`, width: 1200, height: 630, alt: "The Fantasy Report" },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    site: "@thefantasyrep", // ← update to your actual handle
+    site: "@thefantasyrep",
     title: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
     description:
       "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
     images: [`${SITE_ORIGIN}/og/default.jpg`],
   },
-  alternates: {
-    canonical: "/",
-  },
-  robots: {
-    index: true,
-    follow: true,
-  },
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
 };
 
 /** Build a human title from selected filters for <title> and OG */
@@ -202,30 +211,24 @@ export function generateMetadata(
   const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
 
   const provider = parseProviderParam(sp.provider);
-
   const title = titleForHome(selectedSection, provider, weekLabel(CURRENT_WEEK));
   const canonical = canonicalPath(selectedSection, provider);
 
   return {
-    // start from your defaults
     ...BASE_METADATA,
 
-    // override title (keep template from base if present)
+    // ✅ Properly typed title merge
+    title: mergeTitle(BASE_METADATA.title, title),
 
-    // keep base alternates, override canonical
     alternates: {
       ...(BASE_METADATA.alternates ?? {}),
       canonical,
     },
-
-    // keep base OG, override dynamic fields
     openGraph: {
       ...(BASE_METADATA.openGraph ?? {}),
       title,
       url: `${SITE_ORIGIN}${canonical}`,
     },
-
-    // keep base Twitter, override dynamic fields
     twitter: {
       ...(BASE_METADATA.twitter ?? {}),
       title,
