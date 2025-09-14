@@ -115,6 +115,10 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
         )
         AND COALESCE(a.published_at, a.discovered_at)
               >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval  -- ← freshness gate for news
+        AND NOT EXISTS (
+            SELECT 1 FROM blocked_urls b
+            WHERE b.url = a.canonical_url
+)
         ` : ``
       }
       ${week !== null ? `AND a.week = $${push(week)}` : ``}

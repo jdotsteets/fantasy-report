@@ -9,6 +9,9 @@ import {
 } from "@/lib/adminHealth";
 import { dbQuery } from "@/lib/db";
 import { logIngest } from "@/lib/ingestLogs";
+import { INGEST_ENGINE_VERSION } from "@/lib/ingest";
+console.log("[ingest] engine", INGEST_ENGINE_VERSION);
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

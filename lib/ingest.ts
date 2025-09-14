@@ -15,10 +15,12 @@ import { classifyArticle, looksLikePlayerPage } from "@/lib/classify";
 import { upsertPlayerImage } from "@/lib/ingestPlayerImages"; // keeps player_images logic separate
 import { findArticleImage } from "@/lib/scrape-image";       // OG/Twitter/JSON-LD finder
 import { isWeakArticleImage, extractPlayersFromTitleAndUrl, isLikelyAuthorHeadshot, unproxyNextImage } from "@/lib/images";
+import { isUrlBlocked, blockUrl } from "@/lib/blocklist";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Optional helpers/adapters (scrape canonical, route, etc.)
 // ─────────────────────────────────────────────────────────────────────────────
+export const INGEST_ENGINE_VERSION = "2025-09-13";
 
 
 type Adapters = {
@@ -45,6 +47,8 @@ function isPromise<T>(v: unknown): v is Promise<T> {
 }
 
 type IngestDecision = { kind: "article" | "index" | "skip"; reason?: string; section?: string };
+
+
 
 function normalizeDecision(v: unknown): IngestDecision {
   const k = (v as { kind?: unknown }).kind;
@@ -86,7 +90,7 @@ function normalizeImageForStorage(src?: string | null): string | null {
   return un;
 }
 
-async function resolveFinalUrl(input: string): Promise<string> {
+export async function resolveFinalUrl(input: string): Promise<string> {
   // HEAD is cheaper; fall back to GET if some hosts don’t allow HEAD
   try {
     const r = await fetch(input, { method: "HEAD", redirect: "follow" });
@@ -250,7 +254,7 @@ function isGenericCanonical(canon: string, original?: string | null): boolean {
  */
 
 
-function chooseCanonical(
+export function chooseCanonical(
   rawCanonical: string | null | undefined,
   pageUrl: string | null | undefined
 ): string | null {
@@ -294,6 +298,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
     row.title ?? null,        // $4
     row.author ?? null,       // $5
     publishedAt,              // $6 ::timestamptz
+    normalizeImageForStorage(row.image_url ?? null),  // ← normalize here
     row.image_url ?? null,    // $7
     row.domain ?? null,       // $8
     row.sport ?? null,        // $9
@@ -446,7 +451,7 @@ async function backfillArticleImage(
   await dbQuery(
     `UPDATE articles
        SET image_url = $2,
-           image_source = 'scraped',
+           image_source = CASE WHEN $2 IS NULL THEN image_source ELSE 'scraped' END,
            image_checked_at = NOW()
      WHERE id = $1`,
     [articleId, best]
@@ -608,9 +613,19 @@ export async function ingestSourceById(
 const resolvedLink = await resolveFinalUrl(link);
 const resolvedUrl  = new URL(resolvedLink);
 
-if (isLikelyDeadRedirect(resolvedUrl)) {
+function isLikelyDeadRedirect(u: URL): boolean {
+  const host = u.hostname.toLowerCase();
+  const path = u.pathname.replace(/\/+$/, "").toLowerCase();
+  if (host === "www.fanduel.com" && (path === "" || path === "/research")) return true;
+  if (path === "" || path === "/") return true;
+  return false;
+}
+
+// ✅ NEW: early block check (prevents scraping/work)
+const earlyCanon = chooseCanonical(null, resolvedLink) ?? resolvedLink;
+if (await isUrlBlocked(earlyCanon)) {
   skipped++;
-  await logIngest(src, "dead_redirect", link, { title: feedTitle, detail: resolvedLink });
+  await logIngest(src, "blocked_by_admin", earlyCanon, { title: feedTitle });
   continue;
 }
 
@@ -624,13 +639,13 @@ if (isLikelyDeadRedirect(resolvedUrl)) {
 
     // 2) Optional scrape enrich
     // Ensure canonical is *always* a string
-    let canonical = chooseCanonical(null, link) ?? link;
+    let canonical = chooseCanonical(null, resolvedLink) ?? resolvedLink;
     let chosenTitle = feedTitle;
     let chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
 
     try {
       if (adapters.scrapeArticle) {
-        await log.debug("Calling scrapeArticle", { link });
+        await log.debug("Calling scrapeArticle", { resolvedLink });
         const scraped = await adapters.scrapeArticle(resolvedLink);
         await log.debug("Scrape result", {
           link,
@@ -649,6 +664,12 @@ if (isLikelyDeadRedirect(resolvedUrl)) {
         }
         if (scraped?.title) chosenTitle = scraped.title;
 
+       if (await isUrlBlocked(canonical)) {
+          skipped++;
+          await logIngest(src, "blocked_by_admin", canonical, { title: feedTitle });
+          continue;
+        }
+
         // Re-extract players now that canonical may have changed
         chosenPlayers = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
         
@@ -662,13 +683,13 @@ if (isLikelyDeadRedirect(resolvedUrl)) {
 
         const res = await upsertArticle({
           canonical_url: canonical,
-          url: pageUrl,
+          url: resolvedLink,
           source_id: sourceId,
           title: chosenTitle,
           author: scraped?.author ?? null,
           published_at: publishedAt,
           image_url: scrapedImage,
-          domain: hostnameOf(pageUrl) ?? null,
+          domain: hostnameOf(resolvedLink) ?? null,
           sport: "nfl",
           topics: klass.topics,
           primary_topic: klass.primary,
@@ -697,26 +718,26 @@ if (isLikelyDeadRedirect(resolvedUrl)) {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      await log.warn("Scrape failed; falling back to basic upsert", { link, error: msg });
-      await logIngest(src, "parse_error", link, { title: feedTitle, detail: msg });
+      await log.warn("Scrape failed; falling back to basic upsert", { resolvedLink, error: msg });
+      await logIngest(src, "parse_error", resolvedLink, { title: feedTitle, detail: msg });
     }
 
     // 3) Fallback (no scraper)
-    canonical = chooseCanonical(null, link) ?? link;
+    canonical = chooseCanonical(null, resolvedLink) ?? resolvedLink;
     const klass = classifyArticle({ title: chosenTitle, url: canonical });
 
     const players = extractPlayersFromTitleAndUrl(chosenTitle, canonical);
-    const isPlayerPage = looksLikePlayerPage(link, feedTitle ?? undefined);
+    const isPlayerPage = looksLikePlayerPage(resolvedLink, feedTitle ?? undefined);
 
     const res = await upsertArticle({
       canonical_url: canonical,
-      url: link,
+      url: resolvedLink,
       source_id: sourceId,
       title: feedTitle,
       author: null,
       published_at: publishedAt,
       image_url: null,
-      domain: hostnameOf(link),
+      domain: hostnameOf(resolvedLink),
       sport: "nfl",
       topics: klass.topics,
       primary_topic: klass.primary,
@@ -764,43 +785,67 @@ if (isLikelyDeadRedirect(resolvedUrl)) {
 
 
 export async function ingestAllAllowedSources(
-  opts?: { jobId?: string; perSourceLimit?: number }
+  opts?: { jobId?: string; perSourceLimit?: number; concurrency?: number }
 ): Promise<void> {
   const jobId = opts?.jobId;
   const perSourceLimit = opts?.perSourceLimit ?? 50;
+  const concurrency = Math.max(1, Math.min(opts?.concurrency ?? 3, 8)); // gentle on DB/pool
   const log = mkLogger(jobId);
 
   const sources = await getAllowedSources();
-  await log.info("Starting ingest for allowed sources", { count: sources.length, perSourceLimit });
+  await log.info("Starting ingest for allowed sources", {
+    count: sources.length, perSourceLimit, concurrency
+  });
 
   if (jobId) {
-    try {
-      await setProgress(jobId, 0, sources.length);
-    } catch {
-      /* noop */
-    }
+    try { await setProgress(jobId, 0, sources.length); } catch { /* noop */ }
   }
+  if (sources.length === 0) {
+    await log.info("No allowed sources found");
+    return;
+  }
+
+  // roll-up totals (no `any`)
   let done = 0;
-  for (const s of sources) {
-    await log.info("Ingesting source", { name: s.name ?? `#${s.id}`, sourceId: s.id });
-    try {
-      await ingestSourceById(s.id, { jobId, limit: perSourceLimit });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await log.error("Source ingest failed", { sourceId: s.id, error: msg });
-      await logIngest(s, "fetch_error", null, { detail: msg });
-    }
-    done++;
-    if (jobId) {
+  const totals = { total: 0, inserted: 0, updated: 0, skipped: 0 };
+  const errors: Array<{ sourceId: number; message: string }> = [];
+
+  // simple worker pool
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= sources.length) break;
+      const s = sources[idx];
+
+      await log.info("Ingesting source", { name: s.name ?? `#${s.id}`, sourceId: s.id });
       try {
-        await setProgress(jobId, done);
-      } catch {
-        /* noop */
+        const summary = await ingestSourceById(s.id, { jobId, limit: perSourceLimit });
+        totals.total   += summary.total;
+        totals.inserted+= summary.inserted;
+        totals.updated += summary.updated;
+        totals.skipped += summary.skipped;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push({ sourceId: s.id, message: msg });
+        await log.error("Source ingest failed", { sourceId: s.id, error: msg });
+        await logIngest(s, "fetch_error", null, { detail: msg });
+      } finally {
+        done++;
+        if (jobId) {
+          try { await setProgress(jobId, done); } catch { /* noop */ }
+        }
       }
     }
   }
 
-  await log.info("All allowed sources finished", { count: sources.length });
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+  await log.info("All allowed sources finished", {
+    sources: sources.length,
+    totals,
+    errors: errors.length,
+  });
 }
 
 export async function ingestAllSources(

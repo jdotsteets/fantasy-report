@@ -7,18 +7,49 @@ export const FALLBACK = "/fallback.jpg";
  */
 
 
-export function unproxyNextImage(u?: string | null): string | null {
-  if (!u) return null;
-  try {
-    const url = new URL(u);
-    if (url.pathname.startsWith("/_next/image")) {
-      const inner = url.searchParams.get("url");
-      if (inner) return decodeURIComponent(inner);
-    }
-    return u;
-  } catch {
-    return u ?? null;
+function safeUrl(s: string): URL | null {
+  try { return new URL(s); } catch { return null; }
+}
+
+
+export function isPromotionalImage(url: string, alt?: string | null): boolean {
+  const s = url.toLowerCase();
+
+  // Obvious path/filename hints
+  if (/\/(ads?|banners?|promos?|sponsor(ship)?|affiliates?)\//.test(s)) return true;
+  if (/\b(promo|promotion|banner|advert|advertisement|sponsored|affiliate)\b/.test(s)) return true;
+
+  // Common IAB ad sizes in filenames/paths (both 300x250 etc. and single-token like 728x90)
+  if (/(^|[^0-9])(300x250|300x600|336x280|320x50|320x100|300x50|300x100|728x90|970x250|970x90|468x60|234x60|160x600|120x600|125x125|200x200|180x150)([^0-9]|$)/.test(s)) {
+    return true;
   }
+
+  // Site-specific: FFToday “creative” promos (your current offender)
+  if (s.includes("fftoday.com/creative/")) return true;
+
+  // Optional: alt text hints
+  if (alt && /\b(promo|banner|advert|sponsor)\b/i.test(alt)) return true;
+
+  return false;
+}
+
+export function isNextImageProxy(u: string): boolean {
+  const url = safeUrl(u);
+  if (!url) return false;
+  return url.pathname.includes("/_next/image") && url.searchParams.has("url");
+}
+
+/** Extract the original URL from Next.js proxy URLs; otherwise return the input. */
+export function unproxyNextImage(input: string | null): string | null {
+  if (!input) return null;
+  const url = safeUrl(input);
+  if (!url) return null;
+  if (isNextImageProxy(input)) {
+    const orig = url.searchParams.get("url");
+    if (!orig) return null;
+    try { return new URL(orig).toString(); } catch { return null; }
+  }
+  return input;
 }
 
 export function getSafeImageUrl(src?: string | null): string | null {
@@ -63,45 +94,73 @@ function parseWHFromUrl(u: string): { w?: number; h?: number } {
 }
 
 export function isLikelyAuthorHeadshot(url: string, alt?: string | null): boolean {
-  if (HEADSHOT_HOST_RE.test(url)) return true;
-  if (HEADSHOT_URL_RE.test(url)) return true;
+  const s = url.toLowerCase();
+
+  // 1) Explicit host / URL regexes
+  if (HEADSHOT_HOST_RE.test(s)) return true;
+  if (HEADSHOT_URL_RE.test(s)) return true;
+
+  // 2) Alt text hints
   if (alt && /\b(author|byline|headshot|mug|profile|portrait)\b/i.test(alt)) return true;
 
+  // 3) Path patterns commonly used for author images
+  if (s.includes("authoring/authoring-images")) return true;
+  if (/\/(avatar|avatars|byline|authors?)\//.test(s)) return true;
+
+  // 4) Small, avatar-like sizes in query params or path (square thumbs)
+  if (/[?&](w|width)=(32|40|48|50|60|64|72|80|96)\b/i.test(s)) return true;
+  if (/[?&](h|height)=(32|40|48|50|60|64|72|80|96)\b/i.test(s)) return true;
+  if (/\/(32|40|48|50|60|64|72|80|96)[x×](32|40|48|50|60|64|72|80|96)\b/.test(s)) return true;
+
+  // 5) Heuristic on parsed dimensions: tiny & square-ish or small area mugs
   const { w, h } = parseWHFromUrl(url);
   if (w && h) {
     const ar = w / h;
     const squareish = Math.abs(ar - 1) <= 0.2;
-    const tiny = Math.max(w, h) <= 220; // most byline avatars are <= 200–220px
-    if (squareish && tiny) return true;
-    // Reject very small/near-square editorial mug sizes even when bigger than 220
-    if (squareish && w * h < 140_000) return true; // e.g., 320x320
+    const tinyEdge = Math.max(w, h) <= 220;  // most byline avatars <= ~200–220px
+    if (squareish && tinyEdge) return true;
+
+    // Reject small near-square editorial mugs even if slightly larger (e.g., 320x320)
+    if (squareish && w * h < 140_000) return true;
   }
+
   return false;
 }
 
-// Strengthen your existing weak check
-export function isWeakArticleImage(url: string, alt?: string | null): boolean {
-  if (!url) return true;
-  const s = url.trim();
 
-  // reject non-http(s) and svgs as you already do
-  if (!/^https?:\/\//i.test(s)) return true;
-  if (/\.svg(\?|#|$)/i.test(s)) return true;
+/** Very weak article images: favicons, sprites, placeholders, proxy images, etc. */
+export function isWeakArticleImage(u: string): boolean {
+  const s = u.toLowerCase();
 
-  // explicit thumbs/logos/icons
+  // Block Next.js proxy images outright
+  if (isNextImageProxy(s)) return true;
+
+  // Promo/ads/banners (new)
+  if (isPromotionalImage(s)) return true;
+
+  // Obvious non-hero assets
+  if (/\.(svg)(\?|#|$)/i.test(s)) return true;                 // logos/sprites
+  if (/favicon|sprite|placeholder|spacer|transparent/i.test(s)) return true;
+
+  // Tiny thumbs via query params
+  if (/[?&](w|width)=(1|16|24|32|40|48|60)\b/i.test(s)) return true;
+  if (/[?&](h|height)=(1|16|24|32|40|48|60)\b/i.test(s)) return true;
+
+  // Path-based thumbnail patterns you already maintain
   if (THUMB_URL_RE.test(s)) return true;
 
-  // author headshots / avatars
-  if (isLikelyAuthorHeadshot(s, alt)) return true;
+  // Author/byline avatars & headshots
+  if (isLikelyAuthorHeadshot(u)) return true;
 
-  // extremely small by filename hints (like 120x120)
-  const { w, h } = parseWHFromUrl(s);
+  // Parsed dimensions heuristic (too small for hero cards)
+  const { w, h } = parseWHFromUrl(u);
   if (w && h) {
-    if (w < 240 || h < 160) return true; // too small for article hero
+    if (w < 240 || h < 160) return true;
   }
 
   return false;
 }
+
 /** New: reject author avatars/headshots */
 export function isLikelyHeadshot(url?: string | null): boolean {
   if (!url) return false;

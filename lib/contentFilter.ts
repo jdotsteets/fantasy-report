@@ -17,6 +17,35 @@ export type FeedLike = {
   url?: string | null;
 };
 
+
+type HostAllow = {
+  rx: RegExp;
+  allowPaths?: RegExp[];   // whitelist sections
+  blockAllElse?: boolean;  // if true, allow only allowPaths
+  blockPaths?: RegExp[];   // ⬅️ new: specific sections to block
+};
+
+// evaluator (no any)
+export function isBlockedByGamblingRules(rawUrl: string): boolean {
+  let u: URL;
+  try { u = new URL(rawUrl); } catch { return false; }
+  const path = u.pathname;
+
+  for (const r of GAMBLING_HOST_RULES) {
+    if (!r.rx.test(u.hostname)) continue;
+
+    // 1) explicit blocks
+    if (r.blockPaths && r.blockPaths.some(rx => rx.test(path))) return true;
+
+    // 2) whitelist mode
+    if (r.blockAllElse) {
+      const ok = (r.allowPaths ?? []).some(rx => rx.test(path));
+      if (!ok) return true;
+    }
+  }
+  return false;
+}
+
 export type PageSignals = {
   hasPublishedMeta: boolean;   // e.g., meta article:published_time or datePublished
   hasArticleSchema: boolean;   // schema.org Article/NewsArticle detected
@@ -178,8 +207,6 @@ export const TEAM_HOST_PATTERNS: RegExp[] = [
 ];
 
 
-/** Gambling/DFS hosts: default block with narrow editorial allowlist */
-type HostAllow = { rx: RegExp; allowPaths?: RegExp[]; blockAllElse?: boolean };
 
 const GAMBLING_HOST_RULES: HostAllow[] = [
   // PrizePicks: block everything (no editorial we want)
@@ -190,6 +217,11 @@ const GAMBLING_HOST_RULES: HostAllow[] = [
 
   // DraftKings: allow only editorial at /playbook/
   { rx: /(^|\.)draftkings\.com$/i, allowPaths: [/^\/playbook\//], blockAllElse: true },
+
+  // ✅ Sharp Football (both domains): block /sportsbook/*
+  { rx: /(^|\.)sharpfootballanalysis\.com$/i, blockPaths: [/^\/sportsbook\//i] },
+  { rx: /(^|\.)sharpfootball\.com$/i,        blockPaths: [/^\/sportsbook\//i] },
+
 
   // Add others here as you encounter them:
   // { rx: /(^|\.)underdogfantasy\.com$/i, blockAllElse: true },
