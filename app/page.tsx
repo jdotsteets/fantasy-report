@@ -19,7 +19,7 @@ export const revalidate = 0;
 /* ───────────────────────── SEO defaults ───────────────────────── */
 const SITE_ORIGIN = "https://thefantasyreport.com";
 
-export const metadata: Metadata = {
+const metadata: Metadata = {
   metadataBase: new URL(SITE_ORIGIN),
   title: {
     default: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
