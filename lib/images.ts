@@ -146,8 +146,16 @@ export function isWeakArticleImage(u: string): boolean {
   if (/[?&](w|width)=(1|16|24|32|40|48|60)\b/i.test(s)) return true;
   if (/[?&](h|height)=(1|16|24|32|40|48|60)\b/i.test(s)) return true;
 
-  // Path-based thumbnail patterns you already maintain
-  if (THUMB_URL_RE.test(s)) return true;
+  // “thumbnail/thumb” only counts as weak if it’s actually small.
+  if (THUMB_URL_RE.test(s)) {
+    const { w, h } = parseWHFromUrl(s);
+    // If we can't parse dimensions, play it safe and treat as weak.
+    if (!w || !h) return true;
+    // Reject small/utility variants; allow larger editorial sizes.
+    if (w < 360 || h < 200) return true;
+    // otherwise fall through (large “thumbnail” variants are OK)
+  }
+
 
   // Author/byline avatars & headshots
   if (isLikelyAuthorHeadshot(u)) return true;

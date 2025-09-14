@@ -1,19 +1,87 @@
-// app/page.tsx
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import Section from "@/components/Section";
 import Hero from "@/components/Hero";
 import FantasyLinks from "@/components/FantasyLinks";
-//import ImageToggle from "@/components/ImageToggle";
 import LoadMoreSection from "@/components/LoadMoreSection";
 import StaticLinksSection from "@/components/StaticLinksSection";
 
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import { getHomeData, type DbRow } from "@/lib/HomeData";
+import { websiteJsonLd, itemListJsonLd } from "@/lib/seo/jsonld";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+/* ───────────────────────── SEO defaults ───────────────────────── */
+const SITE_ORIGIN = "https://thefantasyreport.com";
+
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_ORIGIN),
+  title: {
+    default: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
+    template: "%s · The Fantasy Report",
+  },
+  description:
+    "The Fantasy Report curates the best fantasy football content: headlines, waiver wire targets, rankings, start/sit advice, DFS picks, and injury news.",
+  openGraph: {
+    type: "website",
+    url: SITE_ORIGIN,
+    siteName: "The Fantasy Report",
+    title: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
+    description:
+      "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
+    images: [
+      {
+        url: `${SITE_ORIGIN}/og/default.jpg`,
+        width: 1200,
+        height: 630,
+        alt: "The Fantasy Report",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    site: "@thefantasyrep", // ← update to your actual handle
+    title: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
+    description:
+      "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
+    images: [`${SITE_ORIGIN}/og/default.jpg`],
+  },
+  alternates: {
+    canonical: "/",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
+
+/** Build a human title from selected filters for <title> and OG */
+function titleForHome(selectedSection: SectionKey | null, provider: string | null, weekLabelStr: string): string {
+  if (selectedSection === "waivers") {
+    return `Waiver Wire — ${weekLabelStr}`;
+  }
+  if (selectedSection === "start-sit") return "Start/Sit & Sleepers";
+  if (selectedSection === "rankings") return "Rankings";
+  if (selectedSection === "injury") return "Injuries";
+  if (selectedSection === "dfs") return "DFS";
+  if (selectedSection === "advice") return "Advice";
+  if (selectedSection === "news") return "Headlines";
+  if (provider) return `Articles from ${provider}`;
+  return "Fantasy Football Headlines";
+}
+
+/** Build a canonical path for the current filters */
+function canonicalPath(selectedSection: SectionKey | null, provider: string | null): string {
+  const params = new URLSearchParams();
+  if (selectedSection) params.set("section", selectedSection);
+  if (provider) params.set("provider", provider);
+  const suffix = params.toString();
+  return suffix ? `/?${suffix}` : "/";
+}
 
 /* ───────────────────────── Types/consts ───────────────────────── */
 type HomePayload = {
@@ -46,7 +114,6 @@ type YMD = { y: number; m: number; d: number };
 
 /** Get Y/M/D for a Date *in a specific time zone* (no DST surprises) */
 function getYMDInZone(d: Date, tz: string): YMD {
-  // en-CA gives YYYY-MM-DD which is easy to split
   const s = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
@@ -67,30 +134,27 @@ function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
   const [sy, sm, sd] = week1MondayYMD.split("-").map(Number);
   if (!sy || !sm || !sd) return 1;
 
-  const start = dayCountUTC({ y: sy, m: sm, d: sd });          // Week 1 Monday
-  const today = dayCountUTC(getYMDInZone(now, TZ));             // today in Chicago
-  const weeks = Math.floor((today - start) / 7) + 1;            // Monday rollovers
+  const start = dayCountUTC({ y: sy, m: sm, d: sd });
+  const today = dayCountUTC(getYMDInZone(now, TZ));
+  const weeks = Math.floor((today - start) / 7) + 1;
   return Math.max(1, weeks);
 }
-
 
 function parseProviderParam(raw: string | string[] | undefined): string | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
   if (!v) return null;
-  // Convert + to space, then decode percent-escapes, then trim
   const plusFixed = v.replace(/\+/g, " ");
   let decoded = plusFixed;
-  try { decoded = decodeURIComponent(plusFixed); } catch { /* ignore */ }
+  try {
+    decoded = decodeURIComponent(plusFixed);
+  } catch {
+    /* ignore */
+  }
   const out = decoded.trim();
   return out.length ? out : null;
 }
 
-
-
 const CURRENT_WAIVER_WEEK = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
-
-
-
 
 const SPORT = "nfl";
 const DEFAULT_DAYS = 45;
@@ -124,9 +188,53 @@ const dropId =
   <T extends { id: number }>(arr: T[]) =>
     id ? arr.filter((x) => x.id !== id) : arr;
 
-/* ───────────────────────── Page ───────────────────────── */
+/* ───────────────────────── Metadata for this page (per filters) ───────────────────────── */
 type SP = Record<string, string | string[] | undefined>;
 
+export async function generateMetadata(
+  { searchParams }: { searchParams: Promise<SP> }
+): Promise<Metadata> {
+  const sp = await searchParams;
+  const rawSection = (Array.isArray(sp.section) ? sp.section[0] : sp.section) ?? "";
+  const sectionParam = rawSection.toLowerCase().trim();
+  const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
+  const provider = parseProviderParam(sp.provider);
+
+  const title = titleForHome(selectedSection, provider, weekLabel(CURRENT_WEEK));
+  const canonical = canonicalPath(selectedSection, provider);
+
+  return {
+    title,
+    description:
+      "Curated fantasy football headlines, waiver wire targets, rankings, start/sit advice, DFS picks, and injury news.",
+    alternates: { canonical },
+    openGraph: {
+      title,
+      url: `${SITE_ORIGIN}${canonical}`,
+      images: [
+        // If you build per-page dynamic OGs later, swap this URL accordingly:
+        { url: `${SITE_ORIGIN}/og/default.jpg`, width: 1200, height: 630, alt: title },
+      ],
+    },
+    twitter: {
+      title,
+      images: [`${SITE_ORIGIN}/og/default.jpg`],
+    },
+  };
+}
+
+/* ───────────────────────── JSON-LD helper ───────────────────────── */
+function JsonLd({ json }: { json: unknown }) {
+  return (
+    <script
+      type="application/ld+json"
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(json) }}
+    />
+  );
+}
+
+/* ───────────────────────── Page ───────────────────────── */
 export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
 
@@ -135,16 +243,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const sectionParam = rawSection.toLowerCase().trim();
   const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
 
-
-  const selectedProviderRaw = (Array.isArray(sp.provider) ? sp.provider[0] : sp.provider) ?? "";
   const selectedProvider = parseProviderParam(sp.provider);
 
   const selectedSourceId =
     Number(Array.isArray(sp.sourceId) ? sp.sourceId[0] : sp.sourceId) || null;
   const isSourceMode = !!selectedSourceId;
 
-  // widen window + limits when viewing a single source
-const isFilterMode = !!selectedSourceId || !!selectedProvider;
+  const isFilterMode = !!selectedSourceId || !!selectedProvider;
 
   // widen window + limits when viewing a single source OR provider
   const days = isFilterMode ? 365 : DEFAULT_DAYS;
@@ -162,10 +267,9 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
   const data: HomePayload = await getHomeData({
     sport: SPORT,
     days,
-    week: CURRENT_WEEK,                 // only Waiver Wire uses this filter
+    week: CURRENT_WEEK,
     sourceId: selectedSourceId ?? undefined,
-    provider: selectedProvider ?? undefined, // ← NEW
-
+    provider: selectedProvider ?? undefined,
     ...limits,
   });
 
@@ -200,6 +304,42 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
 
   const showHero = selectedSection === null && hero !== null;
 
+  /* ── JSON-LD payloads ────────────────────────────────────────── */
+  // Home / Section JSON-LD
+  const baseLd = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "The Fantasy Report",
+    url: SITE_ORIGIN,
+    potentialAction: {
+      "@type": "SearchAction",
+      target: `${SITE_ORIGIN}/?q={search_term_string}`,
+      "query-input": "required name=search_term_string",
+    },
+  } as const;
+
+  const listForSection = (key: SectionKey, items: Article[]) => ({
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: titleForHome(key, selectedProvider, weekLabel(CURRENT_WEEK)),
+    itemListElement: items.slice(0, 10).map((a, idx) => ({
+      "@type": "ListItem",
+      position: idx + 1,
+      url: a.canonical_url ?? a.url,
+      name: a.title,
+      image: getSafeImageUrl(a.image_url) || undefined,
+    })),
+  });
+
+  let sectionLd: unknown = null;
+  if (selectedSection === "news") sectionLd = listForSection("news", latestFiltered);
+  else if (selectedSection === "rankings") sectionLd = listForSection("rankings", rankingsFiltered);
+  else if (selectedSection === "start-sit") sectionLd = listForSection("start-sit", startSitFiltered);
+  else if (selectedSection === "advice") sectionLd = listForSection("advice", adviceFiltered);
+  else if (selectedSection === "dfs") sectionLd = listForSection("dfs", dfsFiltered);
+  else if (selectedSection === "waivers") sectionLd = listForSection("waivers", waiversFiltered);
+  else if (selectedSection === "injury") sectionLd = listForSection("injury", injuriesFiltered);
+
   const renderSelected = (k: SectionKey) => {
     switch (k) {
       case "rankings":
@@ -211,7 +351,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
               initialItems={rankingsFiltered}
               days={days}
               sourceId={selectedSourceId ?? undefined}
-              provider={selectedProvider ?? undefined}   
+              provider={selectedProvider ?? undefined}
             />
           </>
         );
@@ -223,7 +363,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
             initialItems={startSitFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
-            provider={selectedProvider ?? undefined}   
+            provider={selectedProvider ?? undefined}
           />
         );
       case "waivers":
@@ -235,7 +375,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
             days={days}
             week={CURRENT_WEEK}
             sourceId={selectedSourceId ?? undefined}
-            provider={selectedProvider ?? undefined}   
+            provider={selectedProvider ?? undefined}
           />
         );
       case "news":
@@ -246,7 +386,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
             initialItems={latestFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
-            provider={selectedProvider ?? undefined}   
+            provider={selectedProvider ?? undefined}
           />
         );
       case "dfs":
@@ -258,7 +398,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
               initialItems={dfsFiltered}
               days={days}
               sourceId={selectedSourceId ?? undefined}
-              provider={selectedProvider ?? undefined}   
+              provider={selectedProvider ?? undefined}
             />
           </>
         );
@@ -270,7 +410,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
             initialItems={adviceFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
-            provider={selectedProvider ?? undefined}   
+            provider={selectedProvider ?? undefined}
           />
         );
       case "injury":
@@ -281,7 +421,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
             initialItems={injuriesFiltered}
             days={days}
             sourceId={selectedSourceId ?? undefined}
-            provider={selectedProvider ?? undefined}   
+            provider={selectedProvider ?? undefined}
           />
         );
     }
@@ -290,29 +430,31 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
   return (
     <Suspense fallback={null}>
       <main className="mx-auto max-w-[100%] px-0 sm:px-4 lg:px-8 pt-2 pb-4">
-             <header className="mt-0 mb-3">
-              {/* Full-width masthead (wider than hero), forced single line */}
-              <h1
-                className="
-                  mx-auto w-full
-                  text-center font-extrabold leading-none tracking-[-0.02em] text-zinc-900
-                  whitespace-nowrap
-                  text-[clamp(24px,9vw,112px)]
-                  md:text-[clamp(48px,8vw,120px)]
-                "
-              >
-                The Fantasy Report
-              </h1>
-            </header>
+        {/* JSON-LD (site) */}
+        <JsonLd json={baseLd} />
+        {/* JSON-LD (section list) */}
+        {sectionLd ? <JsonLd json={sectionLd} /> : null}
 
+        <header className="mt-0 mb-3">
+          {/* Full-width masthead (wider than hero), forced single line */}
+          <h1
+            className="
+              mx-auto w-full
+              text-center font-extrabold leading-none tracking-[-0.02em] text-zinc-900
+              whitespace-nowrap
+              text-[clamp(24px,9vw,112px)]
+              md:text-[clamp(48px,8vw,120px)]
+            "
+          >
+            The Fantasy Report
+          </h1>
+        </header>
 
         {showHero && hero && (
           <div className="mb-8 mx-auto max-w-2xl">
             <Hero title={hero.title} href={hero.href} src={hero.src} source={hero.source} />
           </div>
         )}
-
-
 
         {selectedSection ? (
           <div className="mx-auto w-full max-w-3xl space-y-4">{renderSelected(selectedSection)}</div>
@@ -325,14 +467,14 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sectionKey="rankings"
                 initialItems={rankingsFiltered}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
               <LoadMoreSection
                 title="Start/Sit & Sleepers"
                 sectionKey="start-sit"
                 initialItems={startSitFiltered}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
               <LoadMoreSection
                 title={`Waiver Wire — ${weekLabel(CURRENT_WEEK)}`}
@@ -340,7 +482,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 initialItems={waiversFiltered}
                 week={CURRENT_WEEK}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
             </div>
 
@@ -351,14 +493,14 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sectionKey="news"
                 initialItems={latestFiltered}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
               <LoadMoreSection
                 title="Advice"
                 sectionKey="advice"
                 initialItems={adviceFiltered}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
             </div>
 
@@ -369,7 +511,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sectionKey="dfs"
                 initialItems={dfsFiltered}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
 
               <LoadMoreSection
@@ -377,7 +519,7 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
                 sectionKey="injury"
                 initialItems={injuriesFiltered}
                 sourceId={selectedSourceId ?? undefined}
-                provider={selectedProvider ?? undefined}   
+                provider={selectedProvider ?? undefined}
               />
               <StaticLinksSection initial="rankings_ros" />
               <Section title="Sites">
@@ -388,6 +530,5 @@ const isFilterMode = !!selectedSourceId || !!selectedProvider;
         )}
       </main>
     </Suspense>
-    
   );
 }
