@@ -191,37 +191,51 @@ const dropId =
 /* ───────────────────────── Metadata for this page (per filters) ───────────────────────── */
 type SP = Record<string, string | string[] | undefined>;
 
-export async function generateMetadata(
-  { searchParams }: { searchParams: Promise<SP> }
-): Promise<Metadata> {
-  const sp = await searchParams;
+export function generateMetadata(
+  { searchParams }: { searchParams: SP }
+): Metadata {
+  const sp = searchParams;
+
   const rawSection = (Array.isArray(sp.section) ? sp.section[0] : sp.section) ?? "";
   const sectionParam = rawSection.toLowerCase().trim();
   const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
+
   const provider = parseProviderParam(sp.provider);
 
   const title = titleForHome(selectedSection, provider, weekLabel(CURRENT_WEEK));
   const canonical = canonicalPath(selectedSection, provider);
 
   return {
-    title,
-    description:
-      "Curated fantasy football headlines, waiver wire targets, rankings, start/sit advice, DFS picks, and injury news.",
-    alternates: { canonical },
+    // start from your defaults
+    ...BASE_METADATA,
+
+    // override title (keep template from base if present)
+    title: {
+      ...(typeof BASE_METADATA.title === "object" && BASE_METADATA.title ? BASE_METADATA.title : {}),
+      default: title,
+    },
+
+    // keep base alternates, override canonical
+    alternates: {
+      ...(BASE_METADATA.alternates ?? {}),
+      canonical,
+    },
+
+    // keep base OG, override dynamic fields
     openGraph: {
+      ...(BASE_METADATA.openGraph ?? {}),
       title,
       url: `${SITE_ORIGIN}${canonical}`,
-      images: [
-        // If you build per-page dynamic OGs later, swap this URL accordingly:
-        { url: `${SITE_ORIGIN}/og/default.jpg`, width: 1200, height: 630, alt: title },
-      ],
     },
+
+    // keep base Twitter, override dynamic fields
     twitter: {
+      ...(BASE_METADATA.twitter ?? {}),
       title,
-      images: [`${SITE_ORIGIN}/og/default.jpg`],
     },
   };
 }
+
 
 /* ───────────────────────── JSON-LD helper ───────────────────────── */
 function JsonLd({ json }: { json: unknown }) {
