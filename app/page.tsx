@@ -10,6 +10,7 @@ import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import { getHomeData, type DbRow } from "@/lib/HomeData";
 import { websiteJsonLd, itemListJsonLd } from "@/lib/seo/jsonld";
+import { BASE_METADATA } from "./layout";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -210,10 +211,6 @@ export function generateMetadata(
     ...BASE_METADATA,
 
     // override title (keep template from base if present)
-    title: {
-      ...(typeof BASE_METADATA.title === "object" && BASE_METADATA.title ? BASE_METADATA.title : {}),
-      default: title,
-    },
 
     // keep base alternates, override canonical
     alternates: {
