@@ -16,6 +16,8 @@ import { upsertPlayerImage } from "@/lib/ingestPlayerImages"; // keeps player_im
 import { findArticleImage } from "@/lib/scrape-image";       // OG/Twitter/JSON-LD finder
 import { isWeakArticleImage, extractPlayersFromTitleAndUrl, isLikelyAuthorHeadshot, unproxyNextImage } from "@/lib/images";
 import { isUrlBlocked, blockUrl } from "@/lib/blocklist";
+import { resolvePublished } from "@/lib/dates/resolvePublished";
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Optional helpers/adapters (scrape canonical, route, etc.)
@@ -297,7 +299,39 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   const canonical = chooseCanonical(row.canonical_url ?? null, pageUrl);
   const url = pageUrl;
 
-  const publishedAt = toDateOrNull(row.publishedAt ?? row.published_at);
+  // 1) Take published from input if present
+  const publishedFromInput = toDateOrNull(row.publishedAt ?? row.published_at);
+
+  // 2) If missing, resolve from HTML/URL (and optionally feed/sitemap if you pass them)
+  let resolvedIso: string | null = null;
+  if (!publishedFromInput) {
+    let html: string | null = null;
+    try {
+      html = await fetch(url, { redirect: "follow" }).then(r => r.text());
+    } catch {
+      html = null;
+    }
+
+    // If your ArticleInput includes these (optional), pass them along:
+    // const feedEntry: FeedLike | null =
+    //   (("feedEntry" in row) && (row as { feedEntry?: FeedLike | null }).feedEntry) ?? null;
+    // const sitemapLastmod: string | null =
+    //   (("sitemap_lastmod" in row) && (row as { sitemap_lastmod?: string | null }).sitemap_lastmod) ?? null;
+
+    const resolved = resolvePublished({
+      url,
+      html,
+      // feedEntry,
+      // sitemapLastmod,
+    });
+
+    resolvedIso = resolved.published_at ?? null;
+  }
+
+  // 3) Final published_at value
+  const publishedAt =
+    publishedFromInput ??
+    (resolvedIso ? toDateOrNull(resolvedIso) : null);
 
   // normalize arrays (empty -> null so NULLIF/text[] casts behave)
   const topicsArr  = Array.isArray(row.topics)  && row.topics.length  ? row.topics  : null;
@@ -364,6 +398,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   const inserted = !!rows?.[0]?.inserted;
   return inserted ? { inserted: true } : { updated: true };
 }
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
