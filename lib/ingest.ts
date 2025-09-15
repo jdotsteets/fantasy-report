@@ -23,6 +23,8 @@ import { isUrlBlocked, blockUrl } from "@/lib/blocklist";
 export const INGEST_ENGINE_VERSION = "2025-09-13";
 
 
+
+
 type Adapters = {
   extractCanonicalUrl?: (url: string, html?: string) => Promise<string | null>;
   scrapeArticle?: (
@@ -90,14 +92,26 @@ function normalizeImageForStorage(src?: string | null): string | null {
   return un;
 }
 
-export async function resolveFinalUrl(input: string): Promise<string> {
-  // HEAD is cheaper; fall back to GET if some hosts don’t allow HEAD
+// replace the existing resolveFinalUrl with this:
+
+async function resolveFinalUrl(input: string, timeoutMs = 8000): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(input, { method: "HEAD", redirect: "follow" });
-    if (r.ok) return r.url || input;
-  } catch { /* fall back */ }
-  const g = await fetch(input, { method: "GET", redirect: "follow" });
-  return g.url || input;
+    // Try HEAD first
+    let r = await fetch(input, { method: "HEAD", redirect: "follow", signal: ctrl.signal });
+    if (!r.ok || !r.url) {
+      // Fall back to GET (some hosts reject HEAD)
+      r = await fetch(input, { method: "GET", redirect: "follow", signal: ctrl.signal });
+    }
+    return r.url || input;
+  } catch (e) {
+    // Surface a clear error message up the stack
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`resolveFinalUrl failed for ${input}: ${msg}`);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function isLikelyDeadRedirect(u: URL): boolean {
@@ -275,39 +289,42 @@ function toDateOrNull(v: unknown): Date | null {
 }
 
 export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
-  // Prefer the real page URL; use canonical only as a hint.
+  // Prefer the real page URL; use canonical only as a hint
   const pageUrl = pickNonEmpty(row.url, row.link, row.canonical_url);
   if (!pageUrl) return { updated: true }; // nothing useful to write
 
-  // chooseCanonical must return a string (fallback to pageUrl when canonical is generic)
+  // Ensure canonical is a string; fall back to page URL when needed
   const canonical = chooseCanonical(row.canonical_url ?? null, pageUrl);
   const url = pageUrl;
 
   const publishedAt = toDateOrNull(row.publishedAt ?? row.published_at);
 
-  const topicsArr  = Array.isArray(row.topics)  ? row.topics  : null;
-  const playersArr = Array.isArray(row.players) ? row.players : null;
+  // normalize arrays (empty -> null so NULLIF/text[] casts behave)
+  const topicsArr  = Array.isArray(row.topics)  && row.topics.length  ? row.topics  : null;
+  const playersArr = Array.isArray(row.players) && row.players.length ? row.players : null;
 
   const srcId        = row.source_id ?? row.sourceId ?? null;
   const isPlayerPage = row.is_player_page ?? null;
 
+  // ONE image param: normalized before storage
+  const imageUrl = normalizeImageForStorage(row.image_url ?? null);
+
   const params = [
-    canonical,                // $1
-    url,                      // $2
-    srcId,                    // $3
-    row.title ?? null,        // $4
-    row.author ?? null,       // $5
-    publishedAt,              // $6 ::timestamptz
-    normalizeImageForStorage(row.image_url ?? null),  // ← normalize here
-    row.image_url ?? null,    // $7
-    row.domain ?? null,       // $8
-    row.sport ?? null,        // $9
-    topicsArr,                // $10 ::text[]
-    row.primary_topic ?? null,// $11
-    row.secondary_topic ?? null, // $12
-    row.week ?? null,         // $13 ::int
-    playersArr,               // $14 ::text[]
-    isPlayerPage              // $15 ::bool (nullable, coerced later)
+    canonical,                 // $1  canonical_url
+    url,                       // $2  url
+    srcId,                     // $3  source_id
+    row.title ?? null,         // $4  title
+    row.author ?? null,        // $5  author
+    publishedAt,               // $6  published_at ::timestamptz
+    imageUrl,                  // $7  image_url
+    row.domain ?? null,        // $8  domain
+    row.sport ?? null,         // $9  sport
+    topicsArr,                 // $10 topics ::text[]
+    row.primary_topic ?? null, // $11 primary_topic
+    row.secondary_topic ?? null, // $12 secondary_topic
+    row.week ?? null,          // $13 week ::int
+    playersArr,                // $14 players ::text[]
+    isPlayerPage               // $15 is_player_page ::bool (nullable, coerced later)
   ];
 
   const sql = `
@@ -342,7 +359,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
     RETURNING (xmax = 0) AS inserted;
   `;
 
-  const res = await dbQuery<{ inserted: boolean }>(sql, params);
+  const res  = await dbQuery<{ inserted: boolean }>(sql, params);
   const rows = rowsOf<{ inserted: boolean }>(res);
   const inserted = !!rows?.[0]?.inserted;
   return inserted ? { inserted: true } : { updated: true };
@@ -610,14 +627,33 @@ export async function ingestSourceById(
       /* best-effort router */
     }
 
-const resolvedLink = await resolveFinalUrl(link);
-const resolvedUrl  = new URL(resolvedLink);
+let resolvedLink = link;
+try {
+  resolvedLink = await resolveFinalUrl(link);
+  const resolvedUrl = new URL(resolvedLink);
+
+  // keep this check, but scope it to hosts we know soft-redirect to homepages
+  if (isLikelyDeadRedirect(resolvedUrl)) {
+    skipped++;
+    await logIngest(src, "dead_redirect", link, { title: feedTitle, detail: resolvedLink });
+    continue;
+  }
+} catch (e) {
+  // Do NOT kill the whole job — log and move on to the next item
+  skipped++;
+  await logIngest(src, "resolve_error", link, {
+    title: feedTitle,
+    detail: e instanceof Error ? e.message : String(e),
+  });
+  continue;
+}
+
 
 function isLikelyDeadRedirect(u: URL): boolean {
   const host = u.hostname.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "").toLowerCase();
-  if (host === "www.fanduel.com" && (path === "" || path === "/research")) return true;
-  if (path === "" || path === "/") return true;
+  // NumberFire → FanDuel soft redirects
+  if (host.includes("fanduel.com")) return path === "" || path === "/research";
   return false;
 }
 
