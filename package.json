@@ -10,8 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
-    "build:ci": "next build",
-    "postbuild": "next-sitemap"
+    "build:ci": "next build"
   },
   "engines": {
     "node": ">=20 <21"
