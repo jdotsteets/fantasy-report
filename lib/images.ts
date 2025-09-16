@@ -152,7 +152,7 @@ export function isWeakArticleImage(u: string): boolean {
     // If we can't parse dimensions, play it safe and treat as weak.
     if (!w || !h) return true;
     // Reject small/utility variants; allow larger editorial sizes.
-    if (w < 360 || h < 200) return true;
+    if (w < 240 || h < 160) return true;
     // otherwise fall through (large “thumbnail” variants are OK)
   }
 

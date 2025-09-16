@@ -90,7 +90,7 @@ function normalizeImageForStorage(src?: string | null): string | null {
   const un = unproxyNextImage(src ?? null);
   if (!un) return null;
   if (isLikelyAuthorHeadshot(un)) return null;   // block bylines/avatars
-  if (isWeakArticleImage(un)) return null;       // block favicons/tiny icons
+ // if (isWeakArticleImage(un)) return null;       // block favicons/tiny icons
   return un;
 }
 
@@ -290,6 +290,7 @@ function toDateOrNull(v: unknown): Date | null {
   return null;
 }
 
+
 export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   // Prefer the real page URL; use canonical only as a hint
   const pageUrl = pickNonEmpty(row.url, row.link, row.canonical_url);
@@ -302,31 +303,44 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   // 1) Take published from input if present
   const publishedFromInput = toDateOrNull(row.publishedAt ?? row.published_at);
 
-  // 2) If missing, resolve from HTML/URL (and optionally feed/sitemap if you pass them)
+  // Will hold resolved provenance if we have to derive it
   let resolvedIso: string | null = null;
+  let resolvedRaw: string | null = null;
+  let resolvedSrc: string | null = null;
+  let resolvedConf: number | null = null;
+  let resolvedTz: string | null = null;
+
+  // 2) If missing, resolve from HTML/URL
   if (!publishedFromInput) {
     let html: string | null = null;
     try {
-      html = await fetch(url, { redirect: "follow" }).then(r => r.text());
+      html = await fetch(url, { redirect: "follow" }).then((r) => r.text());
     } catch {
       html = null;
     }
 
-    // If your ArticleInput includes these (optional), pass them along:
-    // const feedEntry: FeedLike | null =
-    //   (("feedEntry" in row) && (row as { feedEntry?: FeedLike | null }).feedEntry) ?? null;
-    // const sitemapLastmod: string | null =
-    //   (("sitemap_lastmod" in row) && (row as { sitemap_lastmod?: string | null }).sitemap_lastmod) ?? null;
-
     const resolved = resolvePublished({
       url,
       html,
-      // feedEntry,
-      // sitemapLastmod,
+      nowIso: new Date().toISOString(), // for “x hours ago”
     });
 
-    resolvedIso = resolved.published_at ?? null;
+    resolvedIso  = resolved.published_at ?? null;
+    resolvedRaw  = resolved.published_raw ?? null;
+    resolvedSrc  = resolved.published_source ?? null;
+    resolvedConf = resolved.published_confidence ?? null;
+    resolvedTz   = resolved.published_tz ?? null;
   }
+
+  // Map sources not in your CHECK list -> "meta"
+  const normalizeSource = (s: string | null): string | null => {
+    if (!s) return null;
+    const allowed = new Set([
+      "rss","atom","dc","jsonld","og","meta","time-tag","url","sitemap","modified",
+    ]);
+    return allowed.has(s) ? s : "meta";
+  };
+  const publishedSource = normalizeSource(resolvedSrc);
 
   // 3) Final published_at value
   const publishedAt =
@@ -340,9 +354,29 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   const srcId        = row.source_id ?? row.sourceId ?? null;
   const isPlayerPage = row.is_player_page ?? null;
 
-  // ONE image param: normalized before storage
-  const imageUrl = normalizeImageForStorage(row.image_url ?? null);
+ type ImageFieldish = Partial<{
+  image_url: string | null;
+  image: string | null;
+  imageUrl: string | null;
+  thumbnail: string | null;
+  enclosure_url: string | null;
+  og_image: string | null;
+  twitter_image: string | null;
+}>;
 
+const r = row as ImageFieldish;
+const imageUrl = normalizeImageForStorage(
+  r.image_url
+  ?? r.image
+  ?? r.imageUrl
+  ?? r.thumbnail
+  ?? r.enclosure_url
+  ?? r.og_image
+  ?? r.twitter_image
+  ?? null
+);
+
+  // NOTE: indices changed — new fields go right after published_at
   const params = [
     canonical,                 // $1  canonical_url
     url,                       // $2  url
@@ -350,46 +384,56 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
     row.title ?? null,         // $4  title
     row.author ?? null,        // $5  author
     publishedAt,               // $6  published_at ::timestamptz
-    imageUrl,                  // $7  image_url
-    row.domain ?? null,        // $8  domain
-    row.sport ?? null,         // $9  sport
-    topicsArr,                 // $10 topics ::text[]
-    row.primary_topic ?? null, // $11 primary_topic
-    row.secondary_topic ?? null, // $12 secondary_topic
-    row.week ?? null,          // $13 week ::int
-    playersArr,                // $14 players ::text[]
-    isPlayerPage               // $15 is_player_page ::bool (nullable, coerced later)
+    resolvedRaw,               // $7  published_raw ::text
+    publishedSource,           // $8  published_source ::text
+    resolvedConf,              // $9  published_confidence ::int
+    resolvedTz,                // $10 published_tz ::text
+    imageUrl,                  // $11 image_url
+    row.domain ?? null,        // $12 domain
+    row.sport ?? null,         // $13 sport
+    topicsArr,                 // $14 topics ::text[]
+    row.primary_topic ?? null, // $15 primary_topic
+    row.secondary_topic ?? null, // $16 secondary_topic
+    row.week ?? null,          // $17 week ::int
+    playersArr,                // $18 players ::text[]
+    isPlayerPage               // $19 is_player_page ::bool (nullable, coerced later)
   ];
 
   const sql = `
     INSERT INTO articles (
       canonical_url, url, source_id, title, author, published_at,
+      published_raw, published_source, published_confidence, published_tz,
       image_url, domain, sport, discovered_at,
       topics, primary_topic, secondary_topic, week, players, is_player_page
     ) VALUES (
       $1::text, $2::text, $3::int,
       NULLIF($4::text,''), NULLIF($5::text,''),
       $6::timestamptz,
-      NULLIF($7::text,''), NULLIF($8::text,''), NULLIF($9::text,''),
+      NULLIF($7::text,''), NULLIF($8::text,''), $9::int, NULLIF($10::text,''),
+      NULLIF($11::text,''), NULLIF($12::text,''), NULLIF($13::text,''),
       NOW(),
-      $10::text[], NULLIF($11::text,''), NULLIF($12::text,''), $13::int, $14::text[],
-      COALESCE($15::bool, false)
+      $14::text[], NULLIF($15::text,''), NULLIF($16::text,''), $17::int, $18::text[],
+      COALESCE($19::bool, false)
     )
     ON CONFLICT (canonical_url)
     DO UPDATE SET
-      url             = COALESCE(EXCLUDED.url, articles.url),
-      title           = COALESCE(EXCLUDED.title, articles.title),
-      author          = COALESCE(EXCLUDED.author, articles.author),
-      published_at    = COALESCE(EXCLUDED.published_at, articles.published_at),
-      image_url       = COALESCE(EXCLUDED.image_url, articles.image_url),
-      domain          = COALESCE(EXCLUDED.domain, articles.domain),
-      sport           = COALESCE(EXCLUDED.sport, articles.sport),
-      topics          = COALESCE(EXCLUDED.topics, articles.topics),
-      primary_topic   = COALESCE(EXCLUDED.primary_topic, articles.primary_topic),
-      secondary_topic = COALESCE(EXCLUDED.secondary_topic, articles.secondary_topic),
-      week            = COALESCE(EXCLUDED.week, articles.week),
-      players         = COALESCE(EXCLUDED.players, articles.players),
-      is_player_page  = articles.is_player_page OR COALESCE(EXCLUDED.is_player_page, false)
+      url                   = COALESCE(EXCLUDED.url, articles.url),
+      title                 = COALESCE(EXCLUDED.title, articles.title),
+      author                = COALESCE(EXCLUDED.author, articles.author),
+      published_at          = COALESCE(EXCLUDED.published_at, articles.published_at),
+      published_raw         = COALESCE(EXCLUDED.published_raw, articles.published_raw),
+      published_source      = COALESCE(EXCLUDED.published_source, articles.published_source),
+      published_confidence  = COALESCE(EXCLUDED.published_confidence, articles.published_confidence),
+      published_tz          = COALESCE(EXCLUDED.published_tz, articles.published_tz),
+      image_url             = COALESCE(EXCLUDED.image_url, articles.image_url),
+      domain                = COALESCE(EXCLUDED.domain, articles.domain),
+      sport                 = COALESCE(EXCLUDED.sport, articles.sport),
+      topics                = COALESCE(EXCLUDED.topics, articles.topics),
+      primary_topic         = COALESCE(EXCLUDED.primary_topic, articles.primary_topic),
+      secondary_topic       = COALESCE(EXCLUDED.secondary_topic, articles.secondary_topic),
+      week                  = COALESCE(EXCLUDED.week, articles.week),
+      players               = COALESCE(EXCLUDED.players, articles.players),
+      is_player_page        = articles.is_player_page OR COALESCE(EXCLUDED.is_player_page, false)
     RETURNING (xmax = 0) AS inserted;
   `;
 

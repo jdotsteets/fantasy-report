@@ -1,16 +1,17 @@
-// lib/dates/resolvePublished.ts
 import type { DateCandidate } from "./types";
+import type { FeedLike } from "./feedExtractors";
 import { extractFromFeed } from "./feedExtractors";
-import { extractFromJsonLD, extractFromMeta, extractFromTimeTag } from "./htmlExtractors";
+import { extractFromJsonLD, extractFromMeta, extractFromTimeTag, loadHtml,
+         extractFromPublishedLabel, extractFromRelativeAgo } from "./htmlExtractors";
 import { extractFromUrl, pickBest } from "./parse";
 
 export type ResolveInputs = {
   url: string;
-    html?: string | null;
-
-  feedEntry?: import("./feedExtractors").FeedLike | null;
-  htmlDoc?: Document | null; // if you fetched the page
+  feedEntry?: FeedLike | null;
+  html?: string | null;           // server-friendly path
+  htmlDoc?: Document | null;      // legacy path (optional)
   sitemapLastmod?: string | null;
+  nowIso?: string | null;         // for “x hours ago” math
 };
 
 export type ResolvedPublished = {
@@ -23,20 +24,34 @@ export type ResolvedPublished = {
 
 export function resolvePublished(inputs: ResolveInputs): ResolvedPublished {
   const cands: DateCandidate[] = [];
-  const { url, feedEntry, htmlDoc, sitemapLastmod } = inputs;
+  const { url, feedEntry, html, htmlDoc, sitemapLastmod, nowIso } = inputs;
 
   const urlCand = extractFromUrl(url);
   if (urlCand) cands.push(urlCand);
 
   if (feedEntry) cands.push(...extractFromFeed(feedEntry));
-  if (htmlDoc) {
-    cands.push(...extractFromJsonLD(htmlDoc));
-    cands.push(...extractFromMeta(htmlDoc));
-    cands.push(...extractFromTimeTag(htmlDoc));
+
+  const htmlStr: string | null =
+    (html && html.trim() !== "" ? html : null) ??
+    (() => htmlDoc?.documentElement?.outerHTML ?? null)();
+
+  if (htmlStr) {
+    const $ = loadHtml(htmlStr);
+    cands.push(...extractFromJsonLD($));
+    cands.push(...extractFromMeta($));
+    cands.push(...extractFromTimeTag($));
+    cands.push(...extractFromPublishedLabel($));     // NEW
+    cands.push(...extractFromRelativeAgo($, nowIso)); // NEW
   }
+
   if (sitemapLastmod && sitemapLastmod.trim() !== "") {
-    const siteCand = { ...urlCand, iso: sitemapLastmod, raw: sitemapLastmod, source: "sitemap" as const, confidence: 50 };
-    if (siteCand.iso) cands.push(siteCand);
+    cands.push({
+      iso: sitemapLastmod,
+      raw: sitemapLastmod,
+      source: "sitemap",
+      confidence: 50,
+      tz: null,
+    });
   }
 
   const best = pickBest(cands);

@@ -31,6 +31,10 @@ export function score(source: PublishedSource): number {
       return 80;
     case "time-tag":
       return 70;
+    case "text":         // “Published Sep 15, 2025”
+      return 78;
+    case "relative":     // “6 hours ago”
+      return 66;
     case "url":
       return 60;
     case "sitemap":

@@ -134,8 +134,8 @@ function isSignedResizer(u: string): boolean {
   // Add more if you bump into them.
   return (
     /:\/\/[^/]*masslive\.com\/resizer\//i.test(u) ||
-    /:\/\/[^/]*advance\.digital\/resizer\//i.test(u) ||
-    /:\/\/[^/]*gannettcdn\.com\/.*width=/i.test(u)
+    /:\/\/[^/]*advance\.digital\/resizer\//i.test(u) 
+   // /:\/\/[^/]*gannettcdn\.com\/.*width=/i.test(u)
   );
 }
 

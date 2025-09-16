@@ -9,7 +9,9 @@ export type PublishedSource =
   | "time-tag"
   | "url"
   | "sitemap"
-  | "modified";
+  | "modified"
+  | "text"        // visible "Published ..." label
+  | "relative"; 
 
 export type DateCandidate = {
   iso: string;              // normalized ISO-8601 in UTC
