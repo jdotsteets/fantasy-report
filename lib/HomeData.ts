@@ -84,7 +84,7 @@ export async function getHomeData(
     injuries: clamp(opts.limitInjuries ?? baseLimit, 1, 50),
   };
 
-  const shared = { days, week, perProviderCap, sport, sourceId, provider };
+  const shared = { days, perProviderCap, sport, sourceId, provider };
 
   // Fetch all sections in parallel using the shared (provider-interleaved, primary-topic) query
   const [news, rankings, startSit, advice, dfs, waivers, injury] = await Promise.all([
@@ -93,7 +93,7 @@ export async function getHomeData(
     fetchSectionItems({ key: "start-sit",   limit: limits.startSit,  ...shared }),
     fetchSectionItems({ key: "advice",      limit: limits.advice,    ...shared }),
     fetchSectionItems({ key: "dfs",         limit: limits.dfs,       ...shared }),
-    fetchSectionItems({ key: "waiver-wire", limit: limits.waivers,   ...shared }),
+    fetchSectionItems({ key: "waiver-wire", limit: limits.waivers, week,   ...shared }),
     fetchSectionItems({ key: "injury",      limit: limits.injuries,  ...shared }),
   ]);
 
@@ -107,7 +107,7 @@ export async function getHomeData(
     ...dfs,
     ...waivers,
     ...injury,
-  ]).slice(0, heroLimit);
+  ]).slice(0, heroLimit); 
 
   return {
     items: {

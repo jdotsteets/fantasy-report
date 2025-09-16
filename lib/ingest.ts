@@ -14,9 +14,17 @@ import { fetchItemsForSource } from "@/lib/sources/index";
 import { classifyArticle, looksLikePlayerPage } from "@/lib/classify";
 import { upsertPlayerImage } from "@/lib/ingestPlayerImages"; // keeps player_images logic separate
 import { findArticleImage } from "@/lib/scrape-image";       // OG/Twitter/JSON-LD finder
-import { isWeakArticleImage, extractPlayersFromTitleAndUrl, isLikelyAuthorHeadshot, unproxyNextImage } from "@/lib/images";
 import { isUrlBlocked, blockUrl } from "@/lib/blocklist";
 import { resolvePublished } from "@/lib/dates/resolvePublished";
+import {
+  isWeakArticleImage,
+  isLikelyAuthorHeadshot,
+  isLikelyFavicon,
+  getSafeImageUrl,
+  extractPlayersFromTitleAndUrl,
+  unproxyNextImage
+} from "@/lib/images";
+import { fetchOgImage } from "./enrich";
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,7 +98,7 @@ function normalizeImageForStorage(src?: string | null): string | null {
   const un = unproxyNextImage(src ?? null);
   if (!un) return null;
   if (isLikelyAuthorHeadshot(un)) return null;   // block bylines/avatars
- // if (isWeakArticleImage(un)) return null;       // block favicons/tiny icons
+  if (isWeakArticleImage(un)) return null;       // block favicons/tiny icons
   return un;
 }
 
@@ -354,29 +362,66 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   const srcId        = row.source_id ?? row.sourceId ?? null;
   const isPlayerPage = row.is_player_page ?? null;
 
- type ImageFieldish = Partial<{
-  image_url: string | null;
-  image: string | null;
-  imageUrl: string | null;
-  thumbnail: string | null;
-  enclosure_url: string | null;
-  og_image: string | null;
-  twitter_image: string | null;
-}>;
+  // ---------- IMAGES (parity with backfill) ----------
+  type ImageFieldish = Partial<{
+    image_url: string | null;
+    image: string | null;
+    imageUrl: string | null;
+    thumbnail: string | null;
+    enclosure_url: string | null;
+    og_image: string | null;
+    twitter_image: string | null;
+  }>;
+  const r = row as ImageFieldish;
 
-const r = row as ImageFieldish;
-const imageUrl = normalizeImageForStorage(
-  r.image_url
-  ?? r.image
-  ?? r.imageUrl
-  ?? r.thumbnail
-  ?? r.enclosure_url
-  ?? r.og_image
-  ?? r.twitter_image
-  ?? null
-);
+  // 3a) Start from adapter-provided fields
+  let imageUrl: string | null = normalizeImageForStorage(
+    r.image_url
+    ?? r.image
+    ?? r.imageUrl
+    ?? r.thumbnail
+    ?? r.enclosure_url
+    ?? r.og_image
+    ?? r.twitter_image
+    ?? null
+  );
+  let imageSource: string | null = imageUrl ? "input" : null;
 
-  // NOTE: indices changed — new fields go right after published_at
+  // helper: mimic backfill normalization before judging
+  const normalizeCandidate = (u: string | null | undefined): string | null => {
+    const safe = getSafeImageUrl(u ?? null);
+    if (!safe) return null;
+    if (isLikelyFavicon(safe)) return null;
+    if (isLikelyAuthorHeadshot(safe)) return null;
+    if (isWeakArticleImage(safe)) return null;
+    return safe;
+  };
+
+  const needsImage = (u: string | null): boolean =>
+    !u || isLikelyFavicon(u) || isLikelyAuthorHeadshot(u) || isWeakArticleImage(u);
+
+  // 3b) If missing/weak, try OG first (like backfill), then scraper
+  if (needsImage(imageUrl)) {
+    try {
+      const og = await fetchOgImage(url).catch(() => null);
+      const ogNorm = normalizeCandidate(og);
+      if (ogNorm) {
+        imageUrl = ogNorm;
+        imageSource = "og";
+      } else {
+        const scraped = await findArticleImage(url).catch(() => null);
+        const scrapedNorm = normalizeCandidate(scraped ?? null);
+        if (scrapedNorm) {
+          imageUrl = scrapedNorm;
+          imageSource = "scraped";
+        }
+      }
+    } catch {
+      // ignore image scrape failures
+    }
+  }
+
+  // ---------- SQL params ----------
   const params = [
     canonical,                 // $1  canonical_url
     url,                       // $2  url
@@ -389,31 +434,32 @@ const imageUrl = normalizeImageForStorage(
     resolvedConf,              // $9  published_confidence ::int
     resolvedTz,                // $10 published_tz ::text
     imageUrl,                  // $11 image_url
-    row.domain ?? null,        // $12 domain
-    row.sport ?? null,         // $13 sport
-    topicsArr,                 // $14 topics ::text[]
-    row.primary_topic ?? null, // $15 primary_topic
-    row.secondary_topic ?? null, // $16 secondary_topic
-    row.week ?? null,          // $17 week ::int
-    playersArr,                // $18 players ::text[]
-    isPlayerPage               // $19 is_player_page ::bool (nullable, coerced later)
+    imageSource,               // $12 image_source
+    row.domain ?? null,        // $13 domain
+    row.sport ?? null,         // $14 sport
+    topicsArr,                 // $15 topics ::text[]
+    row.primary_topic ?? null, // $16 primary_topic
+    row.secondary_topic ?? null, // $17 secondary_topic
+    row.week ?? null,          // $18 week ::int
+    playersArr,                // $19 players ::text[]
+    isPlayerPage               // $20 is_player_page ::bool (nullable, coerced later)
   ];
 
   const sql = `
     INSERT INTO articles (
       canonical_url, url, source_id, title, author, published_at,
       published_raw, published_source, published_confidence, published_tz,
-      image_url, domain, sport, discovered_at,
+      image_url, image_source, domain, sport, discovered_at,
       topics, primary_topic, secondary_topic, week, players, is_player_page
     ) VALUES (
       $1::text, $2::text, $3::int,
       NULLIF($4::text,''), NULLIF($5::text,''),
       $6::timestamptz,
       NULLIF($7::text,''), NULLIF($8::text,''), $9::int, NULLIF($10::text,''),
-      NULLIF($11::text,''), NULLIF($12::text,''), NULLIF($13::text,''),
+      NULLIF($11::text,''), NULLIF($12::text,''), NULLIF($13::text,''), NULLIF($14::text,''),
       NOW(),
-      $14::text[], NULLIF($15::text,''), NULLIF($16::text,''), $17::int, $18::text[],
-      COALESCE($19::bool, false)
+      $15::text[], NULLIF($16::text,''), NULLIF($17::text,''), $18::int, $19::text[],
+      COALESCE($20::bool, false)
     )
     ON CONFLICT (canonical_url)
     DO UPDATE SET
@@ -426,6 +472,7 @@ const imageUrl = normalizeImageForStorage(
       published_confidence  = COALESCE(EXCLUDED.published_confidence, articles.published_confidence),
       published_tz          = COALESCE(EXCLUDED.published_tz, articles.published_tz),
       image_url             = COALESCE(EXCLUDED.image_url, articles.image_url),
+      image_source          = COALESCE(EXCLUDED.image_source, articles.image_source),
       domain                = COALESCE(EXCLUDED.domain, articles.domain),
       sport                 = COALESCE(EXCLUDED.sport, articles.sport),
       topics                = COALESCE(EXCLUDED.topics, articles.topics),
