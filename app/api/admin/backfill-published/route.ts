@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 import { resolvePublished } from "@/lib/dates/resolvePublished";
 
+
 type Row = { id: number; url: string | null; canonical_url: string | null };
 type Result = { updated: number; skipped: number; failed: number; sample: number[] };
 

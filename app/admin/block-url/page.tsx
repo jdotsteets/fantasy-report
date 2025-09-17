@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { AdminNav } from "@/components/admin/AdminNav";
 
 type Row = { url: string; reason: string | null; created_at: string; host: string | null };
 
@@ -56,6 +57,8 @@ export default function BlockUrlPage() {
 
   return (
     <main className="max-w-3xl mx-auto p-6 space-y-6">
+       {/* Admin nav */}
+      <AdminNav active="block-url" />
       <h1 className="text-2xl font-semibold">Block URL</h1>
       <form onSubmit={submit} className="space-y-3">
         <input

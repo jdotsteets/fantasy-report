@@ -1,5 +1,5 @@
 // app/admin/sources/page.tsx
-import { AdminNav } from "@/components/admin/AdminNav";
+import { AdminNav } from "@/components/admin/AdminNav"; 
 import { getSourcesHealth, type HealthSummary } from "@/lib/adminHealth";
 import { Suspense } from "react";
 import SourcesTable from "@/components/admin/SourcesTable";

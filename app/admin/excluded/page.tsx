@@ -1,4 +1,5 @@
 // app/admin/excluded/page.tsx
+import { AdminNav } from "@/components/admin/AdminNav"; 
 import Link from "next/link";
 import {
   getExcludedItems,
@@ -235,24 +236,6 @@ function ReasonBadge({ code }: { code: string }) {
   return <Badge text={REASON_LABEL[code] ?? code} />;
 }
 
-/* ───────────────────────── Admin Nav (same as Sources) ─────────────────── */
-function AdminNav({ active }: { active: "sources" | "excluded" }) {
-  const base = "rounded-md px-3 py-1.5 text-sm font-medium border transition";
-  const normal = "border-zinc-200 text-zinc-700 hover:bg-zinc-50";
-  const current = "border-emerald-300 bg-emerald-50 text-emerald-900";
-
-  return (
-    <nav className="sticky top-0 z-20 mb-6 -mx-2 flex items-center gap-2 bg-white/70 px-2 py-2 backdrop-blur">
-      <Link className={`${base} ${active === "sources" ? current : normal}`} href="/admin/sources">
-        Sources
-      </Link>
-      <Link className={`${base} ${active === "excluded" ? current : normal}`} href="/admin/excluded">
-        Excluded
-      </Link>
-      {/* add more admin pages here as needed */}
-    </nav>
-  );
-}
 
 /* ───────────────────────── UI Components ───────────────────────── */
 function Group({ title, items }: { title: string; items: ExcludedRow[] }) {

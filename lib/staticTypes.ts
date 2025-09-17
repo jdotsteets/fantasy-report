@@ -4,7 +4,10 @@ export type StaticType =
   | "dfs_tools"
   | "projections"
   | "waiver_wire"
-  | "stats";
+  | "stats"
+  | "schedule"
+  | "draft"
+  | "misc";
 
 export const STATIC_TYPES: StaticType[] = [
   "rankings_ros",
@@ -13,6 +16,9 @@ export const STATIC_TYPES: StaticType[] = [
   "projections",
   "waiver_wire",
   "stats",
+  "schedule",
+  "draft",
+  "misc"
 ];
 
 export function staticTypeLabel(t: StaticType): string {
@@ -23,5 +29,8 @@ export function staticTypeLabel(t: StaticType): string {
     case "projections": return "Projections";
     case "waiver_wire": return "Waiver Wire";
     case "stats": return "Stats";
+    case "schedule": return "Scedule";
+    case "draft": return "Draft"
+    case "misc": return "Misc"
   }
 }
