@@ -88,8 +88,8 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   where.push(`COALESCE(a.is_player_page, false) = false`);
   where.push(`NOT EXISTS (SELECT 1 FROM blocked_urls b WHERE b.url = a.canonical_url)`);
 
-  if (staticMode === "exclude") where.push(`COALESCE(a.is_static, false) = false`);
-  else if (staticMode === "only") where.push(`COALESCE(a.is_static, false) = true`);
+if (staticMode === "exclude") where.push(`a.is_static IS DISTINCT FROM true`);
+else if (staticMode === "only") where.push(`a.is_static IS TRUE`);
   if (staticType) where.push(`a.static_type = $${push(staticType)}`);
 
   if (typeof sourceId === "number") where.push(`a.source_id = $${push(sourceId)}`);

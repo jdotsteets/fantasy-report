@@ -112,7 +112,8 @@ const KW: Record<Topic, RegExp[]> = {
     /lineups?\b/i,
     /prop[s]?\b/i,
     // additions:
-    /showdown\b/i,
+    /(?:\b(?:dfs|draftkings?|fanduel|prizepicks?|underdog)\b.{0,40}\bshowdown\b|\bshowdown\b.{0,40}\b(?:dfs|draftkings?|fanduel)\b)/i,
+    /\bshowdown\s+(?:slate|picks?|lineups?|captain|single[-\s]?game)\b/i,
     /player\s+pool\b/i,
     /optimizer\b/i,
   ],

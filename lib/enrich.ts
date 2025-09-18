@@ -6,6 +6,25 @@ import { findArticleImage } from "@/lib/scrape-image";
 import { findWikipediaHeadshot } from "@/lib/wiki";
 import { normalizeTitle } from "@/lib/strings";
 import { fixCbsFantasyTitle } from "./enrichers/cbs";
+import { normalizeUrl as normalizeAndUnwrapUrl } from "@/lib/urls";
+export { normalizeUrl } from "@/lib/urls"; // back-compat re-export
+
+type NormalizedUrl = { url: string; canonical: string; domain: string };
+
+/** Never throw; always return strings (empty string if unknown). */
+function safeNormalize(raw: string): NormalizedUrl {
+  try {
+    const n = normalizeAndUnwrapUrl(raw) as Partial<NormalizedUrl> | null | undefined;
+    const url = (n?.url ?? raw ?? "").trim();
+    const canonical = (n?.canonical ?? url).trim();
+    // Normalize domain to a plain host-without-www or empty string
+    const domain = (n?.domain ?? "").toString().replace(/^www\./i, "");
+    return { url, canonical, domain };
+  } catch {
+    const url = (raw ?? "").trim();
+    return { url, canonical: url, domain: "" };
+  }
+}
 
 /** Minimal feed item we get from rss-parser (etc.), extended with media fields */
 export type RawItem = {
@@ -265,31 +284,6 @@ export async function fetchOgImage(pageUrl: string, timeoutMs = 4000): Promise<s
 
 const BAD_PARAMS = [/^utm_/i, /^fbclid$/i, /^gclid$/i, /^mc_cid$/i, /^mc_eid$/i, /^ref$/i, /^cn$/i, /^cmp$/i, /^igshid$/i];
 
-export function normalizeUrl(raw: string): {
-  url: string;
-  canonical: string;
-  domain: string;
-} {
-  try {
-    const u = new URL(raw.trim());
-
-    BAD_PARAMS.forEach((re) => {
-      for (const key of Array.from(u.searchParams.keys())) {
-        if (re.test(key)) u.searchParams.delete(key);
-      }
-    });
-
-    u.hash = "";
-
-    let canonical = u.toString();
-    if (canonical.endsWith("/") && u.pathname !== "/") canonical = canonical.slice(0, -1);
-
-    const domain = u.hostname.replace(/^www\./, "");
-    return { url: raw.trim(), canonical, domain };
-  } catch {
-    return { url: raw, canonical: raw, domain: "" };
-  }
-}
 
 /* -----------------------
    Title cleaning
@@ -471,12 +465,12 @@ export function fingerprint(canonical: string, title: string): string {
 /* -----------------------
    Main enrichment (improved image selection + URL-aware topics)
 ------------------------ */
-
 export async function enrich(sourceName: string, item: RawItem): Promise<Enriched> {
-  const rawUrl = item.link || "";
-  const { url, canonical, domain } = normalizeUrl(rawUrl);
+ const rawUrl = item.link ?? "";
+const { url, canonical, domain } = safeNormalize(rawUrl);  // ✅ safe + typed
 
-  // 🔧 NEW: Fix CBS Fantasy “See Full Article” placeholders
+
+  // 🔧 Fix CBS Fantasy “See Full Article” placeholders
   const rawTitle = item.title || "";
   const patched = await fixCbsFantasyTitle(canonical, rawTitle).catch(() => null);
   const finalTitle = (patched ?? rawTitle) || "";
@@ -484,9 +478,11 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const normalized = normalizeTitle(finalTitle);
   const cleaned = cleanTitleForSource(sourceName, normalized);
 
-  const topics = classify(cleaned, canonical); // include URL hints
-  const week = inferWeek(cleaned, new Date(), canonical); // URL can hint week too
-  const published_at = parseDate(item.isoDate, false) ?? inferDateFromUrl(canonical) ?? null;
+  const topics = classify(cleaned, canonical);                 // include URL hints
+  const week = inferWeek(cleaned, new Date(), canonical);      // URL can hint week too
+  const published_at =
+    parseDate(item.isoDate, false) ?? inferDateFromUrl(canonical) ?? null;
+
   const slug = makeSlug(sourceName, cleaned, canonical);
   const fp = fingerprint(canonical, cleaned);
 
@@ -494,12 +490,12 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   const directFromEnclosure = imageFromEnclosure(item);
   const directFromMedia = imageFromMedia(item);
 
-  const feedCandidates: Array<string> = [];
+  const feedCandidates: string[] = [];
   if (directFromEnclosure) feedCandidates.push(directFromEnclosure);
   if (directFromMedia) feedCandidates.push(directFromMedia);
 
-  // helper to take the first safe, non-favicon candidate
-  function firstSafe(cands: ReadonlyArray<string>): string | null {
+  // first safe, non-favicon candidate
+  function firstSafe(cands: readonly string[]): string | null {
     for (const c of cands) {
       const safe = getSafeImageUrl(c);
       if (safe && !isLikelyFavicon(safe)) return safe;
@@ -531,15 +527,13 @@ export async function enrich(sourceName: string, item: RawItem): Promise<Enriche
   }
 
   // final guard
-  if (image_url && isLikelyFavicon(image_url)) {
-    image_url = null;
-  }
+  if (image_url && isLikelyFavicon(image_url)) image_url = null;
 
   return {
     url,
     canonical_url: canonical,
     domain,
-    title: finalTitle,           // 👈 use patched title when present
+    title: finalTitle,     // use patched title when present
     cleaned_title: cleaned,
     topics,
     week,

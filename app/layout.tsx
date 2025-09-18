@@ -7,6 +7,9 @@ import TopToolbar from "@/components/TopToolbar";
 import { Search as SearchIcon } from "lucide-react"; // NEW
 import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
+import { Analytics } from "@vercel/analytics/react"; // ← use /react
+
+
 
 export const BASE_METADATA: Metadata = {
   title: "The Fantasy Report",
@@ -92,6 +95,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             © {new Date().getFullYear()} Fantasy Football Aggregator · All links belong to their respective publishers
           </div>
         </footer>
+               <Analytics />
+        {/* <SpeedInsights /> */}
       </body>
     </html>
   );

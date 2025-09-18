@@ -124,6 +124,45 @@ async function resolveFinalUrl(input: string, timeoutMs = 8000): Promise<string>
   }
 }
 
+export function cleanTitle(input?: string | null): string | null {
+  if (!input) return null;
+  // collapse whitespace
+  let t = input.replace(/\s+/g, " ").trim();
+
+  // strip leading/trailing junk quotes/pipes/dashes
+  t = t.replace(/^[\|–—\-:]+/, "").replace(/[\|–—\-:]+$/, "").trim();
+
+  // throw away pure garbage
+  if (!t || t.length < 8) return null;                           // too short
+  if (/^v(?:s|\.|\/)?$/i.test(t)) return null;                   // "vs" only
+  if (/^untitled$/i.test(t)) return null;                        // useless
+  if (/[{}<>]/.test(t) && /display|font|webkit|margin/i.test(t)) return null; // pasted CSS/HTML
+
+  // defensive: avoid single-word all-caps
+  if (!/\s/.test(t) && t.length < 12) return null;
+
+  return t;
+}
+
+export async function fetchOgTitle(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url, { redirect: "follow" });
+    const html = await r.text();
+    const m = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+           || html.match(/<title>([^<]+)<\/title>/i);
+    return m ? cleanTitle(m[1]) : null;
+  } catch { return null; }
+}
+
+async function chooseTitle(raw: string | null, url: string) {
+  const t1 = cleanTitle(raw);
+  if (t1) return t1;
+  const t2 = await fetchOgTitle(url);
+  if (t2) return t2;
+  await logIngest({ id: 0, name: "unknown" } as any, "blocked_by_filter", url, { detail: "bad_title_guard" });
+  return null; // tell the caller to skip insert
+}
+
 function isLikelyDeadRedirect(u: URL): boolean {
   const host = u.hostname.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "").toLowerCase(); // strip trailing slash
@@ -299,10 +338,33 @@ function toDateOrNull(v: unknown): Date | null {
 }
 
 
+
+
 export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   // Prefer the real page URL; use canonical only as a hint
   const pageUrl = pickNonEmpty(row.url, row.link, row.canonical_url);
   if (!pageUrl) return { updated: true }; // nothing useful to write
+
+  // ── Title hygiene: normalize/clean, never break return type ────────────────
+  let cleanTitle: string | null = null;
+  try {
+    cleanTitle = await chooseTitle(row.title ?? null, pageUrl);
+  } catch {
+    cleanTitle = null;
+  }
+
+  // If we still have nothing usable, skip gracefully (keep contract)
+  if (!cleanTitle) return { updated: true };
+
+  // clamp length and strip junk just in case chooseTitle didn’t
+  cleanTitle = cleanTitle
+    .replace(/\s+/g, " ")
+    .replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}]+/gu, "") // drop leading emoji
+    .replace(/\s*[\|\-–—:]\s*$/g, "") // trailing separators
+    .trim()
+    .slice(0, 240); // safety limit for DB/UI
+
+  row.title = cleanTitle;
 
   // Ensure canonical is a string; fall back to page URL when needed
   const canonical = chooseCanonical(row.canonical_url ?? null, pageUrl);
@@ -322,7 +384,8 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   if (!publishedFromInput) {
     let html: string | null = null;
     try {
-      html = await fetch(url, { redirect: "follow" }).then((r) => r.text());
+      const r = await fetch(url, { redirect: "follow" });
+      html = await r.text();
     } catch {
       html = null;
     }
@@ -344,7 +407,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   const normalizeSource = (s: string | null): string | null => {
     if (!s) return null;
     const allowed = new Set([
-      "rss","atom","dc","jsonld","og","meta","time-tag","url","sitemap","modified",
+      "rss", "atom", "dc", "jsonld", "og", "meta", "time-tag", "url", "sitemap", "modified",
     ]);
     return allowed.has(s) ? s : "meta";
   };
@@ -377,13 +440,13 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   // 3a) Start from adapter-provided fields
   let imageUrl: string | null = normalizeImageForStorage(
     r.image_url
-    ?? r.image
-    ?? r.imageUrl
-    ?? r.thumbnail
-    ?? r.enclosure_url
-    ?? r.og_image
-    ?? r.twitter_image
-    ?? null
+      ?? r.image
+      ?? r.imageUrl
+      ?? r.thumbnail
+      ?? r.enclosure_url
+      ?? r.og_image
+      ?? r.twitter_image
+      ?? null
   );
   let imageSource: string | null = imageUrl ? "input" : null;
 
@@ -426,7 +489,7 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
     canonical,                 // $1  canonical_url
     url,                       // $2  url
     srcId,                     // $3  source_id
-    row.title ?? null,         // $4  title
+    row.title ?? null,         // $4  title (clean)
     row.author ?? null,        // $5  author
     publishedAt,               // $6  published_at ::timestamptz
     resolvedRaw,               // $7  published_raw ::text
