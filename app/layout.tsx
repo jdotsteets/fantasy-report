@@ -1,6 +1,6 @@
 // app/layout.tsx
 import "./globals.css";
-import type { Metadata, Viewport } from "next";
+import type { Viewport } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import TopToolbar from "@/components/TopToolbar";
@@ -8,41 +8,17 @@ import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
 import { Analytics } from "@vercel/analytics/react";
 
-const site = "https://thefantasyreport.com";
-
-export const metadata: Metadata = {
-  metadataBase: new URL(site), // <- makes /og.jpg absolute for bots
-  title: "The Fantasy Report",
-  description: "The best free fantasy football links organized for you.",
-  icons: [{ rel: "icon", url: "/favicon.ico" }],
-  openGraph: {
-    type: "website",
-    url: site,
-    siteName: "The Fantasy Report",
-    title: "The Fantasy Report",
-    description:
-      "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    images: [{ url: "/og.jpg", width: 1200, height: 630, alt: "The Fantasy Report" }],
-  },
-  twitter: {
-    card: "summary_large_image",
-    site: "@tfantasyr",
-    title: "The Fantasy Report",
-    description:
-      "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    images: ["/og.jpg"],
-  },
-};
+// ✅ Use the shared metadata (this emits your OG/Twitter tags)
+export { BASE_METADATA as metadata } from "./metadata-base";
 
 export const viewport: Viewport = { themeColor: "#000000" };
-
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="h-full bg-white">
       <body
         className="min-h-full text-zinc-900 antialiased"
-        style={{ ["--header-h" as any]: "56px" }}
+        style={{ ["--header-h" as unknown as string]: "56px" }}
       >
         <a
           href="#main"
@@ -88,8 +64,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             © {new Date().getFullYear()} Fantasy Football Aggregator · All links belong to their respective publishers
           </div>
         </footer>
-               <Analytics />
-        {/* <SpeedInsights /> */}
+
+        <Analytics />
       </body>
     </html>
   );
