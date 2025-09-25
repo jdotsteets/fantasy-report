@@ -17,15 +17,17 @@ export const BASE_METADATA: Metadata = {
     title: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
     description:
       "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
-    images: [{ url: "/og.jpg", width: 1200, height: 630, alt: "The Fantasy Report" }] ,
+    images: [
+      { url: "/og.jpg", width: 1200, height: 630, alt: "The Fantasy Report" },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    site: "@tfantasyr",
+    site: "@thefantasyrep",
     title: "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
     description:
       "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
-    images: ["/og.jpg"],
+    images: ["/og.jpg"], // ✅ fix the bad "/.jpg"
   },
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },
