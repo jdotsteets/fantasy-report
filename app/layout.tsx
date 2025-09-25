@@ -11,7 +11,7 @@ import { Analytics } from "@vercel/analytics/react";
 const site = "https://thefantasyreport.com";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(site),            // ✅ makes /og.jpg absolute
+  metadataBase: new URL(site), // <- makes /og.jpg absolute for bots
   title: "The Fantasy Report",
   description: "The best free fantasy football links organized for you.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
@@ -22,14 +22,7 @@ export const metadata: Metadata = {
     title: "The Fantasy Report",
     description:
       "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    images: [
-      {
-        url: "/og.jpg",                   // becomes https://thefantasyreport.com/og.jpg
-        width: 1200,
-        height: 630,
-        alt: "The Fantasy Report",
-      },
-    ],
+    images: [{ url: "/og.jpg", width: 1200, height: 630, alt: "The Fantasy Report" }],
   },
   twitter: {
     card: "summary_large_image",
@@ -37,11 +30,13 @@ export const metadata: Metadata = {
     title: "The Fantasy Report",
     description:
       "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    images: ["/og.jpg"],                  // absolute via metadataBase
+    images: ["/og.jpg"],
   },
 };
 
 export const viewport: Viewport = { themeColor: "#000000" };
+
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="h-full bg-white">
