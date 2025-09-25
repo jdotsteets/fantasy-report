@@ -1,34 +1,29 @@
 // app/api/social/drafts/[id]/route.ts
-import { NextRequest, NextResponse } from "next/server";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type RouteContext = { params: { id: string } };
+function getIdFromUrl(req: Request): string {
+  const { pathname } = new URL(req.url);
+  const parts = pathname.replace(/\/+$/, "").split("/");
+  return decodeURIComponent(parts[parts.length - 1] || "");
+}
 
-export async function PATCH(
-  req: NextRequest,
-  context: RouteContext
-): Promise<NextResponse> {
-  const { id } = context.params;
+export async function GET(req: Request): Promise<Response> {
+  const id = getIdFromUrl(req);
+  return Response.json({ ok: true, id });
+}
 
-  // Example body parsing (keep typed as unknown until validated)
-  let body: unknown;
+export async function PATCH(req: Request): Promise<Response> {
+  const id = getIdFromUrl(req);
+
+  let body: unknown = null;
   try {
     body = await req.json();
   } catch {
-    body = null;
+    /* empty body is fine */
   }
 
-  // TODO: validate `body` and update draft `id`
-  return NextResponse.json({ ok: true, id, body }, { status: 200 });
-}
-
-export async function GET(
-  _req: NextRequest,
-  context: RouteContext
-): Promise<NextResponse> {
-  const { id } = context.params;
-  return NextResponse.json({ ok: true, id });
+  // TODO: validate `body` and update draft
+  return Response.json({ ok: true, id, body });
 }
