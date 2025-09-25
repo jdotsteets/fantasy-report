@@ -1,8 +1,6 @@
-// app/api/x/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery } from "@/lib/db";
-import { Buffer } from "node:buffer";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,30 +18,26 @@ export async function GET(req: NextRequest) {
     }
 
     const clientId = process.env.X_CLIENT_ID!;
-    const clientSecret = process.env.X_CLIENT_SECRET!;
     const redirectUri = process.env.X_REDIRECT_URI!;
 
-    // --- Manual token exchange (PKCE) ---
+    // --- Token exchange (PKCE): put client_id in the body; no Authorization header ---
     const body = new URLSearchParams({
       grant_type: "authorization_code",
+      client_id: clientId,
       code,
       redirect_uri: redirectUri,
       code_verifier: codeVerifier,
     });
 
-    const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
     const resp = await fetch("https://api.twitter.com/2/oauth2/token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${basic}`,
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
     });
 
     if (!resp.ok) {
-      const errText = await resp.text();
-      return NextResponse.json({ error: "Token exchange failed", detail: errText }, { status: 500 });
+      const detail = await resp.text(); // <-- show real reason
+      return NextResponse.json({ error: "Token exchange failed", detail }, { status: 500 });
     }
 
     type TokenResponse = {
@@ -62,12 +56,11 @@ export async function GET(req: NextRequest) {
         ? new Date(Date.now() + tok.expires_in * 1000).toISOString()
         : null;
 
-    // --- Fetch username using the bearer token ---
+    // Fetch username with the bearer token
     const client = new Client(accessToken);
     const me = await client.users.findMyUser();
     const username = me.data?.username ?? "unknown";
 
-    // --- Persist tokens ---
     await dbQuery(
       `
       insert into social_oauth_tokens (platform, account_username, access_token, refresh_token, expires_at)
@@ -81,7 +74,7 @@ export async function GET(req: NextRequest) {
       [username, accessToken, refreshToken, expiresAt]
     );
 
-    // --- Clear short-lived cookies and redirect to admin ---
+    // Clear short-lived cookies and go to admin
     return NextResponse.redirect(new URL("/admin/social", url.origin), {
       headers: {
         "Set-Cookie": [
@@ -91,7 +84,6 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error("X OAuth callback failed:", e);
     return NextResponse.json({ error: "OAuth callback failed" }, { status: 500 });
   }
