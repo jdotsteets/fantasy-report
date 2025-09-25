@@ -24,7 +24,7 @@ export const BASE_METADATA: Metadata = {
     siteName: "The Fantasy Report",
     images: [
       {
-        url: "/og-image.png", // put this file in your /public folder
+        url: "/og.jpg", // put this file in your /public folder
         width: 1200,
         height: 630,
         alt: "The Fantasy Report",
@@ -34,9 +34,10 @@ export const BASE_METADATA: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
+    site: "@tfantasyr",
     title: "The Fantasy Report",
     description: "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    images: ["/og-image.png"], // same image as Open Graph
+    images: ["/og.jpg"],
   },
 };
 
