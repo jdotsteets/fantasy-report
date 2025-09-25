@@ -172,24 +172,28 @@ export async function generateMetadata({
 
   const provider = parseProviderParam(sp.provider);
 
-  const title = titleForHome(selectedSection, provider, weekLabel(CURRENT_WEEK));
-  const canonical = canonicalPath(selectedSection, provider);
+  const title = titleForHome(
+    selectedSection,
+    provider,
+    weekLabel(CURRENT_WEEK)
+  );
 
+  const canonical = canonicalPath(selectedSection, provider); // e.g. "/?section=news"
+
+  // We don't set images here; layout.tsx already sets site-wide OG/Twitter images.
   return {
-    // we ONLY override what’s dynamic; layout.tsx provides the base defaults,
-    // OG image, twitter card, etc.
     title,
-    alternates: { canonical },
+    alternates: { canonical },          // relative; resolved using metadataBase from layout.tsx
     openGraph: {
       title,
-      url: `${SITE_ORIGIN}${canonical}`,
+      url: canonical,                    // relative is fine with metadataBase
     },
     twitter: {
       title,
+      // card/images are inherited from layout.tsx
     },
   };
 }
-
 /* ───────────────────────── JSON-LD helper ───────────────────────── */
 
 function JsonLd({ json }: { json: unknown }) {
