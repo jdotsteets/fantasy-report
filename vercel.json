@@ -5,4 +5,10 @@
       "schedule": "0 4 * * *"     
     }
   ]
+,
+  "build": {
+    "env": {
+      "NODE_VERSION": "20"
+    }
+  }
 }
