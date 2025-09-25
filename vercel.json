@@ -1,9 +1,10 @@
 {
   "crons": [
     {
-      "path": "/api/refresh",   
-      "schedule": "0 4 * * *"     
-    }
+      "path": "/api/refresh",  "schedule": "0 4 * * *"     
+    },
+    { "path": "/api/social/worker", "schedule": "*/10 * * * *" }
+
   ]
 ,
   "build": {
@@ -11,4 +12,5 @@
       "NODE_VERSION": "20"
     }
   }
+  
 }
