@@ -9,7 +9,7 @@ title: "Terms of Service | The Fantasy Report",
 description:
 "Terms of Service for The Fantasy Report explaining acceptable use, content, links, and disclaimers.",
 robots: { index: true, follow: true },
-alternates: { canonical: "https://thefantasyreport.com/terms" },
+alternates: { canonical: "https://www.thefantasyreport.com/terms" },
 };
 
 
@@ -22,7 +22,7 @@ return (
 
 <p>
 Welcome to <strong>The Fantasy Report</strong> ("we," "us," or "our"). By
-accessing or using <a href="https://thefantasyreport.com">thefantasyreport.com</a>
+accessing or using <a href="https://www.thefantasyreport.com">thefantasyreport.com</a>
 (the "Site"), you agree to these Terms of Service (the "Terms"). If you do not
 agree, do not use the Site.
 </p>

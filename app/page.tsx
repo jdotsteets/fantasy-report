@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 
-const SITE_ORIGIN = "https://thefantasyreport.com";
+const SITE_ORIGIN = "https://www.thefantasyreport.com";
 
 
 /* ───────────────────────── Section keys ───────────────────────── */

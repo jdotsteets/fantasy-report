@@ -8,7 +8,7 @@ import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
 import { Analytics } from "@vercel/analytics/react";
 
-const site = "https://thefantasyreport.com";
+const site = "https://www.thefantasyreport.com";
 
 export const metadata: Metadata = {
   metadataBase: new URL(site),
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     description:
       "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
     images: [
-      { url: "/og.jpg", width: 1200, height: 630, alt: "The Fantasy Report" },
+      { url: `${site}/og.jpg`, width: 1200, height: 630, alt: "The Fantasy Report" },
     ],
   },
   twitter: {
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
       "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
     description:
       "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
-    images: ["/og.jpg"],
+    images: [`${site}/og.jpg`], // absolute, no redirect
   },
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },

@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 export const runtime = "edge";
 
-const SITE = "https://thefantasyreport.com";
+const SITE = "https://www.thefantasyreport.com";
 
 function robotsTxt(): string {
   return [

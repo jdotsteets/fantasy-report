@@ -8,7 +8,7 @@ export const metadata: PrivacyMetadata = {
   description:
     "Privacy Policy explaining what data The Fantasy Report collects, how it is used, and your choices.",
   robots: { index: true, follow: true },
-  alternates: { canonical: "https://thefantasyreport.com/privacy" },
+  alternates: { canonical: "https://www.thefantasyreport.com/privacy" },
 };
 
 export default function PrivacyPage() {
@@ -20,7 +20,7 @@ export default function PrivacyPage() {
       <p>
         This Privacy Policy explains how <strong>The Fantasy Report</strong> ("we," "us," or
         "our") collects, uses, and shares information when you use
-        <a href="https://thefantasyreport.com" className="ml-1">thefantasyreport.com</a> (the "Site").
+        <a href="https://www.thefantasyreport.com" className="ml-1">thefantasyreport.com</a> (the "Site").
       </p>
 
       <h2>Information We Collect</h2>

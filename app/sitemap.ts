@@ -2,7 +2,7 @@
 import type { MetadataRoute } from "next";
 import { dbQuery } from "@/lib/db";
 
-const ORIGIN = "https://thefantasyreport.com";
+const ORIGIN = "https://www.thefantasyreport.com";
 
 const SECTION_PATHS: string[] = [
   "/?section=news",
