@@ -1,15 +1,19 @@
-// src/types.ts
 export type Platform = "x" | "threads" | "tiktok" | "reels" | "shorts";
 export type PostStatus = "draft" | "approved" | "scheduled" | "published" | "failed";
 
 export interface Topic {
-  id: string;
+  id: string;              // article id
   title: string;
   url: string;
-  source: string;
-  publishedAt: string;
+  source: string;          // provider name
+  publishedAt: string;     // ISO
+  primaryTopic?: string | null;
+  staticType?: string | null;
+  isPlayerPage?: boolean | null;
+  week?: number | null;
+  sport?: string | null;
   stat?: string;
-  angle?: string;   // “usage spike”, “injury hedge”, etc.
+  angle?: string;
 }
 
 export interface Draft {
@@ -21,8 +25,8 @@ export interface Draft {
   mediaPath?: string;
   link?: string;
   status: PostStatus;
-  scheduledFor?: string; // ISO
-  topicRef: string;      // Topic.id
+  scheduledFor?: string;
+  topicRef: string;        // article id
 }
 
 export interface Metrics {
@@ -35,5 +39,5 @@ export interface Metrics {
   comments?: number;
   saves?: number;
   shares?: number;
-  viewDurationMs?: number; // short video
+  viewDurationMs?: number;
 }

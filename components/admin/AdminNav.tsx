@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-type AdminKey = "sources" | "excluded" | "block-url";
+type AdminKey = "sources" | "excluded" | "block-url" | "social";
 
 export function AdminNav({ active }: { active?: AdminKey }) {
   const pathname = usePathname();
@@ -11,6 +11,7 @@ export function AdminNav({ active }: { active?: AdminKey }) {
     { href: "/admin/sources",  key: "sources",  label: "Sources" },
     { href: "/admin/excluded", key: "excluded", label: "Excluded" },
     { href: "/admin/block-url", key: "block-url", label: "Blocked Links" },
+    { href: "/admin/social", key: "social", label: "Social" },
   ];
 
   return (

@@ -1,4 +1,3 @@
-//src/inputs/topics.ts
 import { dbQueryRows } from "@/lib/db";
 import type { Topic } from "../types";
 
