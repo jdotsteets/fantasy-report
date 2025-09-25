@@ -4,47 +4,44 @@ import type { Metadata, Viewport } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import TopToolbar from "@/components/TopToolbar";
-import { Search as SearchIcon } from "lucide-react"; // NEW
 import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
-import { Analytics } from "@vercel/analytics/react"; // ← use /react
+import { Analytics } from "@vercel/analytics/react";
 
+const site = "https://thefantasyreport.com";
 
-
-export const BASE_METADATA: Metadata = {
+export const metadata: Metadata = {
+  metadataBase: new URL(site),            // ✅ makes /og.jpg absolute
   title: "The Fantasy Report",
   description: "The best free fantasy football links organized for you.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
-
-  // 👇 Add this block
   openGraph: {
-    title: "The Fantasy Report",
-    description: "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    url: "https://thefantasyreport.com",
+    type: "website",
+    url: site,
     siteName: "The Fantasy Report",
+    title: "The Fantasy Report",
+    description:
+      "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
     images: [
       {
-        url: "/og.jpg", // put this file in your /public folder
+        url: "/og.jpg",                   // becomes https://thefantasyreport.com/og.jpg
         width: 1200,
         height: 630,
         alt: "The Fantasy Report",
       },
     ],
-    type: "website",
   },
   twitter: {
     card: "summary_large_image",
     site: "@tfantasyr",
     title: "The Fantasy Report",
-    description: "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
-    images: ["/og.jpg"],
+    description:
+      "Your one-stop hub for Fantasy Football news, rankings, and waiver wire insights.",
+    images: ["/og.jpg"],                  // absolute via metadataBase
   },
 };
 
-export const viewport: Viewport = {
-  themeColor: "#000000",
-};
-
+export const viewport: Viewport = { themeColor: "#000000" };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="h-full bg-white">
