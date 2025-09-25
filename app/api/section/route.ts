@@ -1,4 +1,3 @@
-// app/api/section/route.ts
 import { NextResponse } from "next/server";
 import { fetchSectionItems, SectionKey } from "@/lib/sectionQuery";
 
@@ -21,7 +20,15 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const key = toKey(url.searchParams.get("key"));
-    const limit = clampInt(url.searchParams.get("limit"), 12, 1, 100);
+
+    const provider = (url.searchParams.get("provider") || "").trim(); // human label (e.g., "ESPN Fantasy")
+    const sourceId = url.searchParams.get("sourceId");
+    const hasProviderFilter = Boolean(provider) || Boolean(sourceId);
+
+    // If filtered to a provider, show more rows by default
+    const baseLimit = clampInt(url.searchParams.get("limit"), 12, 1, 100);
+    const limit = hasProviderFilter ? Math.max(baseLimit, 50) : baseLimit;
+
     const offset = clampInt(url.searchParams.get("offset"), 0, 0, 10_000);
     const days = clampInt(url.searchParams.get("days"), 45, 1, 365);
     const weekParam = url.searchParams.get("week");
@@ -32,12 +39,9 @@ export async function GET(req: Request) {
       ? clampInt(freshHoursParam, 72, 1, 24 * 14)
       : undefined;
 
-    const provider = (url.searchParams.get("provider") || "").trim(); // keep case, we’ll ILIKE in SQL
-    const sourceId = url.searchParams.get("sourceId");
-    const hasProviderFilter = Boolean(provider) || Boolean(sourceId);
-
+    // IMPORTANT: when provider filter is present, completely disable the per-provider cap by sending null
     const perProviderCap = hasProviderFilter
-      ? 0 // ⟵ disable cap when filtering by provider/source
+      ? null
       : clampInt(url.searchParams.get("perProviderCap"), Math.max(1, Math.floor(limit / 3)), 1, 10);
 
     const items = await fetchSectionItems({
@@ -46,8 +50,8 @@ export async function GET(req: Request) {
       offset,
       days,
       week,
-      perProviderCap,
-      provider: provider || undefined, // ⟵ renamed
+      perProviderCap,            // <-- now number | null
+      provider: provider || undefined, // we’ll ILIKE this against sources.provider
       sourceId: sourceId ? Number(sourceId) : undefined,
       maxAgeHours,
     });
