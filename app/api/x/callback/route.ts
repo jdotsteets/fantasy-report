@@ -1,3 +1,4 @@
+// app/api/x/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery } from "@/lib/db";
@@ -13,16 +14,22 @@ export async function GET(req: NextRequest) {
   const cookieState = req.cookies.get("x_oauth_state")?.value ?? "";
   const codeVerifier = req.cookies.get("x_oauth_verifier")?.value ?? "";
 
-  if (!code || !state) return NextResponse.json({ step: "pre", error: "missing code/state" }, { status: 400 });
-  if (state !== cookieState) return NextResponse.json({ step: "pre", error: "state mismatch (host/cookie)" }, { status: 400 });
-  if (!codeVerifier) return NextResponse.json({ step: "pre", error: "missing code_verifier cookie" }, { status: 400 });
-
-  const clientId = process.env.X_CLIENT_ID!;
-  const clientSecret = process.env.X_CLIENT_SECRET!;
-  const redirectUri = process.env.X_REDIRECT_URI!;
+  if (!code || !state) {
+    return NextResponse.json({ error: "Missing code/state" }, { status: 400 });
+  }
+  if (state !== cookieState) {
+    return NextResponse.json({ error: "State mismatch (host/cookie issue)" }, { status: 400 });
+  }
+  if (!codeVerifier) {
+    return NextResponse.json({ error: "Missing PKCE code_verifier cookie" }, { status: 400 });
+  }
 
   try {
-    // 1) Token exchange
+    const clientId = process.env.X_CLIENT_ID!;
+    const clientSecret = process.env.X_CLIENT_SECRET!;
+    const redirectUri = process.env.X_REDIRECT_URI!;
+
+    // 1) Exchange code → tokens (Basic auth + PKCE)
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
@@ -41,7 +48,7 @@ export async function GET(req: NextRequest) {
 
     if (!resp.ok) {
       const detail = await resp.text();
-      return NextResponse.json({ step: "token", error: "token exchange failed", detail }, { status: 500 });
+      return NextResponse.json({ error: "Token exchange failed", detail }, { status: 500 });
     }
 
     const tok = (await resp.json()) as {
@@ -52,46 +59,47 @@ export async function GET(req: NextRequest) {
       scope?: string;
     };
 
-    // 2) Username fetch (optional)
+    // 2) Fetch username (helps identify which account we connected)
     let username = "unknown";
     try {
       const client = new Client(tok.access_token);
       const me = await client.users.findMyUser();
       username = me.data?.username ?? "unknown";
     } catch (e) {
-      return NextResponse.json({ step: "me", error: "users.findMyUser failed", detail: String(e) }, { status: 500 });
+      // keep going; posting still works with the token
+      console.error("X findMyUser failed:", e);
     }
 
-    // 3) DB insert
+    // 3) Persist tokens
     const expiresAt =
-      typeof tok.expires_in === "number" ? new Date(Date.now() + tok.expires_in * 1000).toISOString() : null;
+      typeof tok.expires_in === "number"
+        ? new Date(Date.now() + tok.expires_in * 1000).toISOString()
+        : null;
 
-    try {
-      await dbQuery(
-        `
-        insert into social_oauth_tokens (platform, account_username, access_token, refresh_token, expires_at)
-        values ('x', $1, $2, $3, $4)
-        on conflict (platform, account_username)
-        do update set access_token = excluded.access_token,
-                      refresh_token = excluded.refresh_token,
-                      expires_at   = excluded.expires_at,
-                      updated_at   = now()
-        `,
-        [username, tok.access_token, tok.refresh_token ?? null, expiresAt]
-      );
-    } catch (e) {
-      return NextResponse.json({ step: "db", error: "db insert failed", detail: String(e) }, { status: 500 });
-    }
+    await dbQuery(
+      `
+      insert into social_oauth_tokens (platform, account_username, access_token, refresh_token, expires_at)
+      values ('x', $1, $2, $3, $4)
+      on conflict (platform, account_username)
+      do update set access_token = excluded.access_token,
+                    refresh_token = excluded.refresh_token,
+                    expires_at   = excluded.expires_at,
+                    updated_at   = now()
+      `,
+      [username, tok.access_token, tok.refresh_token ?? null, expiresAt]
+    );
 
-    // Success (don’t show tokens)
-    return NextResponse.json({
-      ok: true,
-      step: "done",
-      username,
-      hasRefresh: Boolean(tok.refresh_token),
-      expiresAt,
+    // 4) Redirect to admin + clear short-lived cookies
+    return NextResponse.redirect(new URL("/admin/social", url.origin), {
+      headers: {
+        "Set-Cookie": [
+          "x_oauth_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+          "x_oauth_verifier=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+        ].join(", "),
+      },
     });
   } catch (e) {
-    return NextResponse.json({ step: "catch", error: String(e) }, { status: 500 });
+    console.error("OAuth callback failed:", e);
+    return NextResponse.json({ error: "OAuth callback failed" }, { status: 500 });
   }
 }
