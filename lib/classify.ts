@@ -1,6 +1,8 @@
 // lib/classify.ts
-// Canonical topic classifier with broader coverage and safe fallback to reduce NULLs.
-// No `any` types.
+// Canonical topic classifier with broader coverage and safe fallback.
+// Also exports a robust cleanTitle() for reuse by scraper/ingest.
+
+// ---------------- Types ----------------
 
 export type Topic =
   | "rankings"
@@ -13,13 +15,70 @@ export type Topic =
 export type ClassifyResult = {
   primary: Topic | null;
   secondary: Topic | null;
-  topics: Topic[]; // canonical only
+  topics: Topic[];
   isStatic: boolean;
-  /** True when the URL/title resolve to a single-player hub/profile page */
   isPlayerPage: boolean;
-  /** Kebab-case slug (e.g., "devon-witherspoon") when isPlayerPage=true, else null */
   playerSlug: string | null;
 };
+
+// ---------------- Title cleaning (new/expanded) ----------------
+
+/**
+ * Aggressive-but-safe title normalizer used across pipeline.
+ * Returns null when the string is clearly not a title.
+ *
+ * Use this anywhere you generate candidate items so the ingest
+ * layer receives classifier-friendly titles.
+ */
+export function cleanTitle(input?: string | null): string | null {
+  if (!input) return null;
+
+  // Decode common HTML apostrophes/ampersands and collapse whitespace
+  let t = String(input)
+    .replace(/&amp;/gi, "&")
+    .replace(/&#8217;|&#39;|&#x27;|&apos;/gi, "'")
+    .replace(/[’‘`´]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Strip obvious UI chrome / non-content phrases that sneak into anchors
+  t = t
+    .replace(/\b(Read More|Continue Reading|Click (?:Here|to Read)|View More)\b/gi, "")
+    .replace(/\b\d+\s+Comments?\b/gi, "")
+    .replace(/\bLeave a comment\b/gi, "")
+    .replace(/\bby\s+[A-Z][A-Za-z.'\-]+\b/g, "") // tailing "by Author"
+    .replace(/\b\|\s*Razzball\b/gi, "") // site chrome
+    .trim();
+
+  // Strip leading/trailing pipes/dashes/colons
+  t = t.replace(/^[\s\|–—\-:]+/, "").replace(/[\s\|–—\-:]+$/, "").trim();
+
+  // Reject obvious non-titles
+  if (!t || t.length < 6) return null; // very short
+  if (/^(untitled|title)$/i.test(t)) return null;
+  // pasted CSS/HTML or layout artifacts
+  if (/[{}<>]/.test(t) && /\b(display|font|webkit|margin|padding)\b/i.test(t)) return null;
+
+  // Defensive: reject single short tokens (e.g., "HOME", "NEWS")
+  if (!/\s/.test(t) && t.length < 12) return null;
+
+  // If the title is mostly punctuation after cleaning, drop it
+  if (!/[a-z0-9]/i.test(t)) return null;
+
+  return t;
+}
+
+// Lightweight normalizer just for matching/regex scoring (keeps more characters)
+function normalizeForMatching(s: string): string {
+  return String(s || "")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#8217;|&#39;|&#x27;|&apos;/gi, "'")
+    .replace(/[’‘`´]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ---------------- Canon + keyword sets ----------------
 
 const CANON: Topic[] = [
   "rankings",
@@ -30,31 +89,27 @@ const CANON: Topic[] = [
   "advice",
 ];
 
-// Keyword sets (matched against title + url). Keep simple RegExps for speed.
-// NOTE: add new patterns in the blocks below where commented. Keep them specific to avoid false positives.
+// Keep regexes specific to avoid false positives.
 const KW: Record<Topic, RegExp[]> = {
   rankings: [
     /rankings?\b/i,
-    /ros\b/i,
+    /\bros\b/i,
     /rest[-\s]?of[-\s]?season/i,
     /tiers?\b/i,
     /top\s*\d+\b/i,
     /cheat\s*sheet/i,
     /projections?\b/i,
-    // additions:
-    /big\s*board\b/i, // e.g., "Big Board"
-    /\bECR\b/i, // Expert Consensus Rankings
+    /big\s*board\b/i,
+    /\bECR\b/i,
   ],
   "start-sit": [
     /start[-\s\/]?sit/i,
     /sit[-\s\/]?start/i,
-    // handle straight + curly quotes + HTML entity for Start 'Em / Sit 'Em
     /start\s*(?:'|’|&#8217;|&#39;|&#x27;)?em/i,
     /sit\s*(?:'|’|&#8217;|&#39;|&#x27;)?em/i,
     /who\s+to\s+start/i,
     /who\s+should\s+i\s+start/i,
     /must[-\s]?start/i,
-    // TODO: add house styles like "stard/sitd" if you encounter them
   ],
   "waiver-wire": [
     /waiver[s-]?\s*wire/i,
@@ -65,9 +120,8 @@ const KW: Record<Topic, RegExp[]> = {
     /stream(?:er|ing|s)?\b/i,
     /stash(?:es|ing)?\b/i,
     /watch\s*list/i,
-    /faab\b/i,
+    /\bfaab\b/i,
     /free\s*agents?\b/i,
-    // additions:
     /\bFAB\b/i,
     /claims?\b/i,
     /adds?\/drops?/i,
@@ -85,7 +139,6 @@ const KW: Record<Topic, RegExp[]> = {
     /did\s+not\s+practice|\bDNP\b/i,
     /limited\s+practice/i,
     /out\s+for\s+week\b/i,
-    // additions (status & roster moves):
     /return(?:ed)?\s+to\s+practice/i,
     /back\s+(?:to|at)\s+practice/i,
     /spotted\s+at\s+practice/i,
@@ -96,7 +149,6 @@ const KW: Record<Topic, RegExp[]> = {
     /activated\s+from\s+IR\b/i,
     /designated\s+to\s+return/i,
     /\bPUP\b|physically\s+unable\s+to\s+perform|\bNFI\b/i,
-    // additions (common ailments):
     /concussion|hamstring|calf|groin|ankle|\bACL\b|\bMCL\b|\bPCL\b|high[\s-]*ankle/i,
   ],
   dfs: [
@@ -111,7 +163,6 @@ const KW: Record<Topic, RegExp[]> = {
     /value\s+plays?/i,
     /lineups?\b/i,
     /prop[s]?\b/i,
-    // additions:
     /(?:\b(?:dfs|draftkings?|fanduel|prizepicks?|underdog)\b.{0,40}\bshowdown\b|\bshowdown\b.{0,40}\b(?:dfs|draftkings?|fanduel)\b)/i,
     /\bshowdown\s+(?:slate|picks?|lineups?|captain|single[-\s]?game)\b/i,
     /player\s+pool\b/i,
@@ -127,7 +178,6 @@ const KW: Record<Topic, RegExp[]> = {
     /strategy\b/i,
     /tips?\b/i,
     /lessons|takeaways?/i,
-    // additions (picks/predictions/betting-ish analysis):
     /picks?\b/i,
     /score\s+predictions?\b/i,
     /bold\s+predictions?\b/i,
@@ -136,7 +186,7 @@ const KW: Record<Topic, RegExp[]> = {
   ],
 };
 
-// ---------- Player-page classification (additions) ----------
+// ---------------- Player-page classification ----------------
 
 const PLAYER_HOST_HINTS: string[] = [
   "rotowire.com/player",
@@ -149,7 +199,7 @@ const PLAYER_HOST_HINTS: string[] = [
   "pff.com/nfl/players/",
 ];
 
-const NAME_ONLY_PAT = /^(?:news:\s*)?[a-z][a-z.'\- ]+[a-z]$/i; // e.g., "Jarran Reed", "Devon Witherspoon"
+const NAME_ONLY_PAT = /^(?:news:\s*)?[a-z][a-z.'\- ]+[a-z]$/i;
 const PLAYER_URL_PAT = /(\/players?\/|\/player\/)/i;
 
 function toPlayerSlug(s: string): string {
@@ -169,7 +219,7 @@ export function classifyPlayerPage(
   const u = (url || "").toLowerCase();
   const t = (title || "")?.trim();
 
-  // 1) Host/path hints (most reliable)
+  // 1) Strong URL hints
   if (PLAYER_HOST_HINTS.some((h) => u.includes(h)) || PLAYER_URL_PAT.test(u)) {
     const parts = u.split("/").filter(Boolean);
     const last = parts[parts.length - 1] ?? "";
@@ -180,7 +230,7 @@ export function classifyPlayerPage(
     return { isPlayerPage: true, playerSlug: slug || null };
   }
 
-  // 2) Title that’s *only* a name (often Rotowire/Yahoo blurbs)
+  // 2) Title that is just a name
   if (t && NAME_ONLY_PAT.test(t) && t.split(" ").length <= 4) {
     return { isPlayerPage: true, playerSlug: toPlayerSlug(t) };
   }
@@ -188,10 +238,9 @@ export function classifyPlayerPage(
   return { isPlayerPage: false, playerSlug: null };
 }
 
-// ---------- Topic classification (existing) ----------
+// ---------------- Topic classification engine ----------------
 
-// URL path tokens that act as strong hints
-// TIP: adding site-section paths here often boosts recall on vague titles.
+// URL path hints (section-based)
 const PATH_HINTS: Partial<Record<Topic, RegExp>> = {
   rankings: /\/(rankings?|projections?|tiers?)\//i,
   "waiver-wire": /\/(waiver[-]?wire|waivers?)\//i,
@@ -200,23 +249,12 @@ const PATH_HINTS: Partial<Record<Topic, RegExp>> = {
   dfs: /\/(dfs|draftkings?|fanduel|prizepicks?|underdog)\//i,
 };
 
-// Lightweight site hints: treat these hosts *with /fantasy in the path* as fantasy-first
+// Fantasy-heavy hosts (used for a safe fallback)
 const FANTASY_HOST_HINT =
   /(fantasypros\.com|rotoballer\.com|rotowire\.com|numberfire\.com|draftsharks\.com|razzball\.com)/i;
 
 function uniq<T>(arr: T[]): T[] {
-  const s = new Set(arr);
-  return Array.from(s);
-}
-
-// Minimal HTML-entity + punctuation normalizer to improve matching (e.g., Start &#8217;Em)
-function normalizeForMatching(s: string): string {
-  return s
-    .replace(/&amp;/gi, "&")
-    .replace(/&#8217;|&#39;|&#x27;/gi, "'")
-    .replace(/[’‘`´]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
+  return Array.from(new Set(arr));
 }
 
 function scoreFromMatches(
@@ -224,18 +262,16 @@ function scoreFromMatches(
   urlPath: string
 ): Partial<Record<Topic, number>> {
   const score: Partial<Record<Topic, number>> = {};
-  function add(t: Topic, n = 1) {
+  const add = (t: Topic, n = 1) => {
     score[t] = (score[t] ?? 0) + n;
-  }
+  };
 
   for (const t of CANON) {
     for (const rx of KW[t]) if (rx.test(hay)) add(t, 1);
   }
-
   for (const [t, rx] of Object.entries(PATH_HINTS)) {
-    if (rx && (rx as RegExp).test(urlPath)) add(t as Topic, 2); // stronger weight for path hints
+    if (rx && (rx as RegExp).test(urlPath)) add(t as Topic, 2);
   }
-
   return score;
 }
 
@@ -246,8 +282,8 @@ function pickTopicsFromScore(
   if (!entries.length) return [];
   entries.sort((a, b) => b[1] - a[1]);
 
-  // tie-breakers: more specific over general advice
-  const order: Topic[] = [
+  // tie-breaker preference (more specific first)
+  const pref: Topic[] = [
     "start-sit",
     "waiver-wire",
     "injury",
@@ -255,13 +291,10 @@ function pickTopicsFromScore(
     "rankings",
     "advice",
   ];
-  const top = entries.filter((e) => e[1] === entries[0][1]).map((e) => e[0]);
-  top.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const topVal = entries[0][1];
+  const top = entries.filter((e) => e[1] === topVal).map((e) => e[0]).sort((a, b) => pref.indexOf(a) - pref.indexOf(b));
 
-  const topics: Topic[] = uniq(
-    [...top, ...entries.map((e) => e[0])]
-  ).filter((t) => CANON.includes(t));
-  return topics;
+  return uniq([...top, ...entries.map((e) => e[0])]).filter((t) => CANON.includes(t));
 }
 
 function toCanon(list: string[]): Topic[] {
@@ -273,28 +306,30 @@ function toCanon(list: string[]): Topic[] {
   return uniq(out);
 }
 
+// ---------------- Public helpers ----------------
+
 export function looksLikePlayerPage(url: string, title?: string | null): boolean {
-  const { isPlayerPage } = classifyPlayerPage(url, title);
-  return isPlayerPage;
+  return classifyPlayerPage(url, title).isPlayerPage;
 }
 
+// Treat site-section hubs as static (non-article) pages
 export function looksStatic(url: string): boolean {
-  return /(\/tag\/|\/category\/|\/topics\/|\/series\/|fantasy-football-news\/?$)/i.test(
-    url
-  );
+  return /(\/tag\/|\/category\/|\/topics\/|\/series\/|fantasy-football-news\/?$)/i.test(url);
 }
+
+// ---------------- Main classification ----------------
 
 export function classifyArticle(args: {
   title?: string | null;
   url: string;
 }): ClassifyResult {
-  const titleRaw = (args.title ?? "").toString();
-  const title = normalizeForMatching(titleRaw);
+  // First, make the title safe for downstream consumers.
+  const safeTitle = cleanTitle(args.title);
+  const titleForMatch = normalizeForMatching(safeTitle ?? args.title ?? "");
   const url = args.url;
-  const hay = `${title} ${url}`.toLowerCase();
+  const hay = `${titleForMatch} ${url}`.toLowerCase();
 
-  // NEW: robust player-page detection
-  const { isPlayerPage, playerSlug } = classifyPlayerPage(args.url, args.title);
+  const { isPlayerPage, playerSlug } = classifyPlayerPage(url, safeTitle ?? args.title);
 
   const urlObj = (() => {
     try {
@@ -308,7 +343,7 @@ export function classifyArticle(args: {
   const score = scoreFromMatches(hay, path);
   let topics = pickTopicsFromScore(score);
 
-  // Safe fallback: if nothing matched but it's clearly fantasy content, default to advice
+  // Safe fallback: if nothing matched but looks fantasy-ish, default to "advice"
   const fantasyish =
     /\bfantasy\b/i.test(hay) ||
     (FANTASY_HOST_HINT.test(url) && /\/fantasy\//i.test(path));

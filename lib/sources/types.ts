@@ -1,5 +1,11 @@
 // lib/sources/types.ts
 
+export type AdapterEndpoint = {
+  kind: "page" | "sitemap";
+  url: string;
+  selector?: string | null;
+};
+
 export type ExistingSourceLite = {
   id: number;
   name: string | null;
@@ -8,15 +14,10 @@ export type ExistingSourceLite = {
   sitemap_url: string | null;
   scrape_selector: string | null;
   scrape_path: string | null;
+  /** present in queries like findExistingSourceByUrl */
+  adapter?: string | null;
   adapter_config: Record<string, unknown> | null;
 };
-
-export type AdapterEndpoint = {
-  kind: "page" | "sitemap";
-  url: string;
-  selector?: string | null;
-};
-
 
 export type CommitPayload = {
   url: string;
@@ -25,24 +26,9 @@ export type CommitPayload = {
   selector?: string | null;
   adapterKey?: string | null;
   nameHint?: string | null;
-  sourceId?: number;     // when updating an existing source
-  upsert?: boolean;      // allow update if a match is found
-  updates?: {
-    name?: string;
-    homepage_url?: string | null;
-    rss_url?: string | null;
-    sitemap_url?: string | null;
-    scrape_selector?: string | null;
-    scrape_path?: string | null;
-    adapter_config?: Record<string, unknown> | null;
-    allowed?: boolean | null;
-    paywall?: boolean;
-    category?: string | null;
-    sport?: string | null;
-    priority?: number | null;
-    adapter_endpoint?: AdapterEndpoint | null;  // 👈 NEW
-
-  };
+  sourceId?: number;      // when updating an existing source
+  upsert?: boolean;       // allow update if a match is found
+  updates?: SourceUpdates;
 };
 
 export type AdapterKey =
@@ -51,9 +37,12 @@ export type AdapterKey =
   | "wordpress-generic"
   | "jsonld-list"
   | "next-data"
-  // add others here
   | string;
 
+export type MethodPreview = {
+  method: "rss" | "scrape" | "adapter";
+  items: Array<{ title: string; url: string }>;
+};
 
 export type ProbeRequest = {
   url: string;
@@ -68,7 +57,6 @@ export type ProbeArticle = {
   imageUrl?: string | null;
   sourceHost: string;
 };
-
 
 export type FeedCandidate = {
   feedUrl: string;
@@ -89,7 +77,7 @@ export type ScrapeCandidate = {
 };
 
 export type AdapterCandidate = {
-  key: string; // e.g. "espn"
+  key: string;
   ok: boolean;
   itemCount: number;
   sampleTitles: string[];
@@ -114,26 +102,34 @@ export type ProbeResult = {
   feeds: FeedCandidate[];
   scrapes: ScrapeCandidate[];
   adapters: AdapterCandidate[];
-  preview: ProbeArticle[]; // deduped + normalized
-  recommended: Recommendation;
+  preview: Array<{ title: string; url: string }>;
+  recommended: {
+    method: ProbeMethod;
+    rationale: string;
+    suggestedUrl?: string | null;
+    selector?: string | null;
+    feedUrl?: string | null;
+  };
   existingSource?: ExistingSource | null;
+  previewsByMethod?: Array<{
+    method: ProbeMethod;
+    items: Array<{ title: string; url: string }>;
+  }>;
 };
 
-
-// add this new type
+// Optional helper if you surface a recommendation to the UI directly
 export type Recommendation = {
   method: ProbeMethod;
   rationale: string;
-  suggestedUrl?: string | null; // if we think a different page is better to save
-  selector?: string | null;     // for scrape
-  feedUrl?: string | null;      // for rss
-  adapterKey?: string | null;                  // 👈 (optional) helper for UI
-  endpointKind?: "page" | "sitemap" | null;  
+  suggestedUrl?: string | null;
+  selector?: string | null;
+  feedUrl?: string | null;
+  adapterKey?: string | null;
+  endpointKind?: "page" | "sitemap" | null;
 };
 
-
 export type ScrapedItem = {
-  url: string;                 // absolute
+  url: string;
   title: string;
   description?: string;
   imageUrl?: string;
@@ -142,13 +138,9 @@ export type ScrapedItem = {
 };
 
 export interface SourceAdapter {
-  /** Return absolute article URLs (with optional lightweight titles/authors) discovered from index pages. */
   getIndex(pageCount?: number): Promise<Array<{ url: string; title?: string; author?: string }>>;
-
-  /** Load one article page and return enriched metadata (OG tags, JSON-LD, byline, etc.). */
   getArticle(url: string): Promise<ScrapedItem>;
 }
-
 
 export type FeedItem = {
   title: string;
@@ -161,9 +153,6 @@ export type FeedItem = {
   provider?: string | null;
 };
 
-
-
-
 export type SourceConfig = {
   id: number;
   homepage_url: string | null;
@@ -171,13 +160,39 @@ export type SourceConfig = {
   sitemap_url: string | null;
   scrape_selector: string | null;
   adapter: string | null;
-  fetch_mode: "auto" | "rss" | "sitemap" | "html" | null; // keep 'html' for future
+  fetch_mode: "auto" | "rss" | "adapter" | "scrape" | null;
   provider?: string | null;
 };
 
-
-
 export type ProbeMethod = "rss" | "scrape" | "adapter";
+export type FetchMode = "rss" | "scrape" | "adapter" | "auto";
 
-export type FetchMode = ProbeMethod | "auto";
+export interface SourceUpdates {
+  // core meta
+  name?: string;
+  category?: string;
+  sport?: string;
+  allowed?: boolean;
+  paywall?: boolean;
+  priority?: number;
 
+  // urls
+  homepage_url?: string | null;
+
+  // mutually-exclusive fetch-mode + required columns
+  fetch_mode?: FetchMode | null;
+
+  // RSS mode
+  rss_url?: string | null;
+
+  // Scrape mode
+  scrape_selector?: string | null;
+
+  // Adapter mode
+  adapter?: string | null;
+  adapter_endpoint?: AdapterEndpoint | null;      // <-- FIX: object not string
+  adapter_config?: Record<string, unknown> | null; // <-- FIX: allow null
+
+  // If you keep sitemap separate (used by sitemap adapter)
+  sitemap_url?: string | null;
+}

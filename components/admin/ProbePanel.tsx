@@ -10,12 +10,21 @@ import type {
   CommitPayload,
 } from "@/lib/sources/types";
 
+/** --- Local helper types to read extended API fields without using `any` --- */
+type MethodPreview = {
+  method: ProbeMethod;
+  items: Array<{ title: string; url: string }>;
+};
+type ProbeResultExtended = ProbeResult & {
+  previewsByMethod?: MethodPreview[];
+};
+
 type Progress = { discovered: number; upserts: number; errors: number; done: boolean };
 type TailLine = { t: string; msg: string };
 
 export default function ProbePanel() {
   const [url, setUrl] = useState("");
-  const [data, setData] = useState<ProbeResult | null>(null);
+  const [data, setData] = useState<ProbeResultExtended | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -33,7 +42,7 @@ export default function ProbePanel() {
   const [selectedSelector, setSelectedSelector] = useState<string | null>(null);
   const [selectedAdapterKey, setSelectedAdapterKey] = useState<string | null>(null);
 
-  // ✨ ingest tracking UI state
+  // ingest tracking UI state
   const [jobId, setJobId] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({
     discovered: 0,
@@ -42,6 +51,20 @@ export default function ProbePanel() {
     done: false,
   });
   const [tail, setTail] = useState<TailLine[]>([]);
+
+  // which method's preview to show
+  const [previewMethod, setPreviewMethod] = useState<ProbeMethod | null>(null);
+
+  // derive active preview list from server payload
+
+  
+  const activePreview = useMemo(() => {
+    if (!data) return [];
+    const m = previewMethod ?? data.recommended.method;
+    const fromByMethod = data.previewsByMethod?.find((p) => p.method === m)?.items;
+    if (fromByMethod && fromByMethod.length > 0) return fromByMethod;
+    return data.preview ?? [];
+  }, [data, previewMethod]);
 
   useEffect(() => {
     if (data?.existingSource) {
@@ -53,23 +76,70 @@ export default function ProbePanel() {
     }
   }, [data]);
 
-  async function probe() {
+  // Which method actually produced the list we're showing?
+const effectivePreviewMethod: ProbeMethod = useMemo(() => {
+  if (!data) return "rss";
+
+  // Try to match by first URL (fast path)
+  const first = activePreview[0]?.url ?? "";
+  if (first && data.previewsByMethod?.length) {
+    const hit = data.previewsByMethod.find((m) => m.items[0]?.url === first);
+    if (hit) return hit.method;
+  }
+
+  // Fallback: match by set-equality of URLs (order-agnostic)
+  if (data.previewsByMethod?.length) {
+    const set = new Set(activePreview.map((i) => i.url));
+    const hit = data.previewsByMethod.find(
+      (m) =>
+        m.items.length === activePreview.length &&
+        m.items.every((x) => set.has(x.url))
+    );
+    if (hit) return hit.method;
+  }
+
+  // Last resort: use the explicit toggle or server recommendation
+  return previewMethod ?? data.recommended.method;
+}, [data, activePreview, previewMethod]);
+
+
+  // --- PROBE (supports method overrides for accurate preview) ---
+  async function probeWithOverrides(opts?: {
+    method?: ProbeMethod | null;
+    keepData?: boolean;
+  }) {
     setLoading(true);
     setErr(null);
-    setData(null);
+    if (!opts?.keepData) setData(null);
+
+    const body = {
+      url,
+      method: opts?.method ?? previewMethod ?? null,
+      feedUrl: selectedFeed ?? null,
+      selector: selectedSelector ?? null,
+      adapterKey: selectedAdapterKey ?? null,
+    };
+
     try {
       const r = await fetch("/api/admin/source-probe", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setData((await r.json()) as ProbeResult);
+      const j = (await r.json()) as ProbeResultExtended;
+      setData(j);
+      if (!previewMethod) setPreviewMethod(j.recommended.method);
+      if (opts?.method) setPreviewMethod(opts.method);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function probe() {
+    await probeWithOverrides();
   }
 
   // helper: score feeds to prefer NFL/football paths
@@ -97,7 +167,6 @@ export default function ProbePanel() {
     const rec = data.recommended.method;
 
     const feedsSorted = [...data.feeds].sort((a, b) => {
-      // prefer nfl/football first, then by itemCount
       const s = feedScore(b.feedUrl) - feedScore(a.feedUrl);
       if (s !== 0) return s;
       return (b.itemCount || 0) - (a.itemCount || 0);
@@ -120,6 +189,77 @@ export default function ProbePanel() {
       canUseAdapter: !!bestAdapter,
     };
   }, [data]);
+  // Pretty URL for labels
+function shortUrl(u: string | null): string | null {
+  if (!u) return null;
+  try {
+    const n = new URL(u);
+    const path = n.pathname.replace(/\/$/, "");
+    return `${n.hostname}${path ? path : ""}`;
+  } catch {
+    return u;
+  }
+}
+
+// Counts returned by the server per method (if available)
+const methodCounts = useMemo(() => {
+  const m: Partial<Record<ProbeMethod, number>> = {};
+  (data?.previewsByMethod ?? []).forEach((p) => {
+    m[p.method] = p.items.length;
+  });
+  return m;
+}, [data]);
+
+// Human label for which preview is being shown
+const previewLabel = useMemo(() => {
+  if (!data) return "";
+
+  const m = effectivePreviewMethod;
+
+  const prettyUrl = (u: string | null): string | null => {
+    if (!u) return null;
+    try {
+      const n = new URL(u);
+      const path = n.pathname.replace(/\/$/, "");
+      return `${n.hostname}${path ? path : ""}`;
+    } catch {
+      return u;
+    }
+  };
+
+  if (m === "rss") {
+    const feed =
+      selectedFeed ??
+      data.recommended.feedUrl ??
+      derived.bestFeed?.feedUrl ??
+      null;
+    return feed ? `Adapter — RSS · ${prettyUrl(feed)}` : "Adapter — RSS";
+  }
+
+  if (m === "scrape") {
+    const sel =
+      selectedSelector ??
+      data.recommended.selector ??
+      derived.bestScrape?.selectorTried ??
+      null;
+    return sel ? `Adapter — Scrape · ${sel}` : "Adapter — Scrape";
+  }
+
+  // adapter
+  const key = selectedAdapterKey ?? derived.bestAdapter?.key ?? null;
+  return key ? `Adapter — ${key}` : "Adapter";
+}, [
+  data,
+  effectivePreviewMethod,
+  selectedFeed,
+  selectedSelector,
+  selectedAdapterKey,
+  derived.bestFeed,
+  derived.bestScrape,
+  derived.bestAdapter,
+]);
+
+
 
   // When data changes, preselect sensible defaults (prefer NFL feed and best selector/adapter)
   useEffect(() => {
@@ -127,6 +267,7 @@ export default function ProbePanel() {
       setSelectedFeed(null);
       setSelectedSelector(null);
       setSelectedAdapterKey(null);
+      setPreviewMethod(null);
       return;
     }
 
@@ -151,15 +292,15 @@ export default function ProbePanel() {
     setSelectedSelector(recSel ?? bestSel ?? null);
 
     // adapters
-const bestAdapterKey =
-  data.adapters
-    .filter((a) => a.ok)
-    .sort((a, b) => (b.itemCount || 0) - (a.itemCount || 0))[0]?.key ?? null;
+    const bestAdapterKey =
+      data.adapters
+        .filter((a) => a.ok)
+        .sort((a, b) => (b.itemCount || 0) - (a.itemCount || 0))[0]?.key ?? null;
 
-const recAdapterKey =
-  data.recommended.method === "adapter" ? bestAdapterKey : null;
+    const recAdapterKey = data.recommended.method === "adapter" ? bestAdapterKey : null;
+    setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
 
-setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
+    setPreviewMethod(data.recommended.method);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
@@ -171,7 +312,7 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
       : "rounded border px-3 py-2 text-sm hover:bg-zinc-50";
   }
 
-  // ✨ poll summary + logs while jobId is set
+  // poll summary + logs while jobId is set
   useEffect(() => {
     if (!jobId) return;
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -209,7 +350,7 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
           timer = null;
         }
       } catch {
-        // swallow; keep polling
+        // keep polling
       }
     };
 
@@ -220,87 +361,108 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
     };
   }, [jobId]);
 
-  async function commit(method: ProbeMethod) {
-    if (!data) return;
+async function commit(method: ProbeMethod) {
+  if (!data) return;
 
-    const commitUrl = data.recommended.suggestedUrl ?? url;
+  const commitUrl = data.recommended.suggestedUrl ?? url;
 
-    const nameHint = (() => {
-      try {
-        return new URL(commitUrl).host;
-      } catch {
-        return null;
-      }
-    })();
+  const nameHint = (() => {
+    try { return new URL(commitUrl).host; } catch { return null; }
+  })();
 
-    const sourceId = mode === "update" ? data.existingSource?.id : undefined;
+  const sourceId = mode === "update" ? data.existingSource?.id : undefined;
 
-    // Build updates: only include fields that are set (avoid clobbering with empty strings)
-    const updates: NonNullable<CommitPayload["updates"]> = { homepage_url: commitUrl };
-    if (name.trim()) updates.name = name.trim();
-    if (category.trim()) updates.category = category.trim();
-    if (sport.trim()) updates.sport = sport.trim();
-    if (allowed !== null) updates.allowed = allowed;
-    if (paywall !== null) updates.paywall = paywall;
-    if (priority !== "") updates.priority = Number(priority);
+  // Build a consistent updates object to satisfy sources_fetch_mode_check
+  const updates: NonNullable<CommitPayload["updates"]> = {
+    homepage_url: commitUrl,
+  };
+  if (name.trim()) updates.name = name.trim();
+  if (category.trim()) updates.category = category.trim();
+  if (sport.trim()) updates.sport = sport.trim();
+  if (allowed !== null) updates.allowed = allowed;
+  if (paywall !== null) updates.paywall = paywall;
+  if (priority !== "") updates.priority = Number(priority);
 
-    const body: CommitPayload = {
-      url: commitUrl,
-      method,
-      feedUrl: null,
-      selector: null,
-      nameHint,
-      adapterKey: null,
-      sourceId,
-      upsert: true,
-      updates,
-    };
+  // Normalize mutually-exclusive fetch-mode fields
+  if (method === "rss") {
+    updates.fetch_mode = "rss";
+    updates.rss_url =
+      selectedFeed ??
+      data.recommended.feedUrl ??
+      derived.bestFeed?.feedUrl ??
+      null;
 
-    if (method === "rss") {
-      // 👇 prefer the user’s pick; fall back to recommended/best
-      body.feedUrl =
-        selectedFeed ??
-        data.recommended.feedUrl ??
-        derived.bestFeed?.feedUrl ??
-        null;
-    }
-    if (method === "scrape") {
-      // 👇 prefer the user’s pick; fall back to recommended/best
-      body.selector =
-        selectedSelector ??
-        data.recommended.selector ??
-        derived.bestScrape?.selectorTried ??
-        null;
-    }
-    if (method === "adapter") {
-      // 👇 prefer the user’s pick; fall back to best adapter
-      body.adapterKey =
-        selectedAdapterKey ??
-        (derived.bestAdapter ? derived.bestAdapter.key : null);
-    }
+    // clear others
+    updates.scrape_selector = null;
+    updates.sitemap_url = null;
+    updates.adapter = null;
+    updates.adapter_endpoint = null;
+    updates.adapter_config = {};
+  } else if (method === "scrape") {
+    updates.fetch_mode = "scrape";
+    updates.scrape_selector =
+      selectedSelector ??
+      data.recommended.selector ??
+      derived.bestScrape?.selectorTried ??
+      null;
 
-    const r = await fetch("/api/admin/source-probe/commit", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // clear others
+    updates.rss_url = null;
+    updates.sitemap_url = null;
+    updates.adapter = null;
+    updates.adapter_endpoint = null;
+    updates.adapter_config = {};
+  } else if (method === "adapter") {
+    updates.fetch_mode = "adapter";
+    updates.adapter =
+      selectedAdapterKey ??
+      (derived.bestAdapter ? derived.bestAdapter.key : null);
 
-    if (!r.ok) {
-      const j = (await r.json().catch(() => ({}))) as { error?: string };
-      alert(`Commit failed: ${j.error ?? r.statusText}`);
-      return;
-    }
-
-    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; sourceId?: number; jobId?: string };
-    if (j?.sourceId) {
-      alert(`Saved! Source #${j.sourceId}`);
-    } else {
-      alert("Saved!");
-    }
-    if (j?.jobId) {
-      setJobId(j.jobId); // ✨ start polling
-    }
+    // clear others; leave endpoint/config if you use them
+    updates.rss_url = null;
+    updates.scrape_selector = null;
+    // keep sitemap_url only if your adapter is the sitemap one, else null:
+    updates.sitemap_url = updates.adapter === "sitemap-generic" ? (data.recommended.feedUrl ?? null) : null;
+    updates.adapter_endpoint = updates.adapter_endpoint ?? null;
+    updates.adapter_config = updates.adapter_config ?? {};
   }
+
+  const body: CommitPayload = {
+    url: commitUrl,
+    method,
+    // explicit method-specific values (duplicated with updates for backend convenience)
+    feedUrl: method === "rss"
+      ? (updates.rss_url ?? null)
+      : null,
+    selector: method === "scrape"
+      ? (updates.scrape_selector ?? null)
+      : null,
+    adapterKey: method === "adapter"
+      ? (updates.adapter ?? undefined)
+      : undefined,
+    nameHint,
+    sourceId,
+    upsert: true,
+    updates,
+  };
+
+  const r = await fetch("/api/admin/source-probe/commit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    alert(`Commit failed: ${j.error ?? r.statusText}`);
+    return;
+  }
+
+  const j = (await r.json().catch(() => ({}))) as { ok?: boolean; sourceId?: number; jobId?: string };
+  alert(j?.sourceId ? `Saved! Source #${j.sourceId}` : "Saved!");
+  if (j?.jobId) setJobId(j.jobId);
+}
+
 
   return (
     <section className="rounded-xl border p-4">
@@ -431,7 +593,11 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
                         value={f.feedUrl}
                         disabled={disabled}
                         checked={selectedFeed === f.feedUrl}
-                        onChange={() => setSelectedFeed(f.feedUrl)}
+                        onChange={() => {
+                          setSelectedFeed(f.feedUrl);
+                          setPreviewMethod("rss");
+                          void probeWithOverrides({ method: "rss", keepData: true });
+                        }}
                       />
                       <span className="truncate">{f.feedUrl}</span>
                       <span className="text-xs text-zinc-500">{f.ok ? `(${f.itemCount})` : f.error ? `— ${f.error}` : ""}</span>
@@ -458,7 +624,11 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
                         value={s.selectorTried}
                         disabled={disabled}
                         checked={selectedSelector === s.selectorTried}
-                        onChange={() => setSelectedSelector(s.selectorTried)}
+                        onChange={() => {
+                          setSelectedSelector(s.selectorTried);
+                          setPreviewMethod("scrape");
+                          void probeWithOverrides({ method: "scrape", keepData: true });
+                        }}
                       />
                       <code className="font-mono">{s.selectorTried}</code>
                       <span className="text-xs text-zinc-500">{s.ok ? `(${s.linkCount})` : s.error ? `— ${s.error}` : ""}</span>
@@ -485,7 +655,11 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
                         value={a.key}
                         disabled={disabled}
                         checked={selectedAdapterKey === a.key}
-                        onChange={() => setSelectedAdapterKey(a.key)}
+                        onChange={() => {
+                          setSelectedAdapterKey(a.key);
+                          setPreviewMethod("adapter");
+                          void probeWithOverrides({ method: "adapter", keepData: true });
+                        }}
                       />
                       <span className="truncate">{a.label ?? a.key}</span>
                       <span className="text-xs text-zinc-500">{a.ok ? `(${a.itemCount})` : a.error ? `— ${a.error}` : ""}</span>
@@ -496,10 +670,46 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
             </div>
           </div>
 
+          {/* Preview controls */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-600">Preview by:</span>
+            <div className="inline-flex rounded border overflow-hidden text-sm">
+              {(["rss", "scrape", "adapter"] as const).map((m) => {
+                const isActive = previewMethod === m;
+                const count = methodCounts[m];
+                const label = `${m.toUpperCase()}${typeof count === "number" ? ` (${count})` : ""}`;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => {
+                      setPreviewMethod(m);
+                      void probeWithOverrides({ method: m, keepData: true });
+                    }}
+                    className={[
+                      "px-2 py-1",
+                      isActive ? "bg-black text-white" : "bg-white hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              className="rounded border px-2 py-1 text-sm hover:bg-zinc-50"
+              onClick={() => void probeWithOverrides({ method: previewMethod ?? undefined, keepData: true })}
+              title="Re-probe to refresh preview with current selections"
+            >
+              Refresh preview
+            </button>
+          </div>
+
+
           <div className="rounded border p-2">
-            <b>Preview ({data.preview.length})</b>
+            <b>Preview — {previewLabel} ({activePreview.length})</b>
             <ul className="list-disc pl-5">
-              {data.preview.slice(0, 12).map((a) => (
+              {activePreview.slice(0, 12).map((a) => (
                 <li key={a.url}>{a.title}</li>
               ))}
             </ul>
@@ -534,7 +744,7 @@ setSelectedAdapterKey(recAdapterKey ?? bestAdapterKey ?? null);
             </button>
           </div>
 
-          {/* ✨ Ingest progress / tail */}
+          {/* Ingest progress / tail */}
           {jobId ? (
             <div className="mt-3 rounded border p-2 text-sm">
               <div className="flex items-center justify-between">

@@ -7,7 +7,7 @@ import type { CommitPayload, ProbeMethod } from "@/lib/sources/types";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Best-effort ingest kickoff (includes jobId for tracking) */
+/** Kick off an ingest run (best-effort) */
 async function triggerIngestForSource(
   sourceId: number,
   method: ProbeMethod,
@@ -21,15 +21,101 @@ async function triggerIngestForSource(
       body: JSON.stringify({ sourceId, method, jobId }),
     });
   } catch {
-    // best-effort: ignore network errors here
+    // best-effort; don't throw
   }
+}
+
+/** Normalize & enforce per-method field rules */
+function normalizeUpdatesForMethod(
+  method: ProbeMethod,
+  payload: CommitPayload,
+  isCreate: boolean
+): Record<string, unknown> {
+  // start from incoming updates (could be empty)
+  const base = { ...(payload.updates ?? {}) } as Record<string, unknown>;
+
+  // default homepage_url if not provided
+  if (!base.homepage_url && payload.url) {
+    base.homepage_url = payload.url;
+  }
+
+  // default allowed=true on create (non-destructive on update)
+  if (isCreate && typeof base.allowed === "undefined") {
+    base.allowed = true;
+  }
+
+  // coerce paywall to boolean when provided; default false on create
+  if (Object.prototype.hasOwnProperty.call(base, "paywall")) {
+    base.paywall = Boolean(base.paywall);
+  } else if (isCreate) {
+    base.paywall = false;
+  }
+
+  // Keep adapter_endpoint if caller sent it (pass-through)
+  if (payload.updates?.adapter_endpoint) {
+    base.adapter_endpoint = payload.updates.adapter_endpoint;
+  }
+
+  // Per-method field mapping & clearing
+  if (method === "rss") {
+    // Set rss_url from feedUrl; clear adapter/scrape
+    base.rss_url = payload.feedUrl ?? null;
+    base.adapter = null;
+    base.adapter_config = null;
+    base.scrape_selector = null;
+    // leave sitemap_url as-is (unused by RSS)
+  }
+
+  if (method === "scrape") {
+    // Set scrape_selector from selector; clear rss/adapter
+    base.scrape_selector = payload.selector ?? null;
+    base.rss_url = null;
+    base.adapter = null;
+    base.adapter_config = null;
+    // sitemap_url irrelevant for scrape
+  }
+
+  if (method === "adapter") {
+    // Set adapter from adapterKey; clear rss/scrape
+    base.adapter = payload.adapterKey ?? null;
+    base.rss_url = null;
+    base.scrape_selector = null;
+
+    // Ensure adapter_config exists
+    if (typeof base.adapter_config === "undefined" || base.adapter_config === null) {
+      base.adapter_config = {};
+    }
+
+    // Provide a sensible default sitemap_url if missing
+    if (!base.sitemap_url && payload.url) {
+      try {
+        const u = new URL(payload.url);
+        base.sitemap_url = `${u.origin}/sitemap.xml`;
+      } catch {
+        // ignore malformed URL
+      }
+    }
+  }
+
+  // NOTE: We deliberately do NOT force sport here.
+  // If you want to set sport (e.g., 'nfl') do it via payload.updates.sport
+  // or add a domain-based default in your backend.
+
+  return base;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const payload = (await req.json()) as CommitPayload;
 
-    // Prefer an explicit sourceId; else, if upsert=true, try to find a matching host.
+    if (!payload.method) {
+      return NextResponse.json({ error: "Missing method" }, { status: 400 });
+    }
+    if (!payload.url) {
+      return NextResponse.json({ error: "Missing url" }, { status: 400 });
+    }
+
+    // Find/create target source
     const existing =
       payload.sourceId != null
         ? { id: payload.sourceId }
@@ -39,36 +125,20 @@ export async function POST(req: NextRequest) {
 
     const isCreate = !existing?.id;
 
-    // ---- Normalize updates --------------------------------------------------
-    const incoming = payload.updates ?? {};
-    // Keep the same shape as incoming but allow us to coerce paywall -> boolean.
-    const normalized: typeof incoming & { paywall?: boolean } = { ...incoming };
+    // Build full updates object honoring method semantics
+    const updates = normalizeUpdatesForMethod(payload.method, payload, isCreate);
 
-    if ("paywall" in incoming) {
-      // Narrow unknown to boolean|unknown and coerce to boolean if provided
-      const v = (incoming as { paywall?: unknown }).paywall;
-      if (v !== undefined) normalized.paywall = !!v;
-    } else if (isCreate) {
-      // On INSERT, default paywall=false so the row is coherent
-      normalized.paywall = false;
-    }
-
-    // Pass through adapter_endpoint untouched if present (already typed on CommitPayload)
-    if (payload.updates?.adapter_endpoint) {
-      normalized.adapter_endpoint = payload.updates.adapter_endpoint;
-    }
-    // ------------------------------------------------------------------------
-
-    // Create or update the source and switch to the selected method.
+    // Persist source (create/update) with method-specific fields mapped
     const sourceId = await saveSourceWithMethod({
       url: payload.url,
       method: payload.method,
       feedUrl: payload.feedUrl ?? null,
       selector: payload.selector ?? null,
       adapterKey: payload.adapterKey ?? undefined,
-      nameHint: payload.nameHint ?? null, // friendly default on INSERT
+      nameHint: payload.nameHint ?? null,
       sourceId: existing?.id,
-      updates: normalized,
+      updates,
+      upsert: payload.upsert ?? true,
     });
 
     // Start an ingest run and return its tracking id.

@@ -13,13 +13,15 @@ import {
   FeedCandidate,
   ScrapeCandidate,
   AdapterCandidate,
-  Recommendation,
+  Recommendation,FetchMode,
+  AdapterEndpoint
 } from "./types";
 import { ADAPTERS, fetchFromSitemap } from "./adapters";
 import { enrichWithOG } from "./helpers";
 import { allowItem as coreAllowItem } from "@/lib/contentFilter";
 import { httpGet } from "./shared";
 import { dbQuery } from "../db";
+import { cleanTitle } from "../enrich";
 
 /* ---------------- utilities ---------------- */
 
@@ -31,13 +33,6 @@ const allowItem = (x: FeedLike): boolean => coreAllowItem(x, x.link);
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
-
-/* For adapter_config endpoints editing (no `any`) */
-type AdapterEndpoint = {
-  kind: "page" | "sitemap";
-  url: string;
-  selector?: string | null;
-};
 
 function isAdapterEndpoint(v: unknown): v is AdapterEndpoint {
   return (
@@ -74,6 +69,8 @@ export async function runProbe(req: ProbeRequest): Promise<ProbeResult> {
   };
 }
 
+
+
 /* ============================================================================
    SAVE SOURCE (sets fetch_mode + relevant fields)
 ============================================================================ */
@@ -86,6 +83,7 @@ export async function saveSourceWithMethod(args: {
   adapterKey?: string | null;
   nameHint?: string | null;
   sourceId?: number;
+  upsert?: boolean | null;
   updates?: {
     name?: string;
     homepage_url?: string | null;
@@ -100,7 +98,7 @@ export async function saveSourceWithMethod(args: {
     category?: string | null;
     sport?: string | null;
     priority?: number | null;
-    fetch_mode?: ProbeMethod | "auto" | null;
+    fetch_mode?: FetchMode | null; // not ProbeMethod
     adapter_endpoint?:
       | {
           kind: "page" | "sitemap";
@@ -235,16 +233,42 @@ export async function saveSourceWithMethod(args: {
         : null;
   }
 
-  // Helper: run UPDATE with the keys we actually set in u
-  async function runUpdate(id: number): Promise<number> {
-    const fields = Object.keys(u);
-    if (fields.length === 0) return id; // nothing to do
-    const setSql = fields.map((k, i) => `${k} = $${i + 2}`).join(", ");
-    const sql = `update sources set ${setSql} where id = $1 returning id;`;
-    const params = [id, ...fields.map((k) => u[k])];
+// Helper: run UPDATE with only well-formed keys
+async function runUpdate(id: number): Promise<number> {
+  // 1) Entries we actually want to write (skip undefined)
+  const entries = Object.entries(u)
+    .filter(([k, v]) => v !== undefined && k && typeof k === "string")
+    .map(([k, v]) => [k.trim(), v] as const);
+
+  // 2) Optional: whitelist to avoid typos / stray keys
+  const ALLOWED = new Set([
+    "homepage_url", "sitemap_url", "name", "allowed", "paywall", "category", "sport",
+    "priority", "fetch_mode", "rss_url", "scrape_selector", "scrape_path",
+    "adapter", "adapter_config",
+  ]);
+  const safe = entries.filter(([k]) => ALLOWED.has(k));
+
+  if (safe.length === 0) return id; // nothing to update
+
+  const cols = safe.map(([k]) => k);
+  const setSql = cols.map((k, i) => `${k} = $${i + 2}`).join(", ");
+  const params = [id, ...safe.map(([, v]) => v)];
+
+  const sql = `UPDATE sources SET ${setSql} WHERE id = $1 RETURNING id;`;
+
+  try {
     const { rows } = await dbQuery<{ id: number }>(sql, params);
     return rows[0].id;
+  } catch (e) {
+    // make the error readable in your logs
+    const err = e as any;
+    console.error("[saveSourceWithMethod] UPDATE failed", {
+      message: err?.message, code: err?.code, sql, params
+    });
+    throw e;
   }
+}
+
 
   // UPSERT by id if provided
   if (typeof sourceId === "number" && sourceId > 0) {
@@ -680,81 +704,177 @@ function dedupe<T extends { url: string }>(items: T[]): T[] {
   return items.filter((i) => (seen.has(i.url) ? false : (seen.add(i.url), true))).slice(0, 50);
 }
 
-/* ============================================================================
-   SCRAPE & RSS
-============================================================================ */
+// lib/sources/index.ts (snippet)
 
 const BAD_SCHEMES = /^(javascript:|mailto:|tel:)/i;
+
+// Make anchor text classifier-friendly
+function cleanTitleText(raw: string): string {
+  // collapse whitespace
+  let t = String(raw || "").replace(/\s+/g, " ").trim();
+
+  // strip obvious UI chrome that sneaks into anchors
+  t = t
+    .replace(/\b(Read More|Continue Reading)\b/gi, "")
+    .replace(/\b\d+\s+Comments?\b/gi, "")
+    .replace(/\bLeave a comment\b/gi, "")
+    .trim();
+
+  // remove stray pipes/dashes from edges
+  t = t.replace(/^[\|–—\-:]+/, "").replace(/[\|–—\-:]+$/, "").trim();
+
+  return t;
+}
+
+// Very light “article-ish” URL heuristic (does NOT replace ingest classification)
+function isLikelyArticlePath(pathname: string): boolean {
+  const p = pathname.toLowerCase();
+
+  // obvious non-articles
+  if (/(^|\/)(tag|category|author|team|videos?|video|search)(\/|$)/.test(p)) return false;
+  if (p === "/") return false;
+
+  const last = p.split("/").filter(Boolean).pop() || "";
+
+  // positive: “week-4” style, or a slug with 3+ words (hyphens), or contains a year
+  if (/week-\d+/.test(last)) return true;
+  if (/\b(20\d{2}|19\d{2})\b/.test(last)) return true;
+  if (last.split("-").filter(Boolean).length >= 3) return true;
+
+  return false;
+}
+
+function sanitizeArticleUrl(href: string, baseUrl: string): string | null {
+  try {
+    const u = new URL(href, baseUrl);
+
+    // kill fragments and tracking
+    u.hash = "";
+    u.searchParams.forEach((_, k) => {
+      if (/^utm_|^fbclid$|^gclid$|^mc_cid$|^mc_eid$/.test(k)) u.searchParams.delete(k);
+    });
+
+    // block comment pages and feeds
+    const p = u.pathname.toLowerCase();
+    if (p.includes("/comments/")) return null;
+    if (p.endsWith("/feed/") || p.endsWith(".xml")) return null;
+
+    // block short section slugs like `/nfl/`
+    const segs = u.pathname.split("/").filter(Boolean);
+    if (segs.length === 1 && segs[0].length <= 3) return null;
+
+    // quick article-ish check; we’ll still let ingest do the final classification
+    if (!isLikelyArticlePath(u.pathname)) return null;
+
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
 
 async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedItem[]> {
   if (!cfg.homepage_url) return [];
   const base = new URL(cfg.homepage_url);
-  const html = await httpGet(base.toString());
-  const $ = cheerio.load(html);
 
-  const selector =
+  // WordPress hero often injected; grab key category pages too (server-rendered)
+  const extraPaths: string[] = [];
+  const host = base.hostname.replace(/^www\./i, "");
+  if (host === "football.razzball.com") {
+    extraPaths.push("/category/fantasy-football-analysis/");
+    extraPaths.push("/category/fantasy-football/");
+  }
+
+  // Prefer post-title anchors first, then fall back
+  const defaultSelectors = [
+    "article .entry-title a[href]",
+    "h2.entry-title a[href]",
+    "article h2 a[href]",
+    "article a[href]",
+    "h2 a[href]",
+    "h3 a[href]",
+    "main a[href]",
+  ];
+  const selectors =
     cfg.scrape_selector && cfg.scrape_selector.trim()
-      ? cfg.scrape_selector
-      : "article a[href], h2 a[href], h3 a[href], main a[href]";
+      ? [cfg.scrape_selector.trim(), ...defaultSelectors]
+      : defaultSelectors;
+
+  const sameHost = (abs: string) => {
+    try {
+      return new URL(abs).hostname.replace(/^www\./i, "") === base.hostname.replace(/^www\./i, "");
+    } catch {
+      return false;
+    }
+  };
 
   const seen = new Set<string>();
   const out: FeedItem[] = [];
 
-  $(selector).each((_i, el) => {
-    const raw = ($(el).attr("href") || "").trim();
-    if (!raw) return;
-    let abs: string;
+  async function collectFrom(url: string) {
+    const html = await httpGet(url);
+    const $ = cheerio.load(html);
+
+    for (const sel of selectors) {
+      $(sel).each((_i, el) => {
+        const rawHref = ($(el).attr("href") || "").trim();
+        if (!rawHref) return;
+
+        const abs = sanitizeArticleUrl(rawHref, url);
+        if (!abs) return;
+        if (BAD_SCHEMES.test(abs)) return;
+        if (!sameHost(abs)) return;
+
+        // Clean text → run your global cleanTitle; fallback to slug if needed
+        const rawText = cleanTitleText($(el).text() || "");
+        // If you export cleanTitle from ingest, import and use it here; otherwise inline a light version.
+        const primary = typeof cleanTitle === "function" ? cleanTitle(rawText) : rawText;
+        const title = (primary && primary.length >= 6 ? primary : null) ?? slugTitle(abs);
+        if (!title) return;
+
+        if (!coreAllowItem({ title, link: abs }, abs)) return;
+
+        if (!seen.has(abs)) {
+          seen.add(abs);
+          out.push({ title, link: abs, publishedAt: null });
+        }
+      });
+
+      if (out.length >= limit) break;
+    }
+  }
+
+  // 1) homepage
+  await collectFrom(base.toString());
+
+  // 2) category pages (catch hero/top stories rendered client-side on homepage)
+  for (const p of extraPaths) {
+    if (out.length >= limit) break;
     try {
-      abs = new URL(raw, base).toString();
+      await collectFrom(new URL(p, base.origin).toString());
     } catch {
-      return;
+      /* ignore */
     }
-    if (BAD_SCHEMES.test(abs)) return;
+  }
 
-    const hostA = (() => {
-      try {
-        return new URL(abs).hostname.replace(/^www\./i, "");
-      } catch {
-        return "";
-      }
-    })();
-    const hostB = base.hostname.replace(/^www\./i, "");
-    if (hostA !== hostB) return;
-
-    const text = (($(el).text() || "") as string).trim();
-    const title = text || slugTitle(abs);
-    if (!title) return;
-
-    if (!coreAllowItem({ title, link: abs }, abs)) return;
-
-    if (!seen.has(abs)) {
-      seen.add(abs);
-      out.push({ title, link: abs, publishedAt: null });
-    }
-  });
-
+  // 3) last resort: OG enrich
   if (out.length === 0) {
     try {
       const enriched = await enrichWithOG([cfg.homepage_url], base.host);
       for (const a of enriched) {
         if (!a.url) continue;
-        const hostA = (() => {
-          try {
-            return new URL(a.url).hostname.replace(/^www\./i, "");
-          } catch {
-            return "";
-          }
-        })();
-        const hostB = base.hostname.replace(/^www\./i, "");
-        if (hostA !== hostB) continue;
+        const u = sanitizeArticleUrl(a.url, base.toString());
+        if (!u) continue;
+        if (!sameHost(u)) continue;
 
-        const title = a.title || slugTitle(a.url);
+        const t0 = cleanTitleText(a.title || "");
+        const primary = typeof cleanTitle === "function" ? cleanTitle(t0) : t0;
+        const title = (primary && primary.length >= 6 ? primary : null) ?? slugTitle(u);
         if (!title) continue;
-        if (!coreAllowItem({ title, link: a.url }, a.url)) continue;
+        if (!coreAllowItem({ title, link: u }, u)) continue;
 
         out.push({
           title,
-          link: a.url,
+          link: u,
           publishedAt: a.publishedAt ? new Date(a.publishedAt) : null,
         });
         if (out.length >= limit) break;
@@ -766,6 +886,7 @@ async function scrapeHomepage(cfg: SourceConfig, limit: number): Promise<FeedIte
 
   return out.slice(0, limit);
 }
+
 
 async function fetchRssItems(rssUrl: string, limit = 50): Promise<FeedItem[]> {
   const res = await fetch(rssUrl, { next: { revalidate: 0 } });

@@ -25,6 +25,8 @@ import {
   unproxyNextImage
 } from "@/lib/images";
 import { fetchOgImage } from "./enrich";
+import { extractWaiverMentions } from "@/lib/waivers/extract";
+import { dbQueryRows } from "@/lib/db";
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,7 +242,7 @@ function inferWeekFromText(title: string | null, url: string): number | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-function rowsOf<T>(res: unknown): T[] {
+export function rowsOf<T>(res: unknown): T[] {
   if (Array.isArray(res)) return res as T[];
   const obj = res as { rows?: T[] };
   return Array.isArray(obj?.rows) ? (obj.rows as T[]) : [];
@@ -589,6 +591,9 @@ export async function getAllowedSources(): Promise<SourceRow[]> {
 // ─────────────────────────────────────────────────────────────────────────────
 // ingest_logs writer (this is what the admin page reads)
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// ingest_logs writer (column-aware; safe on older schemas)
+// ─────────────────────────────────────────────────────────────────────────────
 function hostnameOf(url: string | null | undefined) {
   try {
     return url ? new URL(url).hostname : null;
@@ -597,35 +602,99 @@ function hostnameOf(url: string | null | undefined) {
   }
 }
 
+type IngestEvent = "start" | "discover" | "upsert" | "skip" | "error" | "finish";
+type IngestLevel = "info" | "error";
+
+type ColumnInfo = {
+  hasJobId: boolean;
+  hasLevel: boolean;
+  hasEvent: boolean;
+};
+let ingestCols: ColumnInfo | null = null;
+
+async function getIngestLogCols(): Promise<ColumnInfo> {
+  if (ingestCols) return ingestCols;
+  const { rows } = await dbQuery<{ column_name: string }>(
+    `select lower(column_name) as column_name
+       from information_schema.columns
+      where table_name = 'ingest_logs'`
+  );
+  const names = new Set(rows.map(r => r.column_name));
+  ingestCols = {
+    hasJobId: names.has("job_id"),
+    hasLevel: names.has("level"),
+    hasEvent: names.has("event"),
+  };
+  return ingestCols;
+}
+
+function inferEvent(reason: string): IngestEvent {
+  if (reason === "ok_insert" || reason === "ok_update") return "upsert";
+  if (reason === "blocked_by_filter" || reason.startsWith("skip_")) return "skip";
+  if (reason === "fetch_error" || reason === "parse_error" || reason === "resolve_error" || reason === "invalid_item") {
+    return "error";
+  }
+  // treat everything else (incl. static_detected, dead_redirect, etc.) as discover by default
+  return "discover";
+}
+
+function inferLevel(reason: string): IngestLevel {
+  return (reason.endsWith("_error") || reason === "invalid_item" || reason === "parse_error")
+    ? "error"
+    : "info";
+}
+
 async function logIngest(
   src: SourceRow,
   reason: string,
   url?: string | null,
-  opts?: { title?: string | null; detail?: string | null }
+  opts?: {
+    title?: string | null;
+    detail?: string | null;
+    jobId?: string | null;
+    event?: IngestEvent;
+    level?: IngestLevel;
+  }
 ) {
   try {
+    const cols = await getIngestLogCols();
+    const domain = hostnameOf(url ?? null);
+
+    const colNames = ["created_at", "source_id", "source", "reason", "url", "domain", "title", "detail"];
+    const values: unknown[] = [
+      new Date(), // created_at
+      src.id,
+      src.name ?? null,
+      reason,
+      url ?? null,
+      domain ?? null,
+      opts?.title ?? null,
+      opts?.detail ?? null,
+    ];
+
+    if (cols.hasJobId) {
+      colNames.push("job_id");
+      values.push(opts?.jobId ?? null);
+    }
+    if (cols.hasEvent) {
+      colNames.push("event");
+      values.push(opts?.event ?? inferEvent(reason));
+    }
+    if (cols.hasLevel) {
+      colNames.push("level");
+      values.push(opts?.level ?? inferLevel(reason));
+    }
+
+    const placeholders = colNames.map((_, i) => `$${i + 1}`).join(", ");
     await dbQuery(
-      `
-      INSERT INTO ingest_logs
-        (created_at, source_id, source, reason, url, domain, title, detail)
-      VALUES
-        (NOW(), $1::int, $2::text, $3::text,
-         NULLIF($4::text,''), NULLIF($5::text,''), NULLIF($6::text,''), NULLIF($7::text,''))
-      `,
-      [
-        src.id,
-        src.name ?? null,
-        reason,
-        url ?? null,
-        hostnameOf(url ?? null),
-        opts?.title ?? null,
-        opts?.detail ?? null,
-      ]
+      `INSERT INTO ingest_logs (${colNames.join(", ")}) VALUES (${placeholders})`,
+      values
     );
   } catch {
     // never fail ingest because of log write
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers: image backfill + players extraction
@@ -670,15 +739,25 @@ async function backfillArticleImage(
 // ─────────────────────────────────────────────────────────────────────────────
 type IngestSummary = { total: number; inserted: number; updated: number; skipped: number };
 
-function isLikelyIndexOrNonArticle(url: string) {
-  const u = url.toLowerCase();
-  return (
-    u.includes("sitemap") ||
-    u.endsWith("/videos") ||
-    u.includes("/video/") ||
-    u.includes("/category/") ||
-    (u.endsWith("/") && u.split("/").filter(Boolean).length <= 2)
-  );
+// Replace the old isLikelyIndexOrNonArticle with this:
+function isLikelyIndexOrNonArticle(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    const segs = u.pathname.split("/").filter(Boolean); // path only
+    const p = u.pathname.toLowerCase();
+
+    // true index/hub pages
+    if (segs.length === 0) return true;                          // homepage
+    if (/\/(category|tag|tags|authors?|teams?|videos?)\//.test(p)) return true;
+
+    // allow single-slug posts like /streamers-and-stashes-week-4/
+    // reject only super-short slugs that are clearly sections
+    if (segs.length === 1 && segs[0].length <= 3) return true;   // e.g. /nfl/, /dfs/
+
+    return false; // treat everything else as an article candidate
+  } catch {
+    return false;
+  }
 }
 
 
@@ -748,6 +827,12 @@ export async function ingestSourceById(
     await log.error("Unknown source", { sourceId });
     throw new Error(`Source ${sourceId} not found`);
   }
+    await logIngest(src, "static_detected", null, {
+    detail: "ingest started",
+    jobId, // thread through
+    event: "start",
+    level: "info",
+  });
 
   await log.info("Ingest started", { sourceId, limit });
   if (jobId) {
@@ -778,7 +863,7 @@ export async function ingestSourceById(
     const feedTitle = (it?.title ?? "").trim() || null;
     if (!link) {
       skipped++;
-      await logIngest(src, "invalid_item", null, { detail: "empty link" });
+      await logIngest(src, "invalid_item", null, { detail: "empty link", jobId});
       continue;
     }
 
@@ -787,7 +872,7 @@ export async function ingestSourceById(
       if (!looksClearlyNFL(link, feedTitle)) {
         skipped++;
         await log.debug("non_nfl_guard: blocked", { sourceId: src.id, link, feedTitle });
-        await logIngest(src, "blocked_by_filter", link, { title: feedTitle, detail: "non_nfl_guard" });
+        await logIngest(src, "blocked_by_filter", link, { title: feedTitle, detail: "non_nfl_guard", jobId });
         continue;
       }
     }
@@ -799,17 +884,17 @@ export async function ingestSourceById(
         const routed = await adapters.routeByUrl(link);
         if (routed?.kind === "skip") {
           skipped++;
-          await logIngest(src, "skip_router", link, { title: feedTitle, detail: routed?.reason ?? null });
+          await logIngest(src, "skip_router", link, { title: feedTitle, detail: routed?.reason ?? null, jobId });
           continue;
         }
         if (routed?.kind === "index") {
           skipped++;
-          await logIngest(src, "skip_index", link, { title: feedTitle, detail: routed?.reason ?? null });
+          await logIngest(src, "skip_index", link, { title: feedTitle, detail: routed?.reason ?? null, jobId });
           continue;
         }
       } else if (isLikelyIndexOrNonArticle(link)) {
         skipped++;
-        await logIngest(src, "skip_index", link, { title: feedTitle });
+        await logIngest(src, "skip_index", link, { title: feedTitle, jobId });
         continue;
       }
     } catch {
@@ -824,7 +909,7 @@ try {
   // keep this check, but scope it to hosts we know soft-redirect to homepages
   if (isLikelyDeadRedirect(resolvedUrl)) {
     skipped++;
-    await logIngest(src, "dead_redirect", link, { title: feedTitle, detail: resolvedLink });
+    await logIngest(src, "dead_redirect", link, { title: feedTitle, detail: resolvedLink, jobId });
     continue;
   }
 } catch (e) {
@@ -832,7 +917,7 @@ try {
   skipped++;
   await logIngest(src, "resolve_error", link, {
     title: feedTitle,
-    detail: e instanceof Error ? e.message : String(e),
+    detail: e instanceof Error ? e.message : String(e), jobId,
   });
   continue;
 }
@@ -850,7 +935,7 @@ function isLikelyDeadRedirect(u: URL): boolean {
 const earlyCanon = chooseCanonical(null, resolvedLink) ?? resolvedLink;
 if (await isUrlBlocked(earlyCanon)) {
   skipped++;
-  await logIngest(src, "blocked_by_admin", earlyCanon, { title: feedTitle });
+  await logIngest(src, "blocked_by_admin", earlyCanon, { title: feedTitle, jobId });
   continue;
 }
 
@@ -891,7 +976,7 @@ if (await isUrlBlocked(earlyCanon)) {
 
        if (await isUrlBlocked(canonical)) {
           skipped++;
-          await logIngest(src, "blocked_by_admin", canonical, { title: feedTitle });
+          await logIngest(src, "blocked_by_admin", canonical, { title: feedTitle, jobId });
           continue;
         }
 
@@ -926,7 +1011,7 @@ if (await isUrlBlocked(earlyCanon)) {
 
         const action = res.inserted ? "ok_insert" : "ok_update";
         if (res.inserted) inserted++; else updated++;
-        await logIngest(src, action, canonical, { title: chosenTitle });
+        await logIngest(src, action, canonical, { title: chosenTitle, jobId });
 
         await backfillAfterUpsert(
           canonical,
@@ -944,7 +1029,7 @@ if (await isUrlBlocked(earlyCanon)) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       await log.warn("Scrape failed; falling back to basic upsert", { resolvedLink, error: msg });
-      await logIngest(src, "parse_error", resolvedLink, { title: feedTitle, detail: msg });
+      await logIngest(src, "parse_error", resolvedLink, { title: feedTitle, detail: msg, jobId });
     }
 
     // 3) Fallback (no scraper)
@@ -974,7 +1059,7 @@ if (await isUrlBlocked(earlyCanon)) {
 
     const action = res.inserted ? "ok_insert" : "ok_update";
     if (res.inserted) inserted++; else updated++;
-    await logIngest(src, action, canonical, { title: feedTitle });
+    await logIngest(src, action, canonical, { title: feedTitle, jobId });
 
     await backfillAfterUpsert(
       canonical,
@@ -985,6 +1070,14 @@ if (await isUrlBlocked(earlyCanon)) {
 
   const summary = { total: items.length, inserted, updated, skipped };
   await log.info("Ingest summary", summary);
+
+  await logIngest(src, "static_detected", null, {
+    detail: "ingest finished",
+    jobId,
+    event: "finish",
+    level: "info",
+  });
+
   return summary;
 
   async function backfillAfterUpsert(
@@ -1054,7 +1147,7 @@ export async function ingestAllAllowedSources(
         const msg = err instanceof Error ? err.message : String(err);
         errors.push({ sourceId: s.id, message: msg });
         await log.error("Source ingest failed", { sourceId: s.id, error: msg });
-        await logIngest(s, "fetch_error", null, { detail: msg });
+        await logIngest(s, "fetch_error", null, { detail: msg, jobId });
       } finally {
         done++;
         if (jobId) {
@@ -1104,7 +1197,7 @@ export async function ingestAllSources(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       await log.error("Source ingest failed", { sourceId: s.id, error: msg });
-      await logIngest(s, "fetch_error", null, { detail: msg });
+      await logIngest(s, "fetch_error", null, { detail: msg, jobId });
     }
     done++;
     if (jobId) {
@@ -1147,5 +1240,16 @@ export async function runAllAllowedSourcesIngestWithJob(perSourceLimit = 50) {
     const msg = err instanceof Error ? err.message : String(err);
     await failJob(job.id, msg);
     throw new Error(msg);
+  }
+}
+
+
+async function maybeExtractWaivers(articleId: number) {
+  const row = (await dbQueryRows<{
+    id: number; url: string; primary_topic: string | null; week: number | null;
+  }>(`select id, url, primary_topic, week from articles where id = $1`, [articleId]))[0];
+
+  if (row && row.primary_topic === "waiver-wire" && row.week != null) {
+    extractWaiverMentions(row.id, row.url).catch(() => {});
   }
 }

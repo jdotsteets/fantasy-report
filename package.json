@@ -10,12 +10,14 @@
     "lint": "next lint",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
-    "build:ci": "next build"
+    "build:ci": "next build",
+    "load:sleeper": "tsx --env-file=.env.local scripts/load-sleeper-players.ts"
   },
   "engines": {
     "node": ">=20 <23"
   },
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@supabase/supabase-js": "^2.56.0",
     "@tailwindcss/postcss": "^4.1.12",
     "@vercel/analytics": "^1.5.0",
@@ -24,6 +26,7 @@
     "fast-xml-parser": "^5.2.5",
     "he": "^1.2.0",
     "iconv-lite": "^0.7.0",
+    "jsdom": "^27.0.0",
     "lucide-react": "^0.541.0",
     "luxon": "^3.7.2",
     "next": "15.4.6",
@@ -39,6 +42,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@types/he": "^1.2.3",
+    "@types/jsdom": "^21.1.7",
     "@types/luxon": "^3.7.1",
     "@types/node": "^20.19.11",
     "@types/pg": "^8.15.5",
@@ -46,7 +50,9 @@
     "@types/react-dom": "^19.1.9",
     "eslint": "^9",
     "eslint-config-next": "15.4.6",
+    "playwright": "^1.55.1",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }

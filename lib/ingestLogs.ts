@@ -24,13 +24,19 @@ export type IngestReason =
 export type IngestLevel = "info" | "error";
 export type IngestEvent = "start" | "discover" | "upsert" | "skip" | "error" | "finish";
 
-/* ───────────────────────── Column-aware insert ───────────────────────── */
+// ───────────────────────── Column-aware insert ─────────────────────────
 
 type TableColumns = {
   hasJobId: boolean;
   hasLevel: boolean;
   hasEvent: boolean;
   hasSourceName: boolean;
+  hasMethod: boolean;
+  hasAdapterKey: boolean;
+  hasSelector: boolean;
+  hasFeedUrl: boolean;
+  hasHttpStatus: boolean;
+  hasArticleId: boolean;
 };
 
 let cachedCols: TableColumns | null = null;
@@ -51,11 +57,17 @@ async function getIngestLogColumns(): Promise<TableColumns> {
     hasLevel: names.has("level"),
     hasEvent: names.has("event"),
     hasSourceName: names.has("source_name"),
+    hasMethod: names.has("method"),
+    hasAdapterKey: names.has("adapter_key"),
+    hasSelector: names.has("selector"),
+    hasFeedUrl: names.has("feed_url"),
+    hasHttpStatus: names.has("http_status"),
+    hasArticleId: names.has("article_id"),
   };
   return cachedCols;
 }
 
-/* ───────────────────────── Defaults / inference ───────────────────────── */
+// ───────────────────────── Defaults / inference ─────────────────────────
 
 const ERROR_REASONS: ReadonlySet<IngestReason> = new Set([
   "fetch_error",
@@ -71,9 +83,7 @@ function inferLevel(reason: IngestReason, provided?: IngestLevel | null): Ingest
 
 function inferEvent(reason: IngestReason, provided?: IngestEvent | null): IngestEvent | null {
   if (provided) return provided;
-
   if (ERROR_REASONS.has(reason)) return "error";
-
   if (reason === "upsert_inserted" || reason === "upsert_updated" || reason === "upsert_skipped") {
     return "upsert";
   }
@@ -83,16 +93,13 @@ function inferEvent(reason: IngestReason, provided?: IngestEvent | null): Ingest
   if (reason === "ok_insert" || reason === "ok_update" || reason === "section_captured" || reason === "static_detected") {
     return "discover";
   }
-  // Fallback; callers can still pass explicit event
   return "discover";
 }
 
-/* ───────────────────────── Public API ───────────────────────── */
+// ───────────────────────── Public API ─────────────────────────
 
-/**
- * Unified logger. Safe: will never throw up the call chain.
- * Writes only the columns your table actually has (auto-detected & cached).
- */
+export type IngestMethod = "rss" | "scrape" | "adapter";
+
 export async function logIngest(args: {
   sourceId: number;
   sourceName?: string | null;
@@ -104,6 +111,13 @@ export async function logIngest(args: {
   jobId?: string | null;
   level?: IngestLevel | null;
   event?: IngestEvent | null;
+  // optional context
+  method?: IngestMethod | null;
+  adapterKey?: string | null;
+  selector?: string | null;
+  feedUrl?: string | null;
+  httpStatus?: number | null;
+  articleId?: number | null;
 }): Promise<void> {
   const {
     sourceId,
@@ -116,23 +130,20 @@ export async function logIngest(args: {
     jobId = null,
     level,
     event,
+    method = null,
+    adapterKey = null,
+    selector = null,
+    feedUrl = null,
+    httpStatus = null,
+    articleId = null,
   } = args;
 
   try {
     const cols = await getIngestLogColumns();
 
-    // Base columns you already had
     const colNames: string[] = ["source_id", "url", "title", "domain", "reason", "detail"];
-    const values: unknown[] = [
-      sourceId,
-      url ?? null,
-      title ?? null,
-      domain ?? null,
-      reason,
-      detail ?? null,
-    ];
+    const values: unknown[] = [sourceId, url ?? null, title ?? null, domain ?? null, reason, detail ?? null];
 
-    // Optional columns (only if present in the table)
     if (cols.hasSourceName) {
       colNames.push("source_name");
       values.push(sourceName ?? null);
@@ -149,10 +160,33 @@ export async function logIngest(args: {
       colNames.push("event");
       values.push(inferEvent(reason, event));
     }
+    if (cols.hasMethod) {
+      colNames.push("method");
+      values.push(method);
+    }
+    if (cols.hasAdapterKey) {
+      colNames.push("adapter_key");
+      values.push(adapterKey);
+    }
+    if (cols.hasSelector) {
+      colNames.push("selector");
+      values.push(selector);
+    }
+    if (cols.hasFeedUrl) {
+      colNames.push("feed_url");
+      values.push(feedUrl);
+    }
+    if (cols.hasHttpStatus) {
+      colNames.push("http_status");
+      values.push(httpStatus);
+    }
+    if (cols.hasArticleId) {
+      colNames.push("article_id");
+      values.push(articleId);
+    }
 
     const placeholders = colNames.map((_, i) => `$${i + 1}`).join(", ");
     const sql = `insert into ingest_logs (${colNames.join(", ")}) values (${placeholders})`;
-
     await dbQuery(sql, values);
   } catch (e) {
     // Don't let logging break ingestion
@@ -161,40 +195,20 @@ export async function logIngest(args: {
   }
 }
 
-/** Back-compat shim so existing calls still work. */
-export async function logIngestError(args: {
-  sourceId: number;
-  sourceName?: string | null;
-  url?: string | null;
-  title?: string | null;
-  domain?: string | null;
-  reason: Extract<
-    IngestReason,
-    "fetch_error" | "parse_error" | "scrape_no_matches" | "invalid_item" | "filtered_out"
-  >;
-  detail?: string | null;
-  jobId?: string | null;
-}): Promise<void> {
-  return logIngest({
-    ...args,
-    level: "error",
-    event: "error",
-  });
-}
-
-/* Convenience helpers (optional if you want explicit start/finish markers) */
-export async function logIngestStart(sourceId: number, jobId?: string | null): Promise<void> {
+// Convenience wrappers
+export async function logIngestStart(sourceId: number, jobId?: string | null, method?: IngestMethod | null) {
   await logIngest({
     sourceId,
-    reason: "static_detected", // harmless placeholder reason
+    reason: "static_detected",
     detail: "ingest started",
     jobId: jobId ?? null,
     level: "info",
     event: "start",
+    method: method ?? null,
   });
 }
 
-export async function logIngestFinish(sourceId: number, jobId?: string | null): Promise<void> {
+export async function logIngestFinish(sourceId: number, jobId?: string | null, method?: IngestMethod | null) {
   await logIngest({
     sourceId,
     reason: "static_detected",
@@ -202,5 +216,6 @@ export async function logIngestFinish(sourceId: number, jobId?: string | null): 
     jobId: jobId ?? null,
     level: "info",
     event: "finish",
+    method: method ?? null,
   });
 }
