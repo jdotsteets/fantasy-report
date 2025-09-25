@@ -1,6 +1,6 @@
 // app/layout.tsx
 import "./globals.css";
-import type { Viewport } from "next";
+import type { Metadata, Viewport } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import TopToolbar from "@/components/TopToolbar";
@@ -8,26 +8,50 @@ import ImageToggle from "@/components/ImageToggle";
 import SearchToggle from "@/components/HeaderSearch";
 import { Analytics } from "@vercel/analytics/react";
 
-// Emit Next metadata (points to /og.jpg via metadata-base)
-export { BASE_METADATA as metadata } from "./metadata-base";
+const site = "https://thefantasyreport.com";
+
+export const metadata: Metadata = {
+  metadataBase: new URL(site),
+  title: {
+    default:
+      "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
+    template: "%s · The Fantasy Report",
+  },
+  description:
+    "The Fantasy Report curates the best fantasy football content: headlines, waiver wire targets, rankings, start/sit advice, DFS picks, and injury news.",
+  openGraph: {
+    type: "website",
+    url: site,
+    siteName: "The Fantasy Report",
+    title:
+      "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
+    description:
+      "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
+    images: [
+      { url: "/og.jpg", width: 1200, height: 630, alt: "The Fantasy Report" },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    site: "@tfantasyr", // or your preferred handle
+    title:
+      "The Fantasy Report — Fantasy Football Headlines, Waivers, Rankings",
+    description:
+      "Curated fantasy football headlines, waiver wire targets, rankings, start/sit, DFS, and injury updates.",
+    images: ["/og.jpg"],
+  },
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+};
 
 export const viewport: Viewport = { themeColor: "#000000" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="h-full bg-white">
-      {/* ✅ Belt & suspenders: hardcode OG/Twitter tags */}
-      <head>
-        <meta property="og:image" content="https://thefantasyreport.com/og.jpg" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:image" content="https://thefantasyreport.com/og.jpg" />
-      </head>
-
       <body
         className="min-h-full text-zinc-900 antialiased"
-        style={{ ["--header-h" as unknown as string]: "56px" }}
+        style={{ ["--header-h" as any]: "56px" }}
       >
         <a
           href="#main"
@@ -41,12 +65,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-black" />
             <div className="relative z-10 flex items-center justify-between gap-2">
               <Link href="/" className="flex items-center gap-2 sm:gap-3">
-                <Image src="/logo.png" alt="The Fantasy Report" width={40} height={40} priority />
+                <Image
+                  src="/logo.png"
+                  alt="The Fantasy Report"
+                  width={40}
+                  height={40}
+                  priority
+                />
                 <p className="hidden md:block font-sans text-[11px] sm:text-[12px] leading-tight text-white">
                   News, Updates, Rankings, and Advice from the experts.
                 </p>
                 <span className="sr-only">The Fantasy Report</span>
               </Link>
+
               <div className="flex items-center gap-2">
                 <SearchToggle />
                 <ImageToggle />
