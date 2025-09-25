@@ -307,6 +307,11 @@ export function allowItem(item: FeedLike, url: string): boolean {
   const host = getHost(url) || "";
   const path = getPath(url);
 
+  // ⛔ Razzball: only keep the football subdomain
+  if (/(^|\.)razzball\.com$/i.test(host) && host !== "football.razzball.com") {
+    return false;
+  }
+
   // Block official team sites outright (usually not relevant fantasy articles)
   if (TEAM_HOST_PATTERNS.some((rx) => rx.test(host))) return false;
 
