@@ -15,7 +15,7 @@ type Props = {
   days?: number;
   week?: number | null;
   sourceId?: number;
-  provider?: string;
+  provider?: string; 
 };
 
 export default function LoadMoreSection({

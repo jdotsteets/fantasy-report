@@ -10,7 +10,8 @@ export type Topic =
   | "waiver-wire"
   | "injury"
   | "dfs"
-  | "advice";
+  | "advice"
+  | "news";
 
 export type ClassifyResult = {
   primary: Topic | null;
@@ -87,6 +88,7 @@ const CANON: Topic[] = [
   "injury",
   "dfs",
   "advice",
+  "news",
 ];
 
 // Keep regexes specific to avoid false positives.
@@ -184,6 +186,19 @@ const KW: Record<Topic, RegExp[]> = {
     /odds|spreads?|moneyline|over\/?under/i,
     /grades?|reactions?|winners|losers/i,
   ],
+  news: [
+    /\bnews\b/i,
+    /\breport(s)?\b/i,
+    /\brumors?\b/i,
+    /\bagrees?\s+to\s+.*deal\b/i,
+    /\bsigns?\b/i,
+    /\breinstated\b/i,
+    /\btraded?\b/i,
+    /\breleased?\b/i,
+    /\bpromoted|waived|elevated\b/i,
+    /\bactivat(?:ed|es)\b/i,
+    /\btransactions?\b/i,
+  ],
 };
 
 // ---------------- Player-page classification ----------------
@@ -247,6 +262,8 @@ const PATH_HINTS: Partial<Record<Topic, RegExp>> = {
   "start-sit": /\/(start[-]?sit|sit[-]?start)\//i,
   injury: /\/(injur(?:y|ies)|inactives?|injury[-]?report)\//i,
   dfs: /\/(dfs|draftkings?|fanduel|prizepicks?|underdog)\//i,
+  news: /\/news\//i, // NEW — e.g., https://www.cbssports.com/nfl/news/...
+
 };
 
 // Fantasy-heavy hosts (used for a safe fallback)
@@ -290,6 +307,7 @@ function pickTopicsFromScore(
     "dfs",
     "rankings",
     "advice",
+    "news",
   ];
   const topVal = entries[0][1];
   const top = entries.filter((e) => e[1] === topVal).map((e) => e[0]).sort((a, b) => pref.indexOf(a) - pref.indexOf(b));
@@ -348,6 +366,12 @@ export function classifyArticle(args: {
     /\bfantasy\b/i.test(hay) ||
     (FANTASY_HOST_HINT.test(url) && /\/fantasy\//i.test(path));
   if (topics.length === 0 && fantasyish) topics = ["advice"];
+
+  const looksNflNews =
+  /\/nfl\//i.test(path) || /\bnfl\b/i.test(hay) || /nfl\.com/i.test(url);
+  if (topics.length === 0 && !isPlayerPage && !looksStatic(url) && looksNflNews) {
+    topics = ["news"];
+  }
 
   topics = toCanon(topics);
   const primary = topics[0] ?? null;

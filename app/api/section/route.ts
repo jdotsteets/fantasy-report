@@ -6,8 +6,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const revalidate = 0;
 
-
-
 function clampInt(val: string | number | null, def: number, min: number, max: number): number {
   const n = typeof val === "string" ? Number(val) : typeof val === "number" ? val : def;
   if (!Number.isFinite(n)) return def;
@@ -31,20 +29,17 @@ export async function GET(req: Request) {
 
     const freshHoursParam = url.searchParams.get("freshHours");
     const maxAgeHours = key === "news"
-      ? clampInt(freshHoursParam, 72, 1, 24*14)  // default 72h (3 days)
-      : undefined; 
+      ? clampInt(freshHoursParam, 72, 1, 24 * 14)
+      : undefined;
 
-    const perProviderCap = clampInt(
-      url.searchParams.get("perProviderCap"),
-      Math.max(1, Math.floor(limit / 3)),
-      1,
-      10
-    );
-
-    const provider = (url.searchParams.get("provider") || "").trim().toLowerCase();
-
-
+    const provider = (url.searchParams.get("provider") || "").trim(); // keep case, we’ll ILIKE in SQL
     const sourceId = url.searchParams.get("sourceId");
+    const hasProviderFilter = Boolean(provider) || Boolean(sourceId);
+
+    const perProviderCap = hasProviderFilter
+      ? 0 // ⟵ disable cap when filtering by provider/source
+      : clampInt(url.searchParams.get("perProviderCap"), Math.max(1, Math.floor(limit / 3)), 1, 10);
+
     const items = await fetchSectionItems({
       key,
       limit,
@@ -52,7 +47,7 @@ export async function GET(req: Request) {
       days,
       week,
       perProviderCap,
-      provider: provider || undefined,
+      provider: provider || undefined, // ⟵ renamed
       sourceId: sourceId ? Number(sourceId) : undefined,
       maxAgeHours,
     });

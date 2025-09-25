@@ -31,6 +31,21 @@ function fmtDate(iso?: string | null) {
 function matchesSection(a: Article, section?: SectionKey): boolean {
   if (!section) return true;
 
+  // 1) Trust the DB when present
+  if (a.primary_topic) {
+    // map UI key "waivers" -> DB "waiver-wire"
+    const map: Record<SectionKey, Article["primary_topic"]> = {
+      waivers: "waiver-wire",
+      rankings: "rankings",
+      "start-sit": "start-sit",
+      injury: "injury",
+      dfs: "dfs",
+      news: "news",
+    };
+    if (a.primary_topic === map[section]) return true;
+  }
+
+  // 2) Fallback: legacy regex if DB is null/missing
   const title = (normalizeTitle(a.title) ?? "").toLowerCase();
   const url = (a.canonical_url ?? a.url ?? "").toLowerCase();
   const has = (re: RegExp) => re.test(title) || re.test(url);
