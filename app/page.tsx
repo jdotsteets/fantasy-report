@@ -11,12 +11,15 @@ import StaticLinksSection from "@/components/StaticLinksSection";
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import { getHomeData, type DbRow } from "@/lib/HomeData";
-import { BASE_METADATA, SITE_ORIGIN } from "./metadata-base";
 
 // Runtime hints
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+
+const SITE_ORIGIN = "https://thefantasyreport.com";
+
 
 /* ───────────────────────── Section keys ───────────────────────── */
 const SECTION_KEYS = [
@@ -159,15 +162,13 @@ type SP = Record<string, string | string[] | undefined>;
 export async function generateMetadata({
   searchParams,
 }: {
-  searchParams: Promise<SP>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<Metadata> {
   const sp = await searchParams;
 
   const rawSection = (Array.isArray(sp.section) ? sp.section[0] : sp.section) ?? "";
   const sectionParam = rawSection.toLowerCase().trim();
-  const selectedSection: SectionKey | null = isSectionKey(sectionParam)
-    ? sectionParam
-    : null;
+  const selectedSection: SectionKey | null = isSectionKey(sectionParam) ? sectionParam : null;
 
   const provider = parseProviderParam(sp.provider);
 
@@ -175,16 +176,15 @@ export async function generateMetadata({
   const canonical = canonicalPath(selectedSection, provider);
 
   return {
-    ...BASE_METADATA,
-
+    // we ONLY override what’s dynamic; layout.tsx provides the base defaults,
+    // OG image, twitter card, etc.
+    title,
     alternates: { canonical },
     openGraph: {
-      ...(BASE_METADATA.openGraph ?? {}),
       title,
       url: `${SITE_ORIGIN}${canonical}`,
     },
     twitter: {
-      ...(BASE_METADATA.twitter ?? {}),
       title,
     },
   };
