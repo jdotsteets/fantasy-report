@@ -219,3 +219,72 @@ export async function logIngestFinish(sourceId: number, jobId?: string | null, m
     method: method ?? null,
   });
 }
+
+// ───────────────────────── Error logging (console + optional DB) ─────────────────────────
+
+export type IngestErrorEvent = {
+  jobId?: string | null;
+  sourceId?: number;
+  url?: string | null;
+  domain?: string | null; // allow null to match domainOf(url)
+  status?: number | null;
+  body?: string | null;
+  reason?: IngestReason | null; // align with your reason enum
+  detail?: string | null;
+  stage?: "probe" | "ingest" | "save" | "classify" | "unknown";
+};
+
+// Overloads to support both 1-arg and 2-arg call sites
+export function logIngestError(event: IngestErrorEvent): Promise<void>;
+export function logIngestError(event: IngestErrorEvent, err: unknown): Promise<void>;
+export async function logIngestError(event: IngestErrorEvent, err?: unknown): Promise<void> {
+  const errMsg =
+    err instanceof Error
+      ? err.stack ?? err.message
+      : typeof err === "undefined"
+        ? undefined
+        : String(err);
+
+  const parts = [
+    "[ingest-error]",
+    event.jobId ? `job=${event.jobId}` : null,
+    event.sourceId !== undefined ? `source=${event.sourceId}` : null,
+    event.domain ? `domain=${event.domain}` : null,
+    event.url ? `url=${event.url}` : null,
+    event.status !== undefined && event.status !== null ? `status=${event.status}` : null,
+    event.reason ? `reason=${event.reason}` : null,
+    event.stage ? `stage=${event.stage}` : null,
+    event.detail ? `detail=${event.detail}` : null,
+  ].filter(Boolean) as string[];
+
+  const line = parts.join(" ");
+
+  if (errMsg) {
+    console.error(`${line}\n${errMsg}`);
+  } else {
+    console.error(line);
+  }
+
+  // Also persist as a typed row via logIngest (optional but nice to have)
+  try {
+    await logIngest({
+      sourceId: event.sourceId ?? 0, // 0 if unknown
+      url: event.url ?? null,
+      title: null,
+      domain: event.domain ?? null,
+      reason: (event.reason as IngestReason) ?? "parse_error", // default a valid reason
+      detail: event.detail ?? errMsg ?? null,
+      jobId: event.jobId ?? null,
+      level: "error",
+      event: "error",
+      method: null,
+      adapterKey: null,
+      selector: null,
+      feedUrl: null,
+      httpStatus: event.status ?? null,
+      articleId: null,
+    });
+  } catch {
+    // never block on logging
+  }
+}
