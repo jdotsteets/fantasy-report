@@ -1,23 +1,26 @@
-// app/api/social/agent/route.ts
 import { NextResponse } from "next/server";
+import { fetchFreshTopics } from "@/app/src/inputs/topics";
+import { renderDrafts } from "@/app/src/writing/renderDrafts";
+import { saveDrafts } from "@/app/src/outputs/saveDrafts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-// Example POST — replace with your actual logic
-export async function POST(req: Request): Promise<NextResponse> {
-  try {
-    const payload: unknown = await req.json(); // keep typed as unknown until validated
-    // TODO: validate `payload` (e.g., zod) and do work
-    return NextResponse.json({ ok: true, payload }, { status: 200 });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+export async function POST() {
+  // Pull recent articles (tune as you like)
+  const topics = await fetchFreshTopics({ windowHours: 24, maxItems: 8 });
+  if (topics.length === 0) {
+    return NextResponse.json({ ok: true, drafted: 0, note: "no topics found" });
   }
-}
 
-// Optionally support GET so file is always a module even if POST is removed later
-export async function GET(): Promise<NextResponse> {
-  return NextResponse.json({ ok: true, status: "ready" });
+  // Generate 2 variants per topic for X
+  const drafts = await renderDrafts(topics, {
+    platforms: ["x"],
+    variantsPerTopic: 2,
+  });
+
+  // Persist as 'draft' for review in /admin/social
+  await saveDrafts(drafts);
+
+  return NextResponse.json({ ok: true, drafted: drafts.length });
 }
