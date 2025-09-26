@@ -4,7 +4,6 @@
     { "path": "/api/social/agent-auto", "schedule": "15 13 * * 0-6" },
     { "path": "/api/social/agent-auto", "schedule": "30 17 * * 0-6" },
     { "path": "/api/social/agent-auto", "schedule": "45 1 * * 2-6" },
-    { "path": "/api/social/worker",     "schedule": "*/10 * * * *" },
     { "path": "/api/social/agent", "schedule": "0 7 * * 1-5" },
     { "path": "/api/social/sections/seed?type=waivers",  "schedule": "0 14 * * 1,2" },
     { "path": "/api/social/sections/seed?type=rankings", "schedule": "0 17 * * 3" },
