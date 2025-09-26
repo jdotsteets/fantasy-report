@@ -27,9 +27,10 @@ function composeText(parts: string[]): string {
 
 export async function POST(
   _req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> } // 👈 Next 15 passes params as a Promise
 ) {
-  const idNum = Number(params.id);
+  const { id } = await ctx.params;        // 👈 await it
+  const idNum = Number(id);
   if (!Number.isFinite(idNum)) {
     return NextResponse.json({ error: "Bad id" }, { status: 400 });
   }

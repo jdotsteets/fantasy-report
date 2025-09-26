@@ -5,7 +5,6 @@ import { dbQueryRows, dbQuery } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// --- Types for link_short
 type Short = {
   id: number;
   dest_url: string;
@@ -14,7 +13,6 @@ type Short = {
   utm_campaign: string | null;
 };
 
-// Add UTM params to destination
 function withUtm(
   url: string,
   p: { source?: string | null; medium?: string | null; campaign?: string | null }
@@ -26,7 +24,6 @@ function withUtm(
   return u.toString();
 }
 
-// Best-effort IP parsing on Vercel (Node runtime)
 function getClientIp(req: NextRequest): string | null {
   const xfwd = req.headers.get("x-forwarded-for") ?? "";
   const first = xfwd.split(",")[0]?.trim();
@@ -35,11 +32,11 @@ function getClientIp(req: NextRequest): string | null {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { slug: string } }
+  ctx: { params: Promise<{ slug: string }> } // <- params is a Promise in Next 15
 ) {
-  const slug = params.slug;
+  const { slug } = await ctx.params; // <- await it
 
-  // 1) Try shortlink table first
+  // 1) Try shortlink table
   const short = await dbQueryRows<Short>(
     `select id, dest_url, utm_source, utm_medium, utm_campaign
        from link_short
@@ -56,9 +53,9 @@ export async function GET(
       campaign: s.utm_campaign,
     });
 
-    // Fire-and-forget click logging into link_click
     const ip = getClientIp(req);
     const ua = req.headers.get("user-agent") ?? null;
+    // fire-and-forget
     dbQuery(
       `insert into link_click (short_id, ip, ua) values ($1, $2, $3)`,
       [s.id, ip, ua]
@@ -67,7 +64,7 @@ export async function GET(
     return NextResponse.redirect(dest, { status: 302 });
   }
 
-  // 2) Legacy fallback: if slug is numeric, treat as article id
+  // 2) Legacy numeric fallback: /go/123 -> articles.url
   if (/^\d+$/.test(slug)) {
     const articleId = Number(slug);
     const rows = await dbQueryRows<{ url: string }>(
@@ -76,21 +73,17 @@ export async function GET(
     );
     if (rows.length > 0) {
       const dest = rows[0].url;
-
-      // Optional: if you have a legacy clicks table, log there
       const ip = getClientIp(req);
       const ua = req.headers.get("user-agent") ?? null;
       const ref = req.headers.get("referer") ?? req.headers.get("referrer") ?? null;
-
       dbQuery(
         `insert into clicks (article_id, ref, ua, ip) values ($1, $2, $3, $4)`,
         [articleId, ref, ua, ip]
       ).catch(() => {});
-
       return NextResponse.redirect(dest, { status: 302 });
     }
   }
 
-  // 3) No match → home
+  // 3) Not found -> home
   return NextResponse.redirect(new URL("/", req.url));
 }
