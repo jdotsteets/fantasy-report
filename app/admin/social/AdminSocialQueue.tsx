@@ -26,6 +26,13 @@ async function updateDraft(id: number, payload: UpdatePayload): Promise<void> {
   }
 }
 
+async function generateOne(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit" | "mix"): Promise<void> {
+  const url = `/api/social/generate-one?type=${encodeURIComponent(type)}`;
+  const res = await fetch(url, { method: "POST" });
+  const j: { ok?: boolean; id?: number; error?: string } = await res.json().catch(() => ({}));
+  if (!res.ok || !j.ok) throw new Error(j.error ?? "Generate failed");
+}
+
 async function seedSection(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit"): Promise<void> {
   const url = `/api/social/sections/seed?type=${encodeURIComponent(type)}`;
   const res = await fetch(url, { method: "POST" });
@@ -172,6 +179,42 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
             Post All Due
           </button>
         </div>
+      </div>
+
+            {/* Generate 1 draft on-demand */}
+      <div className="flex items-center gap-2">
+        <select
+          id="genType"
+          className="px-2 py-1 rounded-xl border"
+          disabled={busyGlobal}
+          defaultValue="mix"
+          onChange={() => {/* no-op; we read value on click */}}
+        >
+          <option value="mix">Mix</option>
+          <option value="waivers">Waivers</option>
+          <option value="rankings">Rankings</option>
+          <option value="news">News</option>
+          <option value="injuries">Injuries</option>
+          <option value="start-sit">Start/Sit</option>
+        </select>
+        <button
+          className="px-3 py-1 rounded-xl border disabled:opacity-50"
+          disabled={busyGlobal}
+          title="Generate a single new draft"
+          onClick={async () => {
+            setBusyGlobal(true);
+            try {
+              const select = document.getElementById("genType") as HTMLSelectElement | null;
+              const t = (select?.value ?? "mix") as "waivers" | "rankings" | "news" | "injuries" | "start-sit" | "mix";
+              await generateOne(t);
+              window.location.reload();
+            } finally {
+              setBusyGlobal(false);
+            }
+          }}
+        >
+          Generate 1
+        </button>
       </div>
 
       {(["draft", "approved", "scheduled"] as const).map((bucket) => (

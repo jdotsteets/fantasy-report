@@ -1,4 +1,4 @@
-export type Platform = "x" | "threads" | "tiktok" | "reels" | "shorts";
+export type Platform = "x" | "threads" | "tiktok" | "reels" | "instagram" | "facebook" | "shorts";
 export type PostStatus = "draft" | "approved" | "scheduled" | "published" | "failed";
 
 export interface Topic {
