@@ -1,11 +1,11 @@
 {
   "crons": [
-    {
-      "path": "/api/refresh",  "schedule": "0 4 * * *"     
-    },
-    { "path": "/api/social/worker", "schedule": "*/10 * * * *" },
-    { "path": "/api/social/agent", "schedule": "0 7 * * 1-5" },    
-    { "path": "/api/social/agent-auto", "schedule": "0 7 * * * *" }
+    {"path": "/api/refresh",  "schedule": "0 4 * * *"    }, 
+    { "path": "/api/social/agent-auto", "schedule": "15 13 * * 0-6" },
+    { "path": "/api/social/agent-auto", "schedule": "30 17 * * 0-6" },
+    { "path": "/api/social/agent-auto", "schedule": "45 1 * * 2-6" },
+    { "path": "/api/social/worker",     "schedule": "*/10 * * * *" },
+    { "path": "/api/social/agent", "schedule": "0 7 * * 1-5" }
 
   ]
 ,
