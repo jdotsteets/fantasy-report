@@ -3,12 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery, dbQueryRows } from "@/lib/db";
 import { getFreshXBearer } from "@/app/src/social/xAuth";
+import { ensureShortlinkForArticle } from "@/app/src/links/short";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type DueRow = {
   id: number;
+  article_id: number;
   hook: string;
   body: string;
   cta: string | null;
@@ -24,9 +26,14 @@ async function runOnce(): Promise<Result> {
     return { processed: 0, postedIds: [], skipped: 0 };
   }
 
-  // 2) fetch items due now
+  // 2) fetch items due now (include article_id so we can build shortlinks)
   const due = await dbQueryRows<DueRow>(
-    `select d.id, d.hook, d.body, d.cta, q.article_url
+    `select d.id,
+            d.article_id,
+            d.hook,
+            d.body,
+            d.cta,
+            q.article_url
        from social_drafts d
        join v_social_queue q on q.id = d.id
       where d.platform = 'x'
@@ -46,9 +53,20 @@ async function runOnce(): Promise<Result> {
   let skipped = 0;
 
   for (const row of due) {
+    // Build a shortlink if we have a destination URL
+    let linkToUse: string | null = null;
+    if (row.article_url) {
+      try {
+        linkToUse = await ensureShortlinkForArticle(row.article_id, row.article_url, "x-post");
+      } catch {
+        // If shortlink creation fails, fall back to the raw URL
+        linkToUse = row.article_url;
+      }
+    }
+
     const parts: string[] = [row.hook, row.body];
     if (row.cta) parts.push(row.cta);
-    if (row.article_url) parts.push(row.article_url);
+    if (linkToUse) parts.push(linkToUse);
 
     let text = parts.filter(Boolean).join(" ");
     if (text.length > 270) text = text.slice(0, 267) + "…"; // X text guard
