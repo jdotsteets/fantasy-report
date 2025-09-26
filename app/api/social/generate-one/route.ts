@@ -54,23 +54,32 @@ function whereForType(p: Params["type"]): string {
 }
 
 
-// 2) Build a full Topic the renderer expects
 function toTopic(a: ArticleRow): Topic {
+  const src = (a.source_name ?? a.domain ?? "unknown").trim();
+  const url = (a.url ?? "").trim();
+  const title = (a.title ?? "").trim();
+  const publishedAt = a.published_at ?? new Date().toISOString();
+
+  // derive optional fields as undefined (not null)
+  const angle = a.summary?.trim() || undefined;
+  const stat = undefined as string | undefined; // or compute if you have one
+
   return {
     id: String(a.id),
-    title: (a.title ?? "").trim(),
-    url: (a.url ?? "").trim(),
-    source: (a.source_name ?? a.domain ?? "unknown").trim(),
-    publishedAt: a.published_at ?? new Date().toISOString(),
+    title,
+    url,
+    source: src,
+    publishedAt,
 
-    // Optional/derived fields
-    sport: a.sport ?? null,
-    primaryTopic: null,
-    staticType: null,
-    isPlayerPage: null,
-    week: null,
-    stat: null,
-    angle: a.summary ? a.summary.trim() : null,
+    // optional fields (only include when defined)
+    ...(a.sport ? { sport: a.sport } : {}),
+    ...(angle ? { angle } : {}),
+    ...(stat ? { stat } : {}),
+
+    // if you don't have these, omit them instead of null
+    // (remove spreads below if you actually have values)
+    // primaryTopic/staticType/week/isPlayerPage can also be omitted
+    // to keep the payload minimal and satisfy stricter Topic variations.
   };
 }
 
