@@ -12,8 +12,9 @@ export interface Topic {
   isPlayerPage?: boolean | null;
   week?: number | null;
   sport?: string | null;
-  stat?: string;
-  angle?: string;
+  stat?: string | null;
+  angle?: string | null;
+
 }
 
 export interface Draft {

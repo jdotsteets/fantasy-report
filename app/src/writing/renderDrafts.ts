@@ -61,7 +61,7 @@ const HOOK_TEMPLATES: HookTemplate[] = [
   {
     key: "stop_overreacting",
     weight: 1, // RARE
-    render: (t) => `Stop overreacting: ${truncate(cleanTitle(t.title), 70)}`,
+    render: (t) => `The Latest: ${truncate(cleanTitle(t.title), 70)}`,
   },
 ];
 

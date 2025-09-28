@@ -120,8 +120,10 @@ const FANTASY_FOOTBALL = /\bfantasy[- ]football\b/i;
 
 // Obvious non-NFL league markers (path or title)
 const NON_NFL_PATH_DENY: RegExp[] = [
-  /(^|\/)(mlb|nba|nhl|ncaaf|ncaab|college|ncaa|mls|soccer|fifa|epl|ufc|mma|golf|nascar)\b/i,
+  /(^|\/)(mlb|nba|nhl|ncaaf|ncaab|college|ncaa|mls|soccer|fifa|epl|ufc|mma|golf|nascar)(?:\/|[-_]|$)/i,
 ];
+
+const NON_NFL_TEXT_DENY = /\b(mlb|baseball|nba|basketball|nhl|hockey|mls|soccer|premier[- ]league|epl|fifa|ufc|mma|golf|nascar|ncaaf|college football|ncaab|college basketball)\b/i;
 
 
 // Generic junk / non-article paths (feeds, sitemaps, tags, categories, pagers, etc.)
@@ -248,6 +250,12 @@ const MARKETING_RULES_DENY: RegExp[] = [
   /reboot[-_]?policy/i,
 ];
 
+function isFantasyProsOtherSport(host: string, path: string): boolean {
+  if (!host.endsWith("fantasypros.com")) return false;
+  // Example paths: /2025/09/mlb-dfs-... , /2025/09/nba-... , etc.
+  return /\/\d{4}\/\d{2}\/(mlb|nba|nhl|mls|soccer)\b/i.test(path);
+}
+
 
 function getHost(u: string): string | null {
   try {
@@ -317,6 +325,10 @@ export function allowItem(item: FeedLike, url: string): boolean {
 
   // Block other sports
   if (NON_NFL_PATH_DENY.some((rx) => rx.test(path))) return false;
+
+    // ⛔ Other sports (title/description)
+  const txt = `${item.title ?? ""} ${item.description ?? ""}`;
+  if (NON_NFL_TEXT_DENY.test(txt)) return false;
 
   // Block gambling/DFS marketing except known editorial paths
   if (gamblingHostBlocked(host, path)) return false;
@@ -436,6 +448,18 @@ export function classifyUrl(
   if (gamblingHostBlocked(u.hostname.toLowerCase(), u.pathname.toLowerCase())) {
     return { decision: "discard", reason: "gambling_marketing" };
   }
+
+  // NEW: FantasyPros non-NFL block
+if (isFantasyProsOtherSport(u.hostname.toLowerCase(), u.pathname.toLowerCase())) {
+  return { decision: "discard", reason: "other_sport_fantasypros" };
+}
+
+// NEW: broader non-NFL block by path or title
+const textForLeagueCheck = `${u.pathname} ${title ?? ""}`;
+if (NON_NFL_PATH_DENY.some((rx) => rx.test(u.pathname)) || NON_NFL_TEXT_DENY.test(textForLeagueCheck)) {
+  return { decision: "discard", reason: "other_sport" };
+}
+
 
   // Marketing/policy/house-rules/offer pages
   if (MARKETING_RULES_DENY.some(rx => rx.test(u.pathname))) {
