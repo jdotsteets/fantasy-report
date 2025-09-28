@@ -1,65 +1,28 @@
-// app/api/briefs/[id]/route.ts
-import { NextResponse } from "next/server";
-import { updateBrief } from "@/lib/briefs";
+// app/api/briefs/route.ts
+import { NextResponse, type NextRequest } from "next/server";
+import { BriefPayloadSchema } from "@/lib/zodBriefs";
+import { createBrief } from "@/lib/briefs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function PATCH(req: Request, ctx: unknown) {
-  // Narrow the context shape safely (no `any`)
-  const paramsObj = (ctx as { params?: Record<string, string | string[]> }).params;
-  const idRaw = paramsObj?.id;
-  const idStr = Array.isArray(idRaw) ? idRaw[0] : idRaw;
-  const idNum = Number(idStr);
-
-  if (!Number.isFinite(idNum)) {
-    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
-  }
-
-  // Parse body without `any`
-  const raw = (await req.json()) as unknown;
-  const body = (typeof raw === "object" && raw !== null ? raw : {}) as {
-    summary?: unknown;
-    why_matters?: unknown;
-    seo_title?: unknown;
-    seo_description?: unknown;
-    status?: unknown;
-    slug?: unknown;
-  };
-
-  const patch: Partial<{
-    summary: string;
-    why_matters: string[];
-    seo_title: string | null;
-    seo_description: string | null;
-    status: "draft" | "published" | "archived";
-    slug: string;
-  }> = {};
-
-  if (typeof body.summary === "string") patch.summary = body.summary;
-  if (Array.isArray(body.why_matters) && body.why_matters.every(v => typeof v === "string")) {
-    patch.why_matters = body.why_matters as string[];
-  }
-  if (typeof body.seo_title === "string" || body.seo_title === null) {
-    patch.seo_title = (body.seo_title as string | null) ?? null;
-  }
-  if (typeof body.seo_description === "string" || body.seo_description === null) {
-    patch.seo_description = (body.seo_description as string | null) ?? null;
-  }
-  if (body.status === "draft" || body.status === "published" || body.status === "archived") {
-    patch.status = body.status;
-  }
-  if (typeof body.slug === "string") patch.slug = body.slug;
-
-  if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
-  }
-
+export async function POST(req: NextRequest) {
   try {
-    const updated = await updateBrief(idNum, patch);
-    return NextResponse.json(updated);
+    const bodyUnknown = await req.json();
+    const parsed = BriefPayloadSchema.safeParse(bodyUnknown);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "validation_failed", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+    const brief = await createBrief(parsed.data);
+    return NextResponse.json(brief, { status: 201 });
   } catch (err) {
-    console.error("PATCH /api/briefs/[id] failed:", err);
-    return NextResponse.json({ error: "Unexpected error" }, { status: 500 });
+    // TEMP: echo error so curl shows *why* it failed
+    const msg =
+      err instanceof Error ? `${err.name}: ${err.message}` : "Unknown error";
+    console.error("POST /api/briefs failed:", err);
+    return NextResponse.json({ error: "server_error", message: msg }, { status: 500 });
   }
 }
