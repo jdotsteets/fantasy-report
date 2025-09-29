@@ -5,28 +5,33 @@ import { dbQueryRows } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Row = { id: number; slug: string };
+type BriefRow = { id: number; slug: string };
 
 export async function GET(
-  _req: NextRequest,
-  ctx: { params: { id: string } }
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> } // ← Next 15 passes params as a Promise
 ) {
-  const idNum = Number(ctx.params.id);
+  const { id } = await ctx.params; // ← await it
+  const idNum = Number(id);
+
+  // Fallback to home if id is bad
+  const home = new URL("/", req.url);
   if (!Number.isFinite(idNum)) {
-    return NextResponse.redirect(new URL("/", _req.url), 302);
+    return NextResponse.redirect(home, 302);
   }
 
-  const rows = await dbQueryRows<Row>(
+  const rows = await dbQueryRows<BriefRow>(
     `SELECT id, slug FROM briefs WHERE id = $1 LIMIT 1`,
     [idNum]
   );
-  const b = rows[0];
-  if (!b?.slug) {
-    return NextResponse.redirect(new URL("/", _req.url), 302);
+  const brief = rows[0];
+
+  if (!brief?.slug) {
+    return NextResponse.redirect(home, 302);
   }
 
-  // UTM tags for analytics
-  const target = new URL(`/brief/${b.slug}`, _req.url);
+  // Redirect to the canonical brief page with UTMs
+  const target = new URL(`/brief/${brief.slug}`, req.url);
   target.searchParams.set("utm_source", "x");
   target.searchParams.set("utm_medium", "social");
   target.searchParams.set("utm_campaign", "auto_brief");
