@@ -1,10 +1,9 @@
-// app/api/social/worker/route.ts
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery, dbQueryRows } from "@/lib/db";
 import { getFreshXBearer } from "@/app/src/social/xAuth";
 import { generateBriefForArticle } from "@/lib/agent/generateBrief";
-import { ensureShortlinkForArticle, ensureShortlinkForBrief } from "@/app/src/links/short";
+import { getBriefByArticleId } from "@/lib/briefs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,131 +15,121 @@ type DueRow = {
   body: string;
   cta: string | null;
   article_url: string | null;
-  brief_id: number | null;     // ← use these
-  brief_url: string | null;
 };
 
-type BriefRow = { id: number; slug: string; status: "draft" | "published" | "archived" };
+type Result = { processed: number; postedIds: number[]; skipped: number; dry?: boolean };
 
-type RunResult = { processed: number; postedIds: number[]; skipped: number; dry: boolean; note?: string };
+function stripRawLinks(text: string): string {
+  // remove any http(s)://... tokens to avoid leaking the source
+  return text.replace(/\bhttps?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim();
+}
 
-function composeText(parts: string[]): string {
-  let text = parts.filter(Boolean).join(" ");
-  if (text.length > 280) {
-    const room = 279;
-    text = text.slice(0, room).replace(/\s+[^\s]*$/, "");
-    if (text.length < 280) text += "…";
+function baseUrl(): string {
+  const b = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
+  return b.replace(/\/+$/, "");
+}
+
+async function ensureBriefShortlink(article_id: number): Promise<string> {
+  // 1) ensure a brief exists (published if possible)
+  let brief = await getBriefByArticleId(article_id);
+  if (!brief) {
+    const gen = await generateBriefForArticle(article_id, true); // autopublish
+    // you can also re-query if you prefer; we trust gen return
+    return `${baseUrl()}/b/${gen.created_brief_id}`;
   }
-  return text;
+  return `${baseUrl()}/b/${brief.id}`;
 }
 
-async function getExistingBrief(articleId: number): Promise<BriefRow | null> {
-  const rows = await dbQueryRows<BriefRow>(
-    `select id, slug, status from briefs where article_id = $1 order by published_at desc nulls last limit 1`,
-    [articleId]
-  );
-  return rows[0] ?? null;
-}
-
-async function ensureBriefPublished(articleId: number): Promise<BriefRow | null> {
-  const existing = await getExistingBrief(articleId);
-  if (existing?.status === "published") return existing;
-  try {
-    const gen = await generateBriefForArticle(articleId, true /* autopublish */, false /* overwrite */);
-    return { id: Number(gen.created_brief_id), slug: gen.slug, status: "published" };
-  } catch {
-    return existing ?? null;
-  }
-}
-
-async function fetchDue(limit: number): Promise<DueRow[]> {
-  return dbQueryRows<DueRow>(
-    `
-    select d.id,
-           d.article_id,
-           d.hook,
-           d.body,
-           d.cta,
-           q.article_url,
-           q.brief_id,
-           q.brief_url
-      from social_drafts d
-      join v_social_queue q on q.id = d.id
-     where d.platform = 'x'
-       and d.status   = 'scheduled'
-       and d.scheduled_for is not null
-       and d.scheduled_for <= now()
-     order by d.id
-     limit $1
-    `,
-    [limit]
-  );
-}
-
-async function markStatus(id: number, status: "published" | "failed"): Promise<void> {
-  await dbQuery(`update social_drafts set status = $1, updated_at = now() where id = $2`, [status, id]);
-}
-
-async function runWorker(dry: boolean): Promise<RunResult> {
+async function runOnce(dry = false): Promise<Result> {
   const bearer = await getFreshXBearer();
-  if (!bearer) return { processed: 0, postedIds: [], skipped: 0, dry, note: "no X bearer" };
+  if (!bearer) return { processed: 0, postedIds: [], skipped: 0, dry };
 
-  const due = await fetchDue(10);
-  if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry, note: "none due" };
+  const due = await dbQueryRows<DueRow>(
+    `select d.id,
+            d.article_id,
+            d.hook,
+            d.body,
+            d.cta,
+            q.article_url
+       from social_drafts d
+       join v_social_queue q on q.id = d.id
+      where d.platform = 'x'
+        and d.status   = 'scheduled'
+        and d.scheduled_for is not null
+        and d.scheduled_for <= now()
+      order by d.id
+      limit 10`
+  );
+  if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry };
 
   const client = new Client(bearer);
   const postedIds: number[] = [];
   let skipped = 0;
 
   for (const row of due) {
-    // Prefer existing published brief from the view; else try to create/publish; else fall back to article
-    let linkToUse: string | null = null;
-
+    // Always build a brief shortlink; create the brief if missing.
+    let short = "";
     try {
-      if (row.brief_id && row.brief_url) {
-        linkToUse = await ensureShortlinkForBrief(row.brief_id, row.brief_url, "x-brief");
-      } else {
-        const ensured = await ensureBriefPublished(row.article_id);
-        if (ensured?.id && ensured.slug) {
-          const url = `https://www.thefantasyreport.com/brief/${ensured.slug}`;
-          linkToUse = await ensureShortlinkForBrief(ensured.id, url, "x-brief");
-        } else if (row.article_url) {
-          linkToUse = await ensureShortlinkForArticle(row.article_id, row.article_url, "x-article");
-        }
-      }
+      short = await ensureBriefShortlink(row.article_id);
     } catch {
-      // last resort: raw URLs
-      linkToUse = row.brief_url ?? row.article_url ?? null;
+      // if even that fails, skip this item so we don't post a raw link
+      skipped += 1;
+      await dbQuery(
+        `update social_drafts set status='failed', updated_at=now() where id=$1`,
+        [row.id]
+      );
+      continue;
     }
 
-    const parts: string[] = [row.hook, row.body];
+    // compose text (strip raw links)
+    const parts: string[] = [row.hook, stripRawLinks(row.body)];
     if (row.cta) parts.push(row.cta);
-    if (linkToUse) parts.push(linkToUse);
-    const text = composeText(parts);
+    parts.push(short);
 
-    if (dry) { postedIds.push(row.id); continue; }
+    let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
+    if (text.length > 270) text = text.slice(0, 267) + "…";
+
+    if (dry) {
+      // simulate success
+      postedIds.push(row.id);
+      continue;
+    }
 
     try {
       const res = await client.tweets.createTweet({ text });
-      if (res.data?.id) { await markStatus(row.id, "published"); postedIds.push(row.id); }
-      else { skipped += 1; await markStatus(row.id, "failed"); }
+      if (res.data?.id) {
+        await dbQuery(
+          `update social_drafts set status='published', updated_at=now() where id=$1`,
+          [row.id]
+        );
+        postedIds.push(row.id);
+      } else {
+        skipped += 1;
+        await dbQuery(
+          `update social_drafts set status='failed', updated_at=now() where id=$1`,
+          [row.id]
+        );
+      }
     } catch {
-      skipped += 1; await markStatus(row.id, "failed");
+      skipped += 1;
+      await dbQuery(
+        `update social_drafts set status='failed', updated_at=now() where id=$1`,
+        [row.id]
+      );
     }
   }
 
   return { processed: due.length, postedIds, skipped, dry };
 }
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runWorker(dry);
+  const result = await runOnce(dry);
   return NextResponse.json(result);
 }
 
-export async function POST(req: NextRequest) {
-  let dry = false;
-  try { const body = (await req.json()) as { dry?: boolean }; dry = body?.dry === true; } catch {}
-  const result = await runWorker(dry);
+export async function GET(req: NextRequest) {
+  const dry = req.nextUrl.searchParams.get("dry") === "1";
+  const result = await runOnce(dry);
   return NextResponse.json(result);
 }
