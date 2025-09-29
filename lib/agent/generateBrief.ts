@@ -53,7 +53,7 @@ function tailorBulletsHint(section: string | null | undefined): string {
   }
 }
 
-async function rewriteBulletsIfWeak(
+export async function rewriteBulletsIfWeak(
   bullets: string[],
   context: { section_hint: string | null; payload: WriterUserPayload; brief: string },
 ): Promise<string[]> {
@@ -127,7 +127,7 @@ function asRecord(u: unknown): Record<string, unknown> | undefined {
   return typeof u === "object" && u !== null ? (u as Record<string, unknown>) : undefined;
 }
 
-function normalizeWriterShape(raw: unknown): unknown {
+export function normalizeWriterShape(raw: unknown): unknown {
   const rec = asRecord(raw);
   if (!rec) return raw;
 
