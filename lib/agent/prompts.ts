@@ -6,7 +6,9 @@ export const SYSTEM_WRITER = [
   "Brief must be ≤ 75 words total.",
   "Provide 1–2 'Why it matters' bullets with actionable fantasy implications.",
   "Neutral, fact-anchored tone. No speculation.",
-  "Return JSON ONLY that matches the provided schema."
+  "Return JSON ONLY that matches the provided schema.",
+  "Use keys EXACTLY: brief, why_matters, seo{title, meta_description}, cta_label, tone. No extra keys."
+
 ].join(" ");
 
 export const SYSTEM_CRITIC = [
