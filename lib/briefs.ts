@@ -141,3 +141,22 @@ export async function updateBrief(
   if (!rows[0]) throw new Error("Brief not found");
   return rows[0];
 }
+
+export async function listBriefs(limit = 50): Promise<BriefWithArticle[]> {
+  return dbQueryRows<BriefWithArticle>(
+    `
+    SELECT * FROM briefs_with_article
+    ORDER BY coalesce(published_at, created_at) DESC
+    LIMIT $1
+    `,
+    [limit]
+  );
+}
+
+export async function getBriefById(id: number): Promise<BriefWithArticle | null> {
+  const rows = await dbQueryRows<BriefWithArticle>(
+    `SELECT * FROM briefs_with_article WHERE id = $1`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
