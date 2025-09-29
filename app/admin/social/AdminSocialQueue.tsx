@@ -15,6 +15,18 @@ type UpdatePayload = {
   scheduled_for?: string | null; // ISO string or null to clear
 };
 
+function baseUrl(): string {
+  const b = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
+  return b.replace(/\/+$/, "");
+}
+
+function shortlinkFor(row: Pick<SocialQueueRow, "brief_id" | "brief_slug">): string | null {
+  if (row.brief_id && row.brief_id > 0) {
+    return `${baseUrl()}/b/${row.brief_id}`;
+  }
+  return null; // will be created on post
+}
+
 export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
   const [workingId, setWorkingId] = useState<number | null>(null);
   const [busyGlobal, setBusyGlobal] = useState<boolean>(false);
@@ -148,66 +160,18 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Social Queue</h1>
         <div className="flex flex-wrap gap-2">
-          <button
-            className="px-3 py-1 rounded-xl border disabled:opacity-50"
-            onClick={() => handleSeed("waivers")}
-            disabled={busyGlobal}
-            title="Seed a Waiver Wire promo"
-          >
-            Waivers
-          </button>
-          <button
-            className="px-3 py-1 rounded-xl border disabled:opacity-50"
-            onClick={() => handleSeed("rankings")}
-            disabled={busyGlobal}
-            title="Seed a Rankings promo"
-          >
-            Rankings
-          </button>
-          <button
-            className="px-3 py-1 rounded-xl border disabled:opacity-50"
-            onClick={() => handleSeed("news")}
-            disabled={busyGlobal}
-            title="Seed a News promo"
-          >
-            News
-          </button>
-          <button
-            className="px-3 py-1 rounded-xl border disabled:opacity-50"
-            onClick={() => handleSeed("injuries")}
-            disabled={busyGlobal}
-            title="Seed an Injuries promo"
-          >
-            Injuries
-          </button>
-          <button
-            className="px-3 py-1 rounded-xl border disabled:opacity-50"
-            onClick={() => handleSeed("start-sit")}
-            disabled={busyGlobal}
-            title="Seed a Start/Sit promo"
-          >
-            Start/Sit
-          </button>
-          <button
-            className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50"
-            onClick={handleRunWorker}
-            disabled={busyGlobal}
-            title="Post all due now"
-          >
-            Post All Due
-          </button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("waivers")} disabled={busyGlobal}>Waivers</button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("rankings")} disabled={busyGlobal}>Rankings</button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("news")} disabled={busyGlobal}>News</button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("injuries")} disabled={busyGlobal}>Injuries</button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("start-sit")} disabled={busyGlobal}>Start/Sit</button>
+          <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={handleRunWorker} disabled={busyGlobal}>Post All Due</button>
         </div>
       </div>
 
       {/* Generate 1 draft on-demand */}
       <div className="flex items-center gap-2">
-        <select
-          id="genType"
-          className="px-2 py-1 rounded-xl border"
-          disabled={busyGlobal}
-          defaultValue="mix"
-          onChange={() => {/* no-op; value read on click */}}
-        >
+        <select id="genType" className="px-2 py-1 rounded-xl border" disabled={busyGlobal} defaultValue="mix" onChange={() => { /* no-op */ }}>
           <option value="mix">Mix</option>
           <option value="waivers">Waivers</option>
           <option value="rankings">Rankings</option>
@@ -239,114 +203,117 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
         <section key={bucket} className="space-y-3">
           <h2 className="text-xl font-medium capitalize">{bucket}</h2>
           <div className="grid grid-cols-1 gap-4">
-            {grouped[bucket]?.map((r) => (
-              <article key={r.id} className="border rounded-2xl p-4 shadow-sm bg-white">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="text-sm text-gray-500">
-                      {r.platform.toUpperCase()} • {r.source_name ?? r.domain ?? "unknown"}
-                    </div>
-                    <h3 className="font-semibold truncate">{r.article_title ?? "(no title)"}</h3>
-                    <p className="text-sm text-gray-600 line-clamp-2">{r.hook}</p>
-                    <p className="text-sm text-gray-700 mt-1 whitespace-pre-line">{r.body}</p>
-                    {r.cta ? <p className="text-sm text-gray-700 mt-1">{r.cta}</p> : null}
-                    <div className="text-xs text-gray-500 mt-2">
-                      Publ: {fmt(r.published_at)} • Disc: {fmt(r.discovered_at)} • Schd: {fmt(r.scheduled_for)}
-                    </div>
-                    {r.article_url ? (
-                      <a className="text-blue-600 text-sm underline" href={r.article_url} target="_blank" rel="noreferrer">
-                        Open article
-                      </a>
-                    ) : null}
-                  </div>
+            {grouped[bucket]?.map((r) => {
+              const short = shortlinkFor(r);
+              return (
+                <article key={r.id} className="border rounded-2xl p-4 shadow-sm bg-white">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-sm text-gray-500">
+                        {r.platform.toUpperCase()} • {r.source_name ?? r.domain ?? "unknown"}
+                      </div>
+                      <h3 className="font-semibold truncate">{r.article_title ?? "(no title)"}</h3>
+                      <p className="text-sm text-gray-600 line-clamp-2">{r.hook}</p>
+                      <p className="text-sm text-gray-700 mt-1 whitespace-pre-line">{r.body}</p>
+                      {r.cta ? <p className="text-sm text-gray-700 mt-1">{r.cta}</p> : null}
 
-                  <div className="flex flex-col items-end gap-2">
-                    {bucket === "draft" && (
-                      <>
-                        <button
-                          className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50"
-                          onClick={() => handleApprove(r.id)}
-                          disabled={workingId === r.id}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-xl border disabled:opacity-50"
-                          onClick={() => handleSchedule(r.id, 60)}
-                          disabled={workingId === r.id}
-                        >
-                          Schedule +60m
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-xl border disabled:opacity-50"
-                          onClick={() => handlePublishNow(r.id)}
-                          disabled={workingId === r.id}
-                        >
-                          Post Now
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
-                          onClick={() => handleDelete(r.id)}
-                          disabled={workingId === r.id}
-                          title="Remove this draft"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                    {bucket === "approved" && (
-                      <>
-                        <button
-                          className="px-3 py-1 rounded-xl border disabled:opacity-50"
-                          onClick={() => handleSchedule(r.id, 30)}
-                          disabled={workingId === r.id}
-                        >
-                          Schedule +30m
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50"
-                          onClick={() => handlePublishNow(r.id)}
-                          disabled={workingId === r.id}
-                        >
-                          Post Now
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
-                          onClick={() => handleDelete(r.id)}
-                          disabled={workingId === r.id}
-                          title="Remove this draft"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                    {bucket === "scheduled" && (
-                      <>
-                        <button
-                          className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50"
-                          onClick={() => handlePublishNow(r.id)}
-                          disabled={workingId === r.id}
-                        >
-                          Post Now
-                        </button>
-                        <button
-                          className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
-                          onClick={() => handleDelete(r.id)}
-                          disabled={workingId === r.id}
-                          title="Remove this draft"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </article>
-            ))}
+                      <div className="text-xs text-gray-500 mt-2">
+                        Publ: {fmt(r.published_at)} • Disc: {fmt(r.discovered_at)} • Schd: {fmt(r.scheduled_for)}
+                      </div>
 
-            {!grouped[bucket]?.length && (
-              <div className="text-sm text-gray-500">No items.</div>
-            )}
+                      {/* Links preview area */}
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+                        {short ? (
+                          <>
+                            <a className="text-emerald-700 underline" href={`/brief/${r.brief_slug ?? ""}`} target="_blank" rel="noreferrer">
+                              Open brief
+                            </a>
+                            <button
+                              className="rounded border px-2 py-[2px]"
+                              onClick={async () => {
+                                await navigator.clipboard.writeText(short);
+                                alert("Shortlink copied: " + short);
+                              }}
+                              title="Copy shortlink used in the tweet"
+                            >
+                              Copy shortlink
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {r.article_url ? (
+                              <a className="text-blue-600 underline" href={r.article_url} target="_blank" rel="noreferrer">
+                                Open article
+                              </a>
+                            ) : null}
+                            <span className="text-gray-500">(brief link will be created on post)</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-2">
+                      {bucket === "draft" && (
+                        <>
+                          <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={() => handleApprove(r.id)} disabled={workingId === r.id}>
+                            Approve
+                          </button>
+                          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSchedule(r.id, 60)} disabled={workingId === r.id}>
+                            Schedule +60m
+                          </button>
+                          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handlePublishNow(r.id)} disabled={workingId === r.id}>
+                            Post Now
+                          </button>
+                          <button
+                            className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            onClick={() => handleDelete(r.id)}
+                            disabled={workingId === r.id}
+                            title="Remove this draft"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                      {bucket === "approved" && (
+                        <>
+                          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSchedule(r.id, 30)} disabled={workingId === r.id}>
+                            Schedule +30m
+                          </button>
+                          <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={() => handlePublishNow(r.id)} disabled={workingId === r.id}>
+                            Post Now
+                          </button>
+                          <button
+                            className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            onClick={() => handleDelete(r.id)}
+                            disabled={workingId === r.id}
+                            title="Remove this draft"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                      {bucket === "scheduled" && (
+                        <>
+                          <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={() => handlePublishNow(r.id)} disabled={workingId === r.id}>
+                            Post Now
+                          </button>
+                          <button
+                            className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            onClick={() => handleDelete(r.id)}
+                            disabled={workingId === r.id}
+                            title="Remove this draft"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+
+            {!grouped[bucket]?.length && <div className="text-sm text-gray-500">No items.</div>}
           </div>
         </section>
       ))}
