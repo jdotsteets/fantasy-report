@@ -15,7 +15,6 @@ const BANNED_SNIPPETS = [
   "explosive athlete", "dynamic weapon"
 ];
 
-
 type ArticleRow = {
   id: number;
   title: string;
@@ -38,7 +37,6 @@ function isBulletStrong(b: string): boolean {
   if (/[#@]/.test(lower)) return false;              // no hashtags/handles
   if (/[!?]{2,}/.test(w)) return false;              // no emphatic punctuation
   if (BANNED_SNIPPETS.some(s => lower.includes(s))) return false;
-
   return true;
 }
 
@@ -60,7 +58,7 @@ async function rewriteBulletsIfWeak(
   context: { section_hint: string | null; payload: WriterUserPayload; brief: string },
 ): Promise<string[]> {
   const ok = bullets.every(isBulletStrong);
-  if (ok) return bullets;
+  if (ok && bullets.length >= 3) return bullets.slice(0, 4);
 
   const examples = BULLET_EXAMPLES[(context.section_hint ?? "").toLowerCase() as keyof typeof BULLET_EXAMPLES];
   const hint = tailorBulletsHint(context.section_hint);
@@ -99,10 +97,9 @@ async function rewriteBulletsIfWeak(
     // fallthrough
   }
 
-  // If rewrite fails, salvage the strongest originals or drop to one solid line
+  // If rewrite fails, salvage the strongest originals or drop to safe, generic items
   const strong = bullets.filter(isBulletStrong);
   if (strong.length >= 3) return strong.slice(0, 4);
-  // last resort: produce a few generic but safe, concrete items
   return [
     "Usage rose; routes and snaps trending up.",
     "Red-zone role stable; TD chances intact.",
@@ -180,6 +177,29 @@ async function repairWithCritic(
   return JSON.parse(res.text) as unknown;
 }
 
+/** Build a last-resort, schema-valid brief from the payload */
+function buildSafeFallback(payload: WriterUserPayload) {
+  const brief = clampSnippet(payload.clean_snippet, payload.source_title, 600)
+    .split(/\s+/)
+    .slice(0, 75)
+    .join(" "); // ≤ 75 words
+
+  const why_matters = [
+    "Usage steady; treat as matchup-based Flex until role stabilizes."
+  ];
+
+  return {
+    brief,
+    why_matters,
+    seo: {
+      title: (payload.source_title || "The Fantasy Report").slice(0, 90),
+      meta_description: brief.slice(0, 150),
+    },
+    cta_label: "Read full article",
+    tone: "neutral-informative" as const,
+  };
+}
+
 /**
  * Generate a brief for an article. If `overwrite` is true and a brief already exists,
  * this will update that brief (saving as draft unless autopublish is true).
@@ -228,13 +248,20 @@ export async function generateBriefForArticle(
     parsed = WriterJsonSchema.safeParse(candidate);
   }
 
+  // If still not valid, use a safe fallback instead of throwing
   if (!parsed.success) {
-    throw new Error("Writer JSON failed validation after repair");
+    console.error("[generateBrief] Writer JSON failed after repair; using fallback. Errors:", parsed.error.flatten());
+    candidate = buildSafeFallback(payload);
+    parsed = WriterJsonSchema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new Error("Writer JSON failed validation after repair and fallback");
+    }
   }
 
   const final = parsed.data;
 
- let bullets = await rewriteBulletsIfWeak(final.why_matters, {
+  // Strengthen/clean bullets and ensure 3–4 max
+  const bullets = await rewriteBulletsIfWeak(final.why_matters, {
     section_hint: payload.section_hint,
     payload,
     brief: final.brief,
