@@ -30,14 +30,21 @@ export async function GET(_req: NextRequest) {
 
   if (manual.length) {
     const m = manual[0];
+    const createdAt = new Date(m.created_at).toISOString();
+    const expiresAt = new Date(
+      new Date(m.created_at).getTime() + MANUAL_TTL_MINUTES * 60 * 1000
+    ).toISOString();
+
     return NextResponse.json({
-      mode: "manual",
+      mode: "manual" as const,
       hero: {
         title: m.title,
         href: m.url,
         src: m.image_url ?? undefined,
         source: m.source ?? "The Fantasy Report",
       },
+      createdAt,
+      expiresAt,
     });
   }
 
@@ -76,12 +83,15 @@ export async function GET(_req: NextRequest) {
   }
 
   return NextResponse.json({
-    mode: "auto",
+    mode: "auto" as const,
     hero: {
       title: top.title ?? "(untitled)",
       href: top.canonical_url ?? top.url,
       src: top.image_url ?? undefined,
       source: top.source ?? top.domain ?? "The Fantasy Report",
     },
+    createdAt: new Date().toISOString(),
+    expiresAt: null, // auto mode doesn’t have a fixed expiry 
   });
 }
+

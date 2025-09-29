@@ -1,4 +1,4 @@
-//app/admin/social/AdminSocialQueue.tsx
+// app/admin/social/AdminSocialQueue.tsx
 "use client";
 
 import { useMemo, useState } from "react";
@@ -15,50 +15,6 @@ type UpdatePayload = {
   scheduled_for?: string | null; // ISO string or null to clear
 };
 
-async function updateDraft(id: number, payload: UpdatePayload): Promise<void> {
-  const res = await fetch(`/api/social/drafts/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(j.error ?? "Update failed");
-  }
-}
-
-async function generateOne(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit" | "mix"): Promise<void> {
-  const url = `/api/social/generate-one?type=${encodeURIComponent(type)}`;
-  const res = await fetch(url, { method: "POST" });
-  const j: { ok?: boolean; id?: number; error?: string } = await res.json().catch(() => ({}));
-  if (!res.ok || !j.ok) throw new Error(j.error ?? "Generate failed");
-}
-
-async function seedSection(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit"): Promise<void> {
-  const url = `/api/social/sections/seed?type=${encodeURIComponent(type)}`;
-  const res = await fetch(url, { method: "POST" });
-  if (!res.ok) {
-    const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(j.error ?? "Seed failed");
-  }
-}
-
-async function runWorker(): Promise<void> {
-  const res = await fetch("/api/social/worker", { method: "POST" });
-  if (!res.ok) {
-    const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(j.error ?? "Worker failed");
-  }
-}
-
-async function publishNow(id: number): Promise<void> {
-  const res = await fetch(`/api/social/publish-now/${id}`, { method: "POST" });
-  const j: { ok?: boolean; error?: string } = await res.json().catch(() => ({}));
-  if (!res.ok || !j.ok) {
-    throw new Error(j.error ?? "Publish failed");
-  }
-}
-
 export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
   const [workingId, setWorkingId] = useState<number | null>(null);
   const [busyGlobal, setBusyGlobal] = useState<boolean>(false);
@@ -72,6 +28,58 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
     }
     return map;
   }, [rows]);
+
+  async function updateDraft(id: number, payload: UpdatePayload): Promise<void> {
+    const res = await fetch(`/api/social/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(j.error ?? "Update failed");
+    }
+  }
+
+  async function deleteDraft(id: number): Promise<void> {
+    const res = await fetch(`/api/social/drafts/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(j.error ?? "Delete failed");
+    }
+  }
+
+  async function generateOne(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit" | "mix"): Promise<void> {
+    const url = `/api/social/generate-one?type=${encodeURIComponent(type)}`;
+    const res = await fetch(url, { method: "POST" });
+    const j: { ok?: boolean; id?: number; error?: string } = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) throw new Error(j.error ?? "Generate failed");
+  }
+
+  async function seedSection(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit"): Promise<void> {
+    const url = `/api/social/sections/seed?type=${encodeURIComponent(type)}`;
+    const res = await fetch(url, { method: "POST" });
+    if (!res.ok) {
+      const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(j.error ?? "Seed failed");
+    }
+  }
+
+  async function runWorker(): Promise<void> {
+    const res = await fetch("/api/social/worker", { method: "POST" });
+    if (!res.ok) {
+      const j: { error?: string } = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(j.error ?? "Worker failed");
+    }
+  }
+
+  async function publishNow(id: number): Promise<void> {
+    const res = await fetch(`/api/social/publish-now/${id}`, { method: "POST" });
+    const j: { ok?: boolean; error?: string } = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) {
+      throw new Error(j.error ?? "Publish failed");
+    }
+  }
 
   async function handleApprove(id: number) {
     setWorkingId(id);
@@ -104,12 +112,21 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
     }
   }
 
+  async function handleDelete(id: number) {
+    if (!window.confirm("Delete this draft? This cannot be undone.")) return;
+    setWorkingId(id);
+    try {
+      await deleteDraft(id);
+      window.location.reload();
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
   async function handleSeed(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit") {
     setBusyGlobal(true);
     try {
       await seedSection(type);
-      // Optional: immediately run worker so it posts soon
-      // await runWorker();
       window.location.reload();
     } finally {
       setBusyGlobal(false);
@@ -182,14 +199,14 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
         </div>
       </div>
 
-            {/* Generate 1 draft on-demand */}
+      {/* Generate 1 draft on-demand */}
       <div className="flex items-center gap-2">
         <select
           id="genType"
           className="px-2 py-1 rounded-xl border"
           disabled={busyGlobal}
           defaultValue="mix"
-          onChange={() => {/* no-op; we read value on click */}}
+          onChange={() => {/* no-op; value read on click */}}
         >
           <option value="mix">Mix</option>
           <option value="waivers">Waivers</option>
@@ -267,6 +284,14 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
                         >
                           Post Now
                         </button>
+                        <button
+                          className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          onClick={() => handleDelete(r.id)}
+                          disabled={workingId === r.id}
+                          title="Remove this draft"
+                        >
+                          Delete
+                        </button>
                       </>
                     )}
                     {bucket === "approved" && (
@@ -285,16 +310,34 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
                         >
                           Post Now
                         </button>
+                        <button
+                          className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          onClick={() => handleDelete(r.id)}
+                          disabled={workingId === r.id}
+                          title="Remove this draft"
+                        >
+                          Delete
+                        </button>
                       </>
                     )}
                     {bucket === "scheduled" && (
-                      <button
-                        className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50"
-                        onClick={() => handlePublishNow(r.id)}
-                        disabled={workingId === r.id}
-                      >
-                        Post Now
-                      </button>
+                      <>
+                        <button
+                          className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50"
+                          onClick={() => handlePublishNow(r.id)}
+                          disabled={workingId === r.id}
+                        >
+                          Post Now
+                        </button>
+                        <button
+                          className="px-3 py-1 rounded-xl border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          onClick={() => handleDelete(r.id)}
+                          disabled={workingId === r.id}
+                          title="Remove this draft"
+                        >
+                          Delete
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
