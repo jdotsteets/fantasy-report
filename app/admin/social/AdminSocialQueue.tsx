@@ -85,13 +85,24 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
     }
   }
 
-  async function publishNow(id: number): Promise<void> {
-    const res = await fetch(`/api/social/publish-now/${id}`, { method: "POST" });
-    const j: { ok?: boolean; error?: string } = await res.json().catch(() => ({}));
-    if (!res.ok || !j.ok) {
-      throw new Error(j.error ?? "Publish failed");
-    }
+async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; shortlink?: string; error?: string; detail?: string }> {
+  const res = await fetch(`/api/social/publish-now/${id}`, { method: "POST" });
+  let j: { ok?: boolean; tweetId?: string; shortlink?: string; error?: string; detail?: string } = {};
+  try {
+    j = await res.json();
+  } catch {
+    // ignore parse errors; we'll fall back to status text
   }
+  if (!res.ok || !j.ok) {
+    return {
+      ok: false,
+      error: j.error ?? res.statusText ?? "Publish failed",
+      detail: j.detail,
+    };
+  }
+  return { ok: true, tweetId: j.tweetId, shortlink: j.shortlink };
+}
+
 
   async function handleApprove(id: number) {
     setWorkingId(id);
@@ -114,16 +125,6 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
     }
   }
 
-  async function handlePublishNow(id: number) {
-    setWorkingId(id);
-    try {
-      await publishNow(id);
-      window.location.reload();
-    } finally {
-      setWorkingId(null);
-    }
-  }
-
   async function handleDelete(id: number) {
     if (!window.confirm("Delete this draft? This cannot be undone.")) return;
     setWorkingId(id);
@@ -134,6 +135,23 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
       setWorkingId(null);
     }
   }
+
+  async function handlePublishNow(id: number) {
+  setWorkingId(id);
+  try {
+    const result = await publishNow(id);
+    if (!result.ok) {
+      const msg = [result.error, result.detail].filter(Boolean).join("\n");
+      alert(`❌ Post failed:\n${msg}`);
+      return;
+    }
+    alert(`✅ Posted!\nTweet ID: ${result.tweetId}\nLink: ${result.shortlink}`);
+    window.location.reload();
+  } finally {
+    setWorkingId(null);
+  }
+}
+
 
   async function handleSeed(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit") {
     setBusyGlobal(true);
@@ -219,6 +237,22 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
 
                       <div className="text-xs text-gray-500 mt-2">
                         Publ: {fmt(r.published_at)} • Disc: {fmt(r.discovered_at)} • Schd: {fmt(r.scheduled_for)}
+                      </div>
+
+                      {/* ID / debug mini-row */}
+                      <div className="mt-1 text-xs text-gray-500 flex items-center gap-2">
+                        <span>Draft ID: <code className="text-gray-700">{r.id}</code></span>
+                        <button
+                          type="button"
+                          className="rounded border px-1.5 py-[1px] leading-none hover:bg-zinc-50"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(String(r.id));
+                            alert("Draft ID copied: " + r.id);
+                          }}
+                          title="Copy Draft ID"
+                        >
+                          Copy
+                        </button>
                       </div>
 
                       {/* Links preview area */}
