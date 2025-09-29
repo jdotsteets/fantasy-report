@@ -1,13 +1,47 @@
 // app/brief/[slug]/page.tsx
 import { getBriefBySlug } from "@/lib/briefs";
 import Link from "next/link";
+import type { Metadata } from "next";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
 export const dynamic = "force-dynamic";
 
 type RouteParams = { slug: string };
-type PageProps = { params?: Promise<RouteParams> }; // 👈 matches Next 15’s generated type
+type PageProps = { params: Promise<RouteParams> }; // 👈 matches Next 15’s generated type
+
+export async function generateMetadata(
+  props: PageProps
+): Promise<Metadata> {
+  const { slug } = await props.params;
+  const brief = await getBriefBySlug(slug);
+
+  const title = brief?.seo_title ?? brief?.article_title ?? "The Fantasy Report";
+  const description = brief?.seo_description ?? brief?.summary ?? undefined;
+
+  // Build absolute URL to the OG route
+  const base = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
+  const ogUrl = `${base.replace(/\/+$/, "")}/brief/${slug}/og`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url: `${base.replace(/\/+$/, "")}/brief/${slug}`,
+      images: [{ url: ogUrl, width: 1200, height: 630 }],
+      siteName: "The Fantasy Report",
+      type: "article",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [ogUrl],
+    },
+  };
+}
 
 export default async function BriefPage({ params }: PageProps) {
   // Next 15 provides params as a Promise; await it
