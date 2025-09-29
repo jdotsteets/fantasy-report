@@ -43,13 +43,13 @@ export async function createBrief(payload: {
       const rows = await dbQueryRows<Brief>(
         `
         INSERT INTO briefs (article_id, slug, summary, why_matters, seo_title, seo_description, status)
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, COALESCE($7, 'published'))
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, COALESCE($7::brief_status, 'published'::brief_status))
         ON CONFLICT (article_id) DO UPDATE SET
           summary = EXCLUDED.summary,
           why_matters = EXCLUDED.why_matters,
           seo_title = EXCLUDED.seo_title,
           seo_description = EXCLUDED.seo_description,
-          status = EXCLUDED.status,
+          status = EXCLUDED.status,              -- EXCLUDED.status is already brief_status
           updated_at = now()
         RETURNING *;
         `,
@@ -60,7 +60,7 @@ export async function createBrief(payload: {
           JSON.stringify(payload.why_matters),
           payload.seo_title ?? null,
           payload.seo_description ?? null,
-          payload.status ?? null,
+          payload.status ?? null,                // string | null is fine; cast happens in SQL
         ]
       );
       return rows[0];
@@ -80,4 +80,64 @@ export async function getBriefBySlug(slug: string): Promise<BriefWithArticle | n
     [slug]
   );
   return rows[0] ?? null;
+}
+
+// lib/briefs.ts (append below existing code)
+export async function updateBrief(
+  id: number,
+  patch: Partial<{
+    summary: string;
+    why_matters: string[];
+    seo_title: string | null;
+    seo_description: string | null;
+    status: "draft" | "published" | "archived";
+    slug: string;
+  }>
+): Promise<Brief> {
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("Invalid brief id");
+  }
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+
+  if (patch.summary !== undefined) {
+    fields.push(`summary = $${i++}`);
+    values.push(patch.summary);
+  }
+  if (patch.why_matters !== undefined) {
+    fields.push(`why_matters = $${i++}::jsonb`);
+    values.push(JSON.stringify(patch.why_matters));
+  }
+  if (patch.seo_title !== undefined) {
+    fields.push(`seo_title = $${i++}`);
+    values.push(patch.seo_title);
+  }
+  if (patch.seo_description !== undefined) {
+    fields.push(`seo_description = $${i++}`);
+    values.push(patch.seo_description);
+  }
+  if (patch.status !== undefined) {
+    // Cast to enum type
+    fields.push(`status = $${i++}::brief_status`);
+    values.push(patch.status);
+  }
+  if (patch.slug !== undefined) {
+    fields.push(`slug = $${i++}`);
+    values.push(patch.slug);
+  }
+
+  if (fields.length === 0) {
+    throw new Error("No valid fields to update");
+  }
+
+  // touch updated_at
+  fields.push(`updated_at = now()`);
+
+  values.push(id);
+  const sql = `UPDATE briefs SET ${fields.join(", ")} WHERE id = $${i} RETURNING *;`;
+  const rows = await dbQueryRows<Brief>(sql, values);
+  if (!rows[0]) throw new Error("Brief not found");
+  return rows[0];
 }
