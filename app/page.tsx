@@ -22,8 +22,17 @@ type HeroApiHero = { title: string; href: string; src?: string; source: string }
 type HeroApiResp = { mode: "manual" | "auto" | "empty"; hero: HeroApiHero | null };
 
 async function fetchCurrentHero(): Promise<HeroApiHero | null> {
+  const origin =
+    process.env.NEXT_PUBLIC_SITE_ORIGIN?.trim() ||
+    SITE_ORIGIN; // your constant above
+
   try {
-    const res = await fetch("/api/hero/current", { method: "GET", cache: "no-store" });
+    const res = await fetch(`${origin}/api/hero/current`, {
+      method: "GET",
+      cache: "no-store",
+      // Next.js SSR sometimes needs explicit revalidation hint:
+      next: { revalidate: 0 },
+    });
     if (!res.ok) return null;
     const j: HeroApiResp = await res.json();
     return j.hero ?? null;
@@ -31,7 +40,6 @@ async function fetchCurrentHero(): Promise<HeroApiHero | null> {
     return null;
   }
 }
-
 // Drop utilities that work by id *or* href (canonical or raw)
 const dropById =
   (id: number | null) =>
