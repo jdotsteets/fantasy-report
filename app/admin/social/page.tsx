@@ -31,6 +31,9 @@ export type SocialQueueRow = {
   domain: string | null;
   source_id: number | null;
   source_name: string | null;
+  brief_id: number | null;
+  brief_slug: string | null;
+  brief_status: "draft" | "published" | "archived" | null;
 };
 
 export const dynamic = "force-dynamic";
