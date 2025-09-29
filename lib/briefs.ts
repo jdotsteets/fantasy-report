@@ -1,7 +1,8 @@
 // lib/briefs.ts
 import { dbQueryRows } from "@/lib/db";
 import { slugify } from "@/lib/slug";
-import type { Brief } from "@/types/briefs";
+import type { Brief, BriefWithArticle } from "@/types/briefs";
+
 
 function rand5(): string {
   return Math.random().toString(36).slice(2, 7);
@@ -71,4 +72,12 @@ export async function createBrief(payload: {
     }
   }
   throw new Error("Failed to create brief with a unique slug after retries");
+}
+
+export async function getBriefBySlug(slug: string): Promise<BriefWithArticle | null> {
+  const rows = await dbQueryRows<BriefWithArticle>(
+    `SELECT * FROM briefs_with_article WHERE slug = $1 LIMIT 1`,
+    [slug]
+  );
+  return rows[0] ?? null;
 }
