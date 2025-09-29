@@ -1,8 +1,6 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-
-    // 12x per day, every ~2 hours
     { "path": "/api/social/agent-auto", "schedule": "0 0 * * 0-6" },
     { "path": "/api/social/agent-auto", "schedule": "10 2 * * 0-6" },
     { "path": "/api/social/agent-auto", "schedule": "20 4 * * 0-6" },
