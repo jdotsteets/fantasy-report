@@ -7,13 +7,14 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { article_id?: unknown; autopublish?: unknown };
+    const body = (await req.json()) as { article_id?: unknown; autopublish?: unknown; overwrite?: unknown };
     const article_id = Number(body.article_id);
     const autopublish = Boolean(body.autopublish);
+    const overwrite = Boolean(body.overwrite);
     if (!Number.isFinite(article_id) || article_id <= 0) {
       return NextResponse.json({ error: "Invalid article_id" }, { status: 400 });
     }
-    const result = await generateBriefForArticle(article_id, autopublish);
+    const result = await generateBriefForArticle(article_id, autopublish, overwrite);
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";

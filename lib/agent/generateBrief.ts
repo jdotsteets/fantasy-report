@@ -1,9 +1,8 @@
-// lib/agent/generateBrief.ts (replace the whole function)
-
+// lib/agent/generateBrief.ts
 import { SYSTEM_WRITER, SYSTEM_CRITIC, clampSnippet, type WriterUserPayload } from "./prompts";
 import { callLLMWriter, callLLMCritic } from "./llm";
 import { WriterJsonSchema } from "@/lib/zodAgent";
-import { createBrief } from "@/lib/briefs";
+import { createBrief, getBriefByArticleId, updateBrief } from "@/lib/briefs";
 import { dbQueryRows } from "@/lib/db";
 
 type ArticleRow = {
@@ -27,31 +26,46 @@ function countWords(s: string): number {
 function jaccard(a: string, b: string): number {
   const A = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
   const B = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
-  const inter = new Set([...A].filter(x => B.has(x))).size;
+  const inter = new Set([...A].filter((x) => B.has(x))).size;
   const union = new Set([...A, ...B]).size;
   return union === 0 ? 0 : inter / union;
 }
 
+/** Safe helpers without `any` */
+function getRecordValue(obj: Record<string, unknown>, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined;
+}
+function asRecord(u: unknown): Record<string, unknown> | undefined {
+  return typeof u === "object" && u !== null ? (u as Record<string, unknown>) : undefined;
+}
+
 function normalizeWriterShape(raw: unknown): unknown {
-  if (typeof raw !== "object" || raw === null) return raw;
-  // shallow copy
-  const o = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+  const rec = asRecord(raw);
+  if (!rec) return raw;
 
-  // accept camelCase or snake_case keys
-  // why_matters
-  if (!("why_matters" in o) && "whyMatters" in o) o.why_matters = o.whyMatters;
+  // Shallow clone
+  const o: Record<string, unknown> = { ...rec };
 
-  // seo
-  const seo = (o.seo ?? (o as any).SEO ?? {}) as Record<string, unknown>;
-  if (seo && typeof seo === "object") {
+  // why_matters ← whyMatters
+  if (!("why_matters" in o) && "whyMatters" in o) {
+    o.why_matters = getRecordValue(o, "whyMatters");
+  }
+
+  // seo (support "seo" or "SEO", and metaDescription → meta_description)
+  const seoCandidate =
+    asRecord(getRecordValue(o, "seo")) ?? asRecord(getRecordValue(o, "SEO"));
+  if (seoCandidate) {
+    const seo: Record<string, unknown> = { ...seoCandidate };
     if (!("meta_description" in seo) && "metaDescription" in seo) {
-      seo.meta_description = (seo as any).metaDescription;
+      seo.meta_description = getRecordValue(seo, "metaDescription");
     }
     o.seo = seo;
   }
 
   // tone fallbacks
-  if (o.tone === "informative" || o.tone === "neutral-info") o.tone = "neutral-informative";
+  if (o.tone === "informative" || o.tone === "neutral-info") {
+    o.tone = "neutral-informative";
+  }
 
   return o;
 }
@@ -75,8 +89,15 @@ async function repairWithCritic(
   return JSON.parse(res.text) as unknown;
 }
 
-
-export async function generateBriefForArticle(article_id: number, autopublish = false) {
+/**
+ * Generate a brief for an article. If `overwrite` is true and a brief already exists,
+ * this will update that brief (saving as draft unless autopublish is true).
+ */
+export async function generateBriefForArticle(
+  article_id: number,
+  autopublish = false,
+  overwrite = false
+) {
   // 1) Load article
   const [art] = await dbQueryRows<ArticleRow>(`SELECT * FROM articles WHERE id = $1`, [article_id]);
   if (!art) throw new Error("Article not found");
@@ -103,7 +124,7 @@ export async function generateBriefForArticle(article_id: number, autopublish = 
   // 4) Writer
   const writerRes = await callLLMWriter({ system: SYSTEM_WRITER, user: payload });
 
-  // Log once for debugging if things go sideways
+  // Log first 1k chars for debugging (safe)
   console.error("[generateBrief] writer raw:", writerRes.text.slice(0, 1000));
 
   // 5) Parse → normalize → validate; if fails, repair via critic once
@@ -127,7 +148,27 @@ export async function generateBriefForArticle(article_id: number, autopublish = 
   const originality = 1 - jaccard(final.brief, payload.clean_snippet);
   const groundedness_ok = true;
 
-  // 7) Save brief (draft or published)
+  // 7) Save — overwrite existing or create/idempotent
+  const existing = await getBriefByArticleId(article_id);
+
+  if (existing && overwrite) {
+    const updated = await updateBrief(existing.id, {
+      summary: final.brief,
+      why_matters: final.why_matters,
+      seo_title: final.seo.title,
+      seo_description: final.seo.meta_description,
+      status: autopublish ? "published" : "draft",
+    });
+
+    return {
+      created_brief_id: updated.id,
+      slug: updated.slug,
+      status: updated.status,
+      scores: { brevity_ok, originality, groundedness_ok },
+    };
+  }
+
+  // Create new (or return existing due to idempotent createBrief)
   const saved = await createBrief({
     article_id,
     summary: final.brief,

@@ -160,3 +160,9 @@ export async function getBriefById(id: number): Promise<BriefWithArticle | null>
   );
   return rows[0] ?? null;
 }
+
+// lib/briefs.ts
+export async function getBriefByArticleId(article_id: number): Promise<Brief | null> {
+  const rows = await dbQueryRows<Brief>(`SELECT * FROM briefs WHERE article_id = $1 LIMIT 1`, [article_id]);
+  return rows[0] ?? null;
+}
