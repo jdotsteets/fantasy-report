@@ -1,24 +1,45 @@
 {
   "crons": [
-    {"path": "/api/refresh",  "schedule": "0 4 * * *"    }, 
-    { "path": "/api/social/agent-auto", "schedule": "15 13 * * 0-6" },
-    { "path": "/api/social/agent-auto", "schedule": "30 17 * * 0-6" },
-    { "path": "/api/social/agent-auto", "schedule": "45 1 * * 2-6" },
-    { "path": "/api/social/agent", "schedule": "0 7 * * 1-5" },
-    { "path": "/api/social/sections/seed?type=waivers",  "schedule": "0 14 * * 1,2" },
-    { "path": "/api/social/sections/seed?type=rankings", "schedule": "0 17 * * 3" },
-    { "path": "/api/social/sections/seed?type=news",     "schedule": "30 16 * * 4,5" },
-    { "path": "/api/social/sections/seed?type=injuries", "schedule": "30 21 * * 4,5" },
-    { "path": "/api/social/sections/seed?type=start-sit","schedule": "0 14 * * 6,0" },
-    { "path": "/api/social/sections/seed?type=news",     "schedule": "15 1 * * 1"  },
-    { "path": "/api/social/worker",                      "schedule": "*/10 * * * *" }
+    { "path": "/api/refresh",                   "schedule": "0 4 * * *" },
 
-  ]
-,
+
+    { "path": "/api/social/agent-auto",         "schedule": "15 13 * * 0-6" },  
+    { "path": "/api/social/agent-auto",         "schedule": "30 17 * * 0-6" },  
+    { "path": "/api/social/agent-auto",         "schedule": "45 1 * * 2-6"  }, 
+
+
+    { "path": "/api/social/agent-auto",         "schedule": "5 10 * * 0-6"  },
+    { "path": "/api/social/agent-auto",         "schedule": "25 12 * * 0-6" },
+    { "path": "/api/social/agent-auto",         "schedule": "40 14 * * 0-6" },
+    { "path": "/api/social/agent-auto",         "schedule": "55 15 * * 0-6" },
+    { "path": "/api/social/agent-auto",         "schedule": "20 18 * * 0-6" },
+    { "path": "/api/social/agent-auto",         "schedule": "35 20 * * 0-6" },
+    { "path": "/api/social/agent-auto",         "schedule": "50 22 * * 0-6" },
+    { "path": "/api/social/agent-auto",         "schedule": "10 0 * * 0-6"  },
+    { "path": "/api/social/agent-auto",         "schedule": "30 2 * * 0-6"  },
+    { "path": "/api/social/agent-auto",         "schedule": "50 5 * * 0-6"  },
+
+
+    { "path": "/api/social/agent-auto",         "schedule": "15 11 * * 1-5" },
+    { "path": "/api/social/agent-auto",         "schedule": "45 16 * * 1-5" },
+
+
+    { "path": "/api/social/agent",              "schedule": "0 7 * * 1-5" },   
+    { "path": "/api/social/agent",              "schedule": "30 19 * * 1-5" }, 
+
+    { "path": "/api/social/sections/seed?type=waivers",   "schedule": "0 14 * * 1,2" },
+    { "path": "/api/social/sections/seed?type=rankings",  "schedule": "0 17 * * 3"   },
+    { "path": "/api/social/sections/seed?type=news",      "schedule": "30 16 * * 4,5" },
+    { "path": "/api/social/sections/seed?type=injuries",  "schedule": "30 21 * * 4,5" },
+    { "path": "/api/social/sections/seed?type=start-sit", "schedule": "0 14 * * 6,0" },
+    { "path": "/api/social/sections/seed?type=news",      "schedule": "15 1 * * 1"  },
+
+
+    { "path": "/api/social/worker",             "schedule": "*/10 * * * *" }
+  ],
   "build": {
     "env": {
       "NODE_VERSION": "20"
     }
   }
-  
 }
