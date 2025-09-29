@@ -1,4 +1,3 @@
-// app/brief/[slug]/page.tsx
 import { getBriefBySlug } from "@/lib/briefs";
 import Link from "next/link";
 import type { Metadata } from "next";
@@ -8,7 +7,7 @@ export const revalidate = 0;
 export const dynamic = "force-dynamic";
 
 type RouteParams = { slug: string };
-type PageProps = { params: Promise<RouteParams> }; // 👈 matches Next 15’s generated type
+type PageProps = { params: Promise<RouteParams> }; // Next 15’s generated type
 
 export async function generateMetadata(
   props: PageProps
@@ -19,7 +18,6 @@ export async function generateMetadata(
   const title = brief?.seo_title ?? brief?.article_title ?? "The Fantasy Report";
   const description = brief?.seo_description ?? brief?.summary ?? undefined;
 
-  // Build absolute URL to the OG route
   const base = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
   const ogUrl = `${base.replace(/\/+$/, "")}/brief/${slug}/og`;
 
@@ -44,10 +42,9 @@ export async function generateMetadata(
 }
 
 export default async function BriefPage({ params }: PageProps) {
-  // Next 15 provides params as a Promise; await it
   const { slug } = await (params as Promise<RouteParams>);
-
   const brief = await getBriefBySlug(slug);
+
   if (!brief) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-16">
@@ -89,11 +86,15 @@ export default async function BriefPage({ params }: PageProps) {
 
       {/* Summary card */}
       <section className="mb-6 rounded-lg border border-zinc-200 bg-white p-4">
-        <p className="text-zinc-800">{brief.summary}</p>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-600">
+          The Lead
+        </h2>
+        <p className="mt-1 text-zinc-800">{brief.summary}</p>
+
         {brief.why_matters.length > 0 && (
           <ul className="mt-3 list-disc pl-5 text-sm text-zinc-700">
             {brief.why_matters.map((li, i) => (
-              <li key={i}><strong>Why it matters:</strong> {li}</li>
+              <li key={i}>{li}</li>
             ))}
           </ul>
         )}

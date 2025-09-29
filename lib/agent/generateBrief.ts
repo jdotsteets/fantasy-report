@@ -33,15 +33,12 @@ type SourceRow = { id: number; name: string | null };
 function isBulletStrong(b: string): boolean {
   const w = b.trim();
   const len = w.split(/\s+/).length;
-  if (len < 6 || len > 18) return false;
+  if (len < 5 || len > 18) return false;
   const lower = w.toLowerCase();
   if (/[#@]/.test(lower)) return false;              // no hashtags/handles
   if (/[!?]{2,}/.test(w)) return false;              // no emphatic punctuation
   if (BANNED_SNIPPETS.some(s => lower.includes(s))) return false;
-  // must start with action/metric-ish word (rough heuristic)
-  if (!/^(routes|targets|snaps|touches|red-?zone|start|sit|stash|add|drop|fade|stream|salary|ownership|role|slot|man|zone|coverage|cb|dvoa|usage|carry|carries|attempts|a?dot|share|rate|%|volume|leverage|priority|bid|faab)\b/i.test(w)) {
-    return false;
-  }
+
   return true;
 }
 
@@ -68,11 +65,11 @@ async function rewriteBulletsIfWeak(
   const examples = BULLET_EXAMPLES[(context.section_hint ?? "").toLowerCase() as keyof typeof BULLET_EXAMPLES];
   const hint = tailorBulletsHint(context.section_hint);
 
-  // Ask critic to rewrite only bullets with constraints
+  // Ask critic to rewrite only bullets with new constraints
   const res = await callLLMCritic({
     system: [
       "Rewrite ONLY the `why_matters` array to be concrete and actionable.",
-      "Constraints: 1–2 bullets, each 6–18 words, no emojis/hashtags/cliches.",
+      "Constraints: 3-4 bullets, each 5–18 words, no emojis/hashtags/cliches.",
       hint,
       "Return JSON: { \"why_matters\": string[] } and nothing else.",
     ].join(" "),
@@ -95,8 +92,8 @@ async function rewriteBulletsIfWeak(
       const cleaned = j.why_matters
         .map((x) => (typeof x === "string" ? x.trim() : ""))
         .filter((x) => x.length > 0)
-        .slice(0, 2);
-      if (cleaned.length >= 1 && cleaned.every(isBulletStrong)) return cleaned;
+        .slice(0, 4);
+      if (cleaned.length >= 3 && cleaned.every(isBulletStrong)) return cleaned;
     }
   } catch {
     // fallthrough
@@ -104,9 +101,13 @@ async function rewriteBulletsIfWeak(
 
   // If rewrite fails, salvage the strongest originals or drop to one solid line
   const strong = bullets.filter(isBulletStrong);
-  if (strong.length > 0) return strong.slice(0, 2);
-  // last resort: compress brief into one actionable line
-  return ["Usage/matchup signal improves; treat as matchup-based Flex until role stabilizes."];
+  if (strong.length >= 3) return strong.slice(0, 4);
+  // last resort: produce a few generic but safe, concrete items
+  return [
+    "Usage rose; routes and snaps trending up.",
+    "Red-zone role stable; TD chances intact.",
+    "Matchup favorable vs zone; slot rate advantageous.",
+  ];
 }
 
 function countWords(s: string): number {
@@ -249,7 +250,7 @@ export async function generateBriefForArticle(
   if (existing && overwrite) {
     const updated = await updateBrief(existing.id, {
       summary: final.brief,
-      why_matters: final.why_matters,
+      why_matters: bullets,
       seo_title: final.seo.title,
       seo_description: final.seo.meta_description,
       status: autopublish ? "published" : "draft",
@@ -267,7 +268,7 @@ export async function generateBriefForArticle(
   const saved = await createBrief({
     article_id,
     summary: final.brief,
-    why_matters: final.why_matters,
+    why_matters: bullets,
     seo_title: final.seo.title,
     seo_description: final.seo.meta_description,
     status: autopublish ? "published" : "draft",
