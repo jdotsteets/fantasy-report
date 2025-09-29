@@ -1,6 +1,8 @@
 // app/admin/briefs/page.tsx
 import Link from "next/link";
 import { listBriefs } from "@/lib/briefs";
+import CreateBriefButton from "./ui/CreateBriefButton";
+import { AdminNav } from "@/components/admin/AdminNav";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,14 +13,19 @@ export default async function AdminBriefsPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
+            {/* Admin toolbar */}
+      <AdminNav active="briefs" />
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Briefs</h1>
-        <Link
-          href="/"
-          className="rounded-md border px-3 py-2 text-sm hover:bg-zinc-50"
-        >
-          ← Back to site
-        </Link>
+        <div>
+          <h1 className="text-2xl font-semibold">Briefs</h1>
+          <p className="mt-1 text-sm text-zinc-600">Create and edit summary briefs linked to articles.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <CreateBriefButton />
+          <Link href="/" className="rounded-md border px-3 py-2 text-sm hover:bg-zinc-50">
+            ← Back to site
+          </Link>
+        </div>
       </header>
 
       <table className="w-full border-collapse text-sm">
@@ -60,10 +67,7 @@ export default async function AdminBriefsPage() {
               </td>
               <td className="p-2">{b.source_name ?? b.article_domain ?? "—"}</td>
               <td className="p-2">
-                <Link
-                  href={`/admin/briefs/${b.id}`}
-                  className="rounded-md border px-2 py-1 hover:bg-zinc-50"
-                >
+                <Link href={`/admin/briefs/${b.id}`} className="rounded-md border px-2 py-1 hover:bg-zinc-50">
                   Edit
                 </Link>
               </td>
