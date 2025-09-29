@@ -17,6 +17,32 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+// ——— Hero API fetch (manual recent or auto-breaking) ———
+type HeroApiHero = { title: string; href: string; src?: string; source: string };
+type HeroApiResp = { mode: "manual" | "auto" | "empty"; hero: HeroApiHero | null };
+
+async function fetchCurrentHero(): Promise<HeroApiHero | null> {
+  try {
+    const res = await fetch("/api/hero/current", { method: "GET", cache: "no-store" });
+    if (!res.ok) return null;
+    const j: HeroApiResp = await res.json();
+    return j.hero ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Drop utilities that work by id *or* href (canonical or raw)
+const dropById =
+  (id: number | null) =>
+  <T extends { id: number }>(arr: T[]) =>
+    id ? arr.filter((x) => x.id !== id) : arr;
+
+const dropByHref =
+  (href: string | null) =>
+  <T extends { url?: string | null; canonical_url?: string | null }>(arr: T[]) =>
+    href ? arr.filter((x) => (x.canonical_url ?? x.url ?? "") !== href) : arr;
+
 
 const SITE_ORIGIN = "https://www.thefantasyreport.com";
 
@@ -274,9 +300,23 @@ export default async function Page({
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
-  // Pick hero then drop it from lists
-  const heroRow = latest.find(hasRealImage) ?? null;
-  const hero: HeroData | null = heroRow
+// Pick hero via API (manual/auto). If none, fallback to first news with image.
+const apiHero = await fetchCurrentHero();
+
+let heroRow: Article | null = null;
+let hero: HeroData | null = null;
+
+if (apiHero) {
+  hero = {
+    title: apiHero.title,
+    href: apiHero.href,
+    src: apiHero.src ?? getSafeImageUrl(null) ?? FALLBACK,
+    source: apiHero.source,
+  };
+} else {
+  // Fallback: take first news item with a good image (your old behavior)
+  heroRow = latest.find(hasRealImage) ?? null;
+  hero = heroRow
     ? {
         title: heroRow.title,
         href: heroRow.canonical_url ?? heroRow.url ?? `/go/${heroRow.id}`,
@@ -284,17 +324,20 @@ export default async function Page({
         source: heroRow.source ?? "",
       }
     : null;
+}
 
-  const removeHero = dropId(heroRow?.id ?? null);
-  const latestFiltered = removeHero(latest);
-  const rankingsFiltered = removeHero(rankings);
-  const startSitFiltered = removeHero(startSit);
-  const adviceFiltered = removeHero(advice);
-  const dfsFiltered = removeHero(dfs);
-  const waiversFiltered = removeHero(waivers);
-  const injuriesFiltered = removeHero(injuries);
+// Remove hero from lists.
+// If we used API hero, drop by href; if we used fallback news row, drop by id.
+const latestFiltered   = apiHero ? dropByHref(hero?.href ?? null)(latest)   : dropById(heroRow?.id ?? null)(latest);
+const rankingsFiltered = apiHero ? dropByHref(hero?.href ?? null)(rankings) : dropById(heroRow?.id ?? null)(rankings);
+const startSitFiltered = apiHero ? dropByHref(hero?.href ?? null)(startSit) : dropById(heroRow?.id ?? null)(startSit);
+const adviceFiltered   = apiHero ? dropByHref(hero?.href ?? null)(advice)   : dropById(heroRow?.id ?? null)(advice);
+const dfsFiltered      = apiHero ? dropByHref(hero?.href ?? null)(dfs)      : dropById(heroRow?.id ?? null)(dfs);
+const waiversFiltered  = apiHero ? dropByHref(hero?.href ?? null)(waivers)  : dropById(heroRow?.id ?? null)(waivers);
+const injuriesFiltered = apiHero ? dropByHref(hero?.href ?? null)(injuries) : dropById(heroRow?.id ?? null)(injuries);
 
-  const showHero = selectedSection === null && hero !== null;
+const showHero = selectedSection === null && hero !== null;
+
 
   /* JSON-LD */
   const baseLd = {
