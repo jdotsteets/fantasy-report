@@ -5,7 +5,12 @@ export const runtime = "nodejs";
 export const revalidate = 0;
 export const dynamic = "force-dynamic";
 
-type Row = { id: number; title: string; domain: string | null; published_at: string | null };
+type Row = {
+  id: number;
+  title: string;
+  domain: string | null;
+  published_at: Date | string | null; // ← allow Date
+};
 
 async function getRecent(): Promise<Row[]> {
   return dbQueryRows<Row>(`
@@ -16,6 +21,12 @@ async function getRecent(): Promise<Row[]> {
   `);
 }
 
+function fmtDate(d: Date | string | null): string {
+  if (!d) return "—";
+  const dt = typeof d === "string" ? new Date(d) : d;
+  return Number.isFinite(dt.getTime()) ? dt.toLocaleString() : String(d);
+}
+
 export default async function TestBriefPage() {
   const recent = await getRecent();
 
@@ -23,7 +34,6 @@ export default async function TestBriefPage() {
     <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
       <h1 className="text-2xl font-semibold">Brief Test Harness</h1>
 
-      {/* Client component */}
       <Tester recent={recent} />
 
       <section className="mt-8">
@@ -34,7 +44,7 @@ export default async function TestBriefPage() {
               <div className="min-w-0">
                 <div className="font-medium truncate">{r.title}</div>
                 <div className="text-xs text-zinc-500">
-                  #{r.id} • {r.domain ?? "source"} • {r.published_at ?? "—"}
+                  #{r.id} • {r.domain ?? "source"} • {fmtDate(r.published_at)}
                 </div>
               </div>
               <div className="flex gap-2">
@@ -54,5 +64,4 @@ export default async function TestBriefPage() {
   );
 }
 
-// Re-export the client component (avoids another import path from /app)
 import Tester from "./tester";
