@@ -3,16 +3,48 @@ import { SYSTEM_WRITER, SYSTEM_CRITIC, BULLET_EXAMPLES } from "@/lib/agent/promp
 import type { WriterUserPayload } from "@/lib/agent/prompts";
 import { dbQueryRow } from "@/lib/db";
 
+/* ───────── types ───────── */
+
 type ChatArgs = { system: string; user: unknown; model?: string };
 
 type OpenAIChatChoice = { message?: { content?: string } };
 type OpenAIChatResp = { choices?: OpenAIChatChoice[] };
 
+type ArticleRow = {
+  id: number;
+  title: string;
+  url: string | null;
+  domain: string | null;
+  published_at: string | null; // ISO string
+};
+
+type RunOptions = {
+  systemWriter?: string;
+  systemCritic?: string;
+  model?: string;
+};
+
+type RunReturn =
+  | {
+      ok: true;
+      article_id: number;
+      data: unknown | null; // parsed JSON if possible
+      writer_raw: string;
+      critic_raw: string;
+    }
+  | {
+      ok: false;
+      article_id: number;
+      error: string;
+      writer_raw?: string;
+      critic_raw?: string;
+    };
+
+/* ───────── util ───────── */
+
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 const DEFAULT_TEMP = 0.2;
-
-/* ───────────────────────── helpers ───────────────────────── */
 
 function toJson(obj: unknown): string {
   try {
@@ -47,12 +79,9 @@ function clampSnippetLocal(s: string | null | undefined, fallback: string, max =
   return fallback.slice(0, max);
 }
 
-/* ─────────────────────── OpenAI caller ─────────────────────── */
+/* ───────── OpenAI caller ───────── */
 
-async function chatJson(
-  { system, user, model }: ChatArgs,
-  maxRetries = 4
-): Promise<string> {
+async function chatJson({ system, user, model }: ChatArgs, maxRetries = 4): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -67,7 +96,7 @@ async function chatJson(
   });
 
   let attempt = 0;
-  let delay = 400; // ms
+  let delay = 400;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -89,7 +118,6 @@ async function chatJson(
       return text;
     }
 
-    // Retry on 429 and 5xx
     if (res.status === 429 || res.status >= 500) {
       if (attempt > maxRetries) {
         const txt = await res.text().catch(() => "");
@@ -97,12 +125,11 @@ async function chatJson(
       }
       const retryMs = parseRetryAfterMs(res.headers);
       const wait = retryMs ?? Math.min(5000, delay);
-      await sleep(wait + Math.floor(Math.random() * 250)); // jitter
+      await sleep(wait + Math.floor(Math.random() * 250));
       delay *= 2;
       continue;
     }
 
-    // Non-retryable
     const txt = await res.text().catch(() => "");
     throw new Error(`OpenAI HTTP ${res.status}: ${txt}`);
   }
@@ -116,33 +143,17 @@ export async function callLLMCritic(payload: ChatArgs): Promise<{ text: string }
   return { text: await chatJson(payload) };
 }
 
-/* ───────────────────────── payload IO ───────────────────────── */
-
-type ArticleRow = {
-  id: number;
-  title: string;
-  url: string | null;
-  domain: string | null;
-  provider: string | null;
-  published_at: string | null; // ISO-ish from DB
-  clean_snippet: string | null;
-  snippet: string | null;
-  section_hint: string | null;
-};
+/* ───────── DB + payload ───────── */
 
 async function fetchArticleRow(articleId: number): Promise<ArticleRow | null> {
-  // Adjust column names if yours differ; minimal, safe-select pattern.
+  // MINIMAL columns so it works across schema variations
   const sql = `
     select
       a.id,
       a.title,
       a.url,
       a.domain,
-      a.provider,
-      to_char(a.published_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as published_at,
-      a.clean_snippet,
-      a.snippet,
-      a.section_hint
+      to_char(a.published_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as published_at
     from articles a
     where a.id = $1
     limit 1
@@ -152,7 +163,7 @@ async function fetchArticleRow(articleId: number): Promise<ArticleRow | null> {
 }
 
 function buildWriterPayload(row: ArticleRow): WriterUserPayload {
-  const provider = (row.provider ?? row.domain ?? "unknown").trim();
+  const provider = (row.domain ?? "unknown").trim();
   const publishedIso = row.published_at && row.published_at.length > 0 ? row.published_at : null;
 
   return {
@@ -160,36 +171,15 @@ function buildWriterPayload(row: ArticleRow): WriterUserPayload {
     source_title: row.title,
     source_url: row.url ?? "",
     published_at: publishedIso,
-    clean_snippet: clampSnippetLocal(row.clean_snippet ?? row.snippet, row.title),
-    entities: [], // you can populate from your NER pipeline if available
-    section_hint: row.section_hint, // e.g., 'waivers' | 'news' | 'start-sit' | 'dfs'
-    internal_candidates: [], // populate if you have a similarity lookup
+    // We’re not selecting snippet fields – use title as a safe fallback
+    clean_snippet: clampSnippetLocal(null, row.title),
+    entities: [],
+    section_hint: null,
+    internal_candidates: [],
   };
 }
 
-/* ───────────────────────── main runner ───────────────────────── */
-
-type RunOptions = {
-  systemWriter?: string;
-  systemCritic?: string;
-  model?: string;
-};
-
-type RunReturn = {
-  ok: true;
-  article_id: number;
-  // Parsed JSON when possible:
-  data: unknown | null;
-  // Raw strings for debugging:
-  writer_raw: string;
-  critic_raw: string;
-} | {
-  ok: false;
-  article_id: number;
-  error: string;
-  writer_raw?: string;
-  critic_raw?: string;
-};
+/* ───────── main runner ───────── */
 
 export async function runWriterAndCriticForArticle(
   articleId: number,
@@ -206,62 +196,35 @@ export async function runWriterAndCriticForArticle(
 
   const payload = buildWriterPayload(row);
 
-  const writerSystem = (systemWriter && systemWriter.trim().length > 0) ? systemWriter : SYSTEM_WRITER;
-  const criticSystem = (systemCritic && systemCritic.trim().length > 0) ? systemCritic : SYSTEM_CRITIC;
+  const writerSystem = systemWriter && systemWriter.trim().length > 0 ? systemWriter : SYSTEM_WRITER;
+  const criticSystem = systemCritic && systemCritic.trim().length > 0 ? systemCritic : SYSTEM_CRITIC;
 
-  // ---------- Writer pass ----------
-  const writerUser = {
-    payload,
-    examples: BULLET_EXAMPLES,
-  };
+  // Writer pass
+  const writerUser = { payload, examples: BULLET_EXAMPLES };
+  const writer = await callLLMWriter({ system: writerSystem, user: writerUser, model });
 
-  const writer = await callLLMWriter({
-    system: writerSystem,
-    user: writerUser,
-    model,
-  });
-
-  // ---------- Critic/repair pass ----------
+  // Critic/repair pass
   const criticUser = {
     candidate: writer.text,
     inputs: payload,
     rules: "Validate or repair to match the exact schema and constraints.",
   };
+  const critic = await callLLMCritic({ system: criticSystem, user: criticUser, model });
 
-  const critic = await callLLMCritic({
-    system: criticSystem,
-    user: criticUser,
-    model,
-  });
-
-  // Try to parse critic first (it should be strict JSON). Fallback to writer.
+  // Prefer critic JSON, then writer JSON, else return raw
   const parsedCritic = safeParseJson<unknown>(critic.text);
   if (parsedCritic.ok) {
-    return {
-      ok: true,
-      article_id: articleId,
-      data: parsedCritic.value,
-      writer_raw: writer.text,
-      critic_raw: critic.text,
-    };
+    return { ok: true, article_id: articleId, data: parsedCritic.value, writer_raw: writer.text, critic_raw: critic.text };
   }
-
   const parsedWriter = safeParseJson<unknown>(writer.text);
   if (parsedWriter.ok) {
-    return {
-      ok: true,
-      article_id: articleId,
-      data: parsedWriter.value,
-      writer_raw: writer.text,
-      critic_raw: critic.text,
-    };
+    return { ok: true, article_id: articleId, data: parsedWriter.value, writer_raw: writer.text, critic_raw: critic.text };
   }
 
-  // Neither parsed cleanly—return raw with error for debugging in the UI
   return {
     ok: false,
     article_id: articleId,
-    error: `Failed to parse JSON: critic="${parsedCritic.ok ? "" : parsedCritic.error}" writer="${parsedWriter.ok ? "" : parsedWriter.error}"`,
+    error: `Failed to parse JSON: critic="${parsedCritic.error}" writer="${parsedWriter.error}"`,
     writer_raw: writer.text,
     critic_raw: critic.text,
   };

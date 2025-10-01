@@ -11,12 +11,32 @@ type PromptsPayload = {
 
 type Result = unknown;
 
+/* ───────────────── helpers ───────────────── */
+
+function safeParseJson<T>(s: string): { ok: true; value: T } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(s) as T };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function isLikelyJson(contentType: string | null): boolean {
+  return !!contentType && contentType.toLowerCase().includes("application/json");
+}
+
+/* ───────────────── component ───────────────── */
+
 export default function Tester({ recent }: { recent: Row[] }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [id, setId] = useState<string>(recent[0]?.id ? String(recent[0].id) : "");
   const [systemWriter, setSystemWriter] = useState<string>("");
   const [systemCritic, setSystemCritic] = useState<string>("");
+
+  // for quick debugging context in the UI
+  const [lastStatus, setLastStatus] = useState<number | null>(null);
+  const [lastContentType, setLastContentType] = useState<string | null>(null);
 
   const canRun = useMemo(() => {
     const n = Number(id);
@@ -44,6 +64,8 @@ export default function Tester({ recent }: { recent: Row[] }) {
     }
     setLoading(true);
     setResult(null);
+    setLastStatus(null);
+    setLastContentType(null);
     try {
       const res = await fetch(`/api/test-brief/${n}`, {
         method: "POST",
@@ -51,18 +73,29 @@ export default function Tester({ recent }: { recent: Row[] }) {
         cache: "no-store",
         body: JSON.stringify({
           system_writer: systemWriter,
-          system_critic: systemCritic, // optional; can be blank to fall back
+          system_critic: systemCritic,
         } satisfies PromptsPayload),
       });
-      const json: Result = await res.json();
-      setResult(json);
+
+      const ct = res.headers.get("content-type");
+      const text = await res.text();
+      setLastStatus(res.status);
+      setLastContentType(ct);
+
+      if (!res.ok) {
+        const parsed = isLikelyJson(ct) ? safeParseJson<Result>(text) : ({ ok: false } as const);
+        setResult(parsed.ok ? parsed.value : { ok: false, status: res.status, body: text });
+        return;
+        }
+
+      const parsed = isLikelyJson(ct) ? safeParseJson<Result>(text) : safeParseJson<Result>(text);
+      setResult(parsed.ok ? parsed.value : text);
     } finally {
       setLoading(false);
     }
   }
 
   async function runDry() {
-    // fallback: GET using defaults from the server
     const n = Number(id);
     if (!Number.isFinite(n)) {
       alert("Enter a valid article id");
@@ -70,17 +103,30 @@ export default function Tester({ recent }: { recent: Row[] }) {
     }
     setLoading(true);
     setResult(null);
+    setLastStatus(null);
+    setLastContentType(null);
     try {
       const res = await fetch(`/api/test-brief/${n}`, { cache: "no-store" });
-      const json: Result = await res.json();
-      setResult(json);
+
+      const ct = res.headers.get("content-type");
+      const text = await res.text();
+      setLastStatus(res.status);
+      setLastContentType(ct);
+
+      if (!res.ok) {
+        const parsed = isLikelyJson(ct) ? safeParseJson<Result>(text) : ({ ok: false } as const);
+        setResult(parsed.ok ? parsed.value : { ok: false, status: res.status, body: text });
+        return;
+      }
+
+      const parsed = isLikelyJson(ct) ? safeParseJson<Result>(text) : safeParseJson<Result>(text);
+      setResult(parsed.ok ? parsed.value : text);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    // Prefill once so you can start editing immediately
     void loadDefaults();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -142,7 +188,10 @@ export default function Tester({ recent }: { recent: Row[] }) {
 
       {result !== null && (
         <div className="mt-4">
-          <div className="mb-1 text-sm font-medium">Result</div>
+          <div className="mb-1 text-sm font-medium">
+            Result {lastStatus !== null && <>· <span className="text-zinc-500">HTTP {lastStatus}</span></>}
+            {lastContentType && <> · <span className="text-zinc-500">{lastContentType}</span></>}
+          </div>
           <pre className="max-h-[60vh] overflow-auto rounded bg-zinc-50 p-3 text-xs">
             {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
           </pre>
