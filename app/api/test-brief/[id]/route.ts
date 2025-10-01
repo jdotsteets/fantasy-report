@@ -1,12 +1,21 @@
+// app/api/test-brief/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { SYSTEM_WRITER, SYSTEM_CRITIC } from "@/lib/agent/prompts";
 import { dbQueryRow } from "@/lib/db";
-// import your existing LLM runner – adapt the call below to your real function
 import { runWriterAndCriticForArticle } from "@/lib/agent/llm";
 
 export const runtime = "nodejs";
 
-type Params = { id: string };
+/* ───────────── helpers ───────────── */
+
+function extractId(req: NextRequest): number | null {
+  // Robustly grab the last non-empty path segment as the id
+  const { pathname } = new URL(req.url);
+  const clean = pathname.replace(/\/+$/, "");
+  const last = clean.split("/").pop();
+  const n = Number(last);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 async function articleExists(id: number): Promise<boolean> {
   const row = await dbQueryRow<{ exists: boolean }>(
@@ -16,9 +25,11 @@ async function articleExists(id: number): Promise<boolean> {
   return Boolean(row?.exists);
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Params }) {
-  const id = Number(params.id);
-  if (!Number.isFinite(id)) {
+/* ───────────── GET: run with defaults ───────────── */
+
+export async function GET(req: NextRequest) {
+  const id = extractId(req);
+  if (!id) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
   if (!(await articleExists(id))) {
@@ -29,19 +40,27 @@ export async function GET(_req: NextRequest, { params }: { params: Params }) {
     systemWriter: SYSTEM_WRITER,
     systemCritic: SYSTEM_CRITIC,
   });
+
   return NextResponse.json(result);
 }
 
-export async function POST(req: NextRequest, { params }: { params: Params }) {
-  const id = Number(params.id);
-  if (!Number.isFinite(id)) {
+/* ───────────── POST: allow prompt overrides ───────────── */
+
+type Body = {
+  system_writer?: string;
+  system_critic?: string;
+  model?: string;
+};
+
+export async function POST(req: NextRequest) {
+  const id = extractId(req);
+  if (!id) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
   if (!(await articleExists(id))) {
     return NextResponse.json({ ok: false, error: "Article not found" }, { status: 404 });
   }
 
-  type Body = { system_writer?: string; system_critic?: string };
   let body: Body;
   try {
     body = (await req.json()) as Body;
@@ -50,18 +69,19 @@ export async function POST(req: NextRequest, { params }: { params: Params }) {
   }
 
   const systemWriter =
-    typeof body.system_writer === "string" && body.system_writer.trim()
+    typeof body.system_writer === "string" && body.system_writer.trim().length > 0
       ? body.system_writer
       : SYSTEM_WRITER;
 
   const systemCritic =
-    typeof body.system_critic === "string" && body.system_critic.trim()
+    typeof body.system_critic === "string" && body.system_critic.trim().length > 0
       ? body.system_critic
       : SYSTEM_CRITIC;
 
   const result = await runWriterAndCriticForArticle(id, {
     systemWriter,
     systemCritic,
+    model: body.model,
   });
 
   return NextResponse.json(result);
