@@ -24,7 +24,10 @@ type DraftRow = {
 
 function isAuthorized(req: NextRequest): boolean {
   const s = process.env.CRON_SECRET;
-  return !s || req.headers.get("x-cron-secret") === s;
+  if (!s) return true;
+  const header = req.headers.get("x-cron-secret");
+  const query = new URL(req.url).searchParams.get("cron_secret");
+  return header === s || query === s;
 }
 
 function clampIsoFuture(dt: Date): string {
