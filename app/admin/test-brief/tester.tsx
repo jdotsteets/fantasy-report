@@ -1,59 +1,152 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Row = { id: number; title: string; domain: string | null; published_at: Date | string | null };
 
+type PromptsPayload = {
+  system_writer: string;
+  system_critic: string;
+};
+
+type Result = unknown;
+
 export default function Tester({ recent }: { recent: Row[] }) {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<unknown | null>(null); // <- allow null
+  const [result, setResult] = useState<Result | null>(null);
   const [id, setId] = useState<string>(recent[0]?.id ? String(recent[0].id) : "");
+  const [systemWriter, setSystemWriter] = useState<string>("");
+  const [systemCritic, setSystemCritic] = useState<string>("");
 
-  async function run() {
+  const canRun = useMemo(() => {
+    const n = Number(id);
+    return Number.isFinite(n) && n > 0 && systemWriter.trim().length > 0;
+  }, [id, systemWriter]);
+
+  async function loadDefaults() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/test-brief/prompts", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to load prompts (${res.status})`);
+      const json = (await res.json()) as PromptsPayload;
+      setSystemWriter(json.system_writer);
+      setSystemCritic(json.system_critic);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runWithOverrides() {
     const n = Number(id);
     if (!Number.isFinite(n)) {
       alert("Enter a valid article id");
       return;
     }
     setLoading(true);
+    setResult(null);
     try {
-      const res = await fetch(`/api/test-brief/${n}`, { cache: "no-store" });
-      const json: unknown = await res.json();
+      const res = await fetch(`/api/test-brief/${n}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          system_writer: systemWriter,
+          system_critic: systemCritic, // optional; can be blank to fall back
+        } satisfies PromptsPayload),
+      });
+      const json: Result = await res.json();
       setResult(json);
     } finally {
       setLoading(false);
     }
   }
 
+  async function runDry() {
+    // fallback: GET using defaults from the server
+    const n = Number(id);
+    if (!Number.isFinite(n)) {
+      alert("Enter a valid article id");
+      return;
+    }
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/test-brief/${n}`, { cache: "no-store" });
+      const json: Result = await res.json();
+      setResult(json);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // Prefill once so you can start editing immediately
+    void loadDefaults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <section className="rounded border p-4">
-      <h2 className="mb-3 text-lg font-semibold">Run a dry-run</h2>
-      <div className="flex gap-2">
+      <h2 className="mb-3 text-lg font-semibold">Prompt Workbench</h2>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           value={id}
           onChange={(e) => setId(e.target.value)}
           placeholder="article_id"
           className="w-40 rounded border px-2 py-1"
         />
-        <button className="rounded border px-3 py-1 text-sm hover:bg-zinc-50" onClick={run} disabled={loading}>
-          {loading ? "Running…" : "Run"}
+        <button
+          className="rounded border px-3 py-1 text-sm hover:bg-zinc-50"
+          onClick={runDry}
+          disabled={loading}
+          title="Run with server defaults (no overrides)"
+        >
+          {loading ? "Running…" : "Run (defaults)"}
         </button>
-        {id && (
-          <a
-            className="rounded border px-3 py-1 text-sm hover:bg-zinc-50"
-            href={`/api/test-brief/${id}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open raw JSON
-          </a>
-        )}
+        <button
+          className="rounded border px-3 py-1 text-sm hover:bg-zinc-50"
+          onClick={loadDefaults}
+          disabled={loading}
+          title="Reload SYSTEM_WRITER and SYSTEM_CRITIC from file"
+        >
+          {loading ? "Loading…" : "Load defaults"}
+        </button>
+        <button
+          className="rounded border px-3 py-1 text-sm hover:bg-zinc-50"
+          onClick={runWithOverrides}
+          disabled={loading || !canRun}
+          title="POST with your edited prompts"
+        >
+          {loading ? "Running…" : "Run with overrides"}
+        </button>
       </div>
 
-      {result !== null && ( // <- boolean, not unknown
-        <pre className="mt-4 max-h-[60vh] overflow-auto rounded bg-zinc-50 p-3 text-xs">
-          {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
-        </pre>
+      {/* WRITER PROMPT */}
+      <label className="mb-1 block text-sm font-medium">SYSTEM_WRITER override</label>
+      <textarea
+        value={systemWriter}
+        onChange={(e) => setSystemWriter(e.target.value)}
+        placeholder="Paste or edit SYSTEM_WRITER here…"
+        className="mb-4 h-56 w-full resize-y whitespace-pre-wrap rounded border p-2 font-mono text-xs"
+      />
+
+      {/* CRITIC PROMPT (optional) */}
+      <label className="mb-1 block text-sm font-medium">SYSTEM_CRITIC override (optional)</label>
+      <textarea
+        value={systemCritic}
+        onChange={(e) => setSystemCritic(e.target.value)}
+        placeholder="Paste or edit SYSTEM_CRITIC here…"
+        className="mb-4 h-40 w-full resize-y whitespace-pre-wrap rounded border p-2 font-mono text-xs"
+      />
+
+      {result !== null && (
+        <div className="mt-4">
+          <div className="mb-1 text-sm font-medium">Result</div>
+          <pre className="max-h-[60vh] overflow-auto rounded bg-zinc-50 p-3 text-xs">
+            {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
+          </pre>
+        </div>
       )}
     </section>
   );

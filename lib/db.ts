@@ -81,6 +81,15 @@ export async function dbQueryRows<T extends QueryResultRow>(
   return res.rows;
 }
 
+export async function dbQueryRow<T extends QueryResultRow>(
+  text: string,
+  values: ReadonlyArray<unknown> = [],
+  label?: string
+): Promise<T | null> {
+  const rows = await dbQueryRows<T>(text, values, label);
+  return rows.length > 0 ? rows[0] : null;
+}
+
 // Optional helper for transactions without leaking clients
 export async function withTransaction<R>(fn: (client: PoolClientLike) => Promise<R>): Promise<R> {
   const client = await pool.connect();
