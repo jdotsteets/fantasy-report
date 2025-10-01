@@ -19,7 +19,7 @@ type DraftRow = {
   body: string;
   cta: string | null;
   media_url: string | null;
-  scheduled_for: string; // ISO string
+  scheduled_for: string;
 };
 
 function isAuthorized(req: NextRequest): boolean {
@@ -89,9 +89,9 @@ async function runSchedule(dry: boolean): Promise<{
   scheduled: number;
   slots: readonly string[];
   jitter: string;
-  note?: string;
   picked?: number;
   fresh?: number;
+  note?: string;
 }> {
   const topics = await fetchFreshTopics({ windowHours: 24, maxItems: 12 });
   if (topics.length === 0) {
@@ -103,7 +103,7 @@ async function runSchedule(dry: boolean): Promise<{
     return { ok: true, scheduled: 0, slots: SLOTS_LOCAL, jitter: "±30m", note: "no drafts" };
   }
 
-  // In-batch de-dupe
+  // in-batch de-dupe (by article + normalized link)
   const uniqByArticle = new Map<number, typeof drafts[number]>();
   const seenLinks = new Set<string>();
   for (const d of drafts) {
@@ -117,21 +117,12 @@ async function runSchedule(dry: boolean): Promise<{
   }
   const candidates = Array.from(uniqByArticle.values());
 
-  // Cross-batch de-dupe (lookback)
-  const candidateIds = candidates
-    .map((d) => Number(d.topicRef))
-    .filter((n) => Number.isFinite(n));
-  const recent = await recentlyQueuedArticleIds(candidateIds, MAX_RECENT_HOURS_DEDUPE);
+  // cross-batch de-dupe (lookback)
+  const ids = candidates.map((d) => Number(d.topicRef)).filter((n) => Number.isFinite(n));
+  const recent = await recentlyQueuedArticleIds(ids, MAX_RECENT_HOURS_DEDUPE);
   const fresh = candidates.filter((d) => !recent.has(Number(d.topicRef)));
-
   if (fresh.length === 0) {
-    return {
-      ok: true,
-      scheduled: 0,
-      slots: SLOTS_LOCAL,
-      jitter: "±30m",
-      note: "all links recently used"
-    };
+    return { ok: true, scheduled: 0, slots: SLOTS_LOCAL, jitter: "±30m", note: "all links recently used" };
   }
 
   const pick = fresh.slice(0, Math.min(MAX_SCHEDULED_PER_RUN, fresh.length));
@@ -147,15 +138,7 @@ async function runSchedule(dry: boolean): Promise<{
   }));
 
   if (dry) {
-    return {
-      ok: true,
-      scheduled: rows.length,
-      slots: SLOTS_LOCAL,
-      jitter: "±30m",
-      picked: pick.length,
-      fresh: fresh.length,
-      note: "dry-run (no insert)"
-    };
+    return { ok: true, scheduled: rows.length, slots: SLOTS_LOCAL, jitter: "±30m", picked: pick.length, fresh: fresh.length, note: "dry-run (no insert)" };
   }
 
   const values = rows
@@ -164,17 +147,7 @@ async function runSchedule(dry: boolean): Promise<{
       return `($${j + 1},$${j + 2},$${j + 3},$${j + 4},$${j + 5},$${j + 6},$${j + 7},$${j + 8})`;
     })
     .join(", ");
-
-  const params = rows.flatMap((r) => [
-    r.article_id,
-    r.platform,
-    r.status,
-    r.hook,
-    r.body,
-    r.cta,
-    r.media_url,
-    r.scheduled_for
-  ]);
+  const params = rows.flatMap((r) => [r.article_id, r.platform, r.status, r.hook, r.body, r.cta, r.media_url, r.scheduled_for]);
 
   await dbQuery(
     `insert into social_drafts
@@ -183,14 +156,7 @@ async function runSchedule(dry: boolean): Promise<{
     params
   );
 
-  return {
-    ok: true,
-    scheduled: rows.length,
-    slots: SLOTS_LOCAL,
-    jitter: "±30m",
-    picked: pick.length,
-    fresh: fresh.length
-  };
+  return { ok: true, scheduled: rows.length, slots: SLOTS_LOCAL, jitter: "±30m", picked: pick.length, fresh: fresh.length };
 }
 
 export async function GET(req: NextRequest) {
@@ -211,7 +177,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as { dry?: boolean };
     dry = body?.dry === true;
   } catch {
-    // no body → dry=false
+    // no body -> dry=false
   }
   const result = await runSchedule(dry);
   return NextResponse.json(result);
