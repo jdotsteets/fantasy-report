@@ -11,7 +11,11 @@
     { "path": "/api/social/sections/seed?type=start-sit","schedule": "0 14 * * 6,0" },
     { "path": "/api/social/sections/seed?type=news",     "schedule": "15 1 * * 1"  },
 
-    { "path": "/api/social/worker", "schedule": "*/5 * * * *" }
+    { "path": "/api/social/worker", "schedule": "*/5 * * * *" },
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 2" }, 
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 5" }, 
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 6" }  
+ 
   ],
   "build": {
     "env": { "NODE_VERSION": "20" }
