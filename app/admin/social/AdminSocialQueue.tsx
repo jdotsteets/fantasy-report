@@ -85,24 +85,29 @@ export default function AdminSocialQueue({ rows }: { rows: SocialQueueRow[] }) {
     }
   }
 
-async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; shortlink?: string; error?: string; detail?: string }> {
-  const res = await fetch(`/api/social/publish-now/${id}`, { method: "POST" });
-  let j: { ok?: boolean; tweetId?: string; shortlink?: string; error?: string; detail?: string } = {};
-  try {
-    j = await res.json();
-  } catch {
-    // ignore parse errors; we'll fall back to status text
+  async function publishNow(id: number): Promise<{
+    ok: boolean;
+    tweetId?: string;
+    shortlink?: string;
+    error?: string;
+    detail?: string;
+  }> {
+    const res = await fetch(`/api/social/publish-now/${id}`, { method: "POST" });
+    let j: { ok?: boolean; tweetId?: string; shortlink?: string; error?: string; detail?: string } = {};
+    try {
+      j = await res.json();
+    } catch {
+      // ignore parse errors; we'll fall back to status text
+    }
+    if (!res.ok || !j.ok) {
+      return {
+        ok: false,
+        error: j.error ?? res.statusText ?? "Publish failed",
+        detail: j.detail,
+      };
+    }
+    return { ok: true, tweetId: j.tweetId, shortlink: j.shortlink };
   }
-  if (!res.ok || !j.ok) {
-    return {
-      ok: false,
-      error: j.error ?? res.statusText ?? "Publish failed",
-      detail: j.detail,
-    };
-  }
-  return { ok: true, tweetId: j.tweetId, shortlink: j.shortlink };
-}
-
 
   async function handleApprove(id: number) {
     setWorkingId(id);
@@ -125,6 +130,20 @@ async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; 
     }
   }
 
+  async function handleScheduleAllDrafts(minutesFromNow: number) {
+    if (!grouped["draft"]?.length) return;
+    if (!window.confirm(`Schedule all ${grouped["draft"].length} drafts for +${minutesFromNow} minutes?`)) return;
+    setBusyGlobal(true);
+    try {
+      const when = new Date(Date.now() + minutesFromNow * 60 * 1000).toISOString();
+      const items = grouped["draft"];
+      await Promise.all(items.map((r) => updateDraft(r.id, { status: "scheduled", scheduled_for: when })));
+      window.location.reload();
+    } finally {
+      setBusyGlobal(false);
+    }
+  }
+
   async function handleDelete(id: number) {
     if (!window.confirm("Delete this draft? This cannot be undone.")) return;
     setWorkingId(id);
@@ -137,21 +156,20 @@ async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; 
   }
 
   async function handlePublishNow(id: number) {
-  setWorkingId(id);
-  try {
-    const result = await publishNow(id);
-    if (!result.ok) {
-      const msg = [result.error, result.detail].filter(Boolean).join("\n");
-      alert(`❌ Post failed:\n${msg}`);
-      return;
+    setWorkingId(id);
+    try {
+      const result = await publishNow(id);
+      if (!result.ok) {
+        const msg = [result.error, result.detail].filter(Boolean).join("\n");
+        alert(`❌ Post failed:\n${msg}`);
+        return;
+      }
+      alert(`✅ Posted!\nTweet ID: ${result.tweetId}\nLink: ${result.shortlink}`);
+      window.location.reload();
+    } finally {
+      setWorkingId(null);
     }
-    alert(`✅ Posted!\nTweet ID: ${result.tweetId}\nLink: ${result.shortlink}`);
-    window.location.reload();
-  } finally {
-    setWorkingId(null);
   }
-}
-
 
   async function handleSeed(type: "waivers" | "rankings" | "news" | "injuries" | "start-sit") {
     setBusyGlobal(true);
@@ -178,16 +196,39 @@ async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; 
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Social Queue</h1>
         <div className="flex flex-wrap gap-2">
-          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("waivers")} disabled={busyGlobal}>Waivers</button>
-          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("rankings")} disabled={busyGlobal}>Rankings</button>
-          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("news")} disabled={busyGlobal}>News</button>
-          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("injuries")} disabled={busyGlobal}>Injuries</button>
-          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("start-sit")} disabled={busyGlobal}>Start/Sit</button>
-          <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={handleRunWorker} disabled={busyGlobal}>Post All Due</button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("waivers")} disabled={busyGlobal}>
+            Waivers
+          </button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("rankings")} disabled={busyGlobal}>
+            Rankings
+          </button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("news")} disabled={busyGlobal}>
+            News
+          </button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("injuries")} disabled={busyGlobal}>
+            Injuries
+          </button>
+          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSeed("start-sit")} disabled={busyGlobal}>
+            Start/Sit
+          </button>
+
+          {/* NEW: Bulk quick schedule for timeliness */}
+          <button
+            className="px-3 py-1 rounded-xl border disabled:opacity-50"
+            onClick={() => handleScheduleAllDrafts(10)}
+            disabled={busyGlobal || !grouped["draft"]?.length}
+            title="Schedule every Draft for ~10 minutes from now"
+          >
+            Schedule All Drafts +10m
+          </button>
+
+          <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={handleRunWorker} disabled={busyGlobal}>
+            Post All Due
+          </button>
         </div>
       </div>
 
-      {/* Generate 1 draft on-demand */}
+      {/* Generate 1 on-demand */}
       <div className="flex items-center gap-2">
         <select id="genType" className="px-2 py-1 rounded-xl border" disabled={busyGlobal} defaultValue="mix" onChange={() => { /* no-op */ }}>
           <option value="mix">Mix</option>
@@ -241,7 +282,9 @@ async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; 
 
                       {/* ID / debug mini-row */}
                       <div className="mt-1 text-xs text-gray-500 flex items-center gap-2">
-                        <span>Draft ID: <code className="text-gray-700">{r.id}</code></span>
+                        <span>
+                          Draft ID: <code className="text-gray-700">{r.id}</code>
+                        </span>
                         <button
                           type="button"
                           className="rounded border px-1.5 py-[1px] leading-none hover:bg-zinc-50"
@@ -292,6 +335,10 @@ async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; 
                           <button className="px-3 py-1 rounded-xl bg-black text-white disabled:opacity-50" onClick={() => handleApprove(r.id)} disabled={workingId === r.id}>
                             Approve
                           </button>
+                          {/* NEW: quick schedule for timeliness */}
+                          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSchedule(r.id, 10)} disabled={workingId === r.id} title="Schedule ~10 minutes from now">
+                            Schedule +10m
+                          </button>
                           <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSchedule(r.id, 60)} disabled={workingId === r.id}>
                             Schedule +60m
                           </button>
@@ -310,6 +357,10 @@ async function publishNow(id: number): Promise<{ ok: boolean; tweetId?: string; 
                       )}
                       {bucket === "approved" && (
                         <>
+                          {/* NEW: quick schedule for timeliness */}
+                          <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSchedule(r.id, 10)} disabled={workingId === r.id} title="Schedule ~10 minutes from now">
+                            Schedule +10m
+                          </button>
                           <button className="px-3 py-1 rounded-xl border disabled:opacity-50" onClick={() => handleSchedule(r.id, 30)} disabled={workingId === r.id}>
                             Schedule +30m
                           </button>

@@ -7,17 +7,21 @@ import { dbQuery, dbQueryRows } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Window + throughput targets (Central Time)
-const CT_START_HOUR = 7;   // 7:00 AM
-const CT_END_HOUR = 22;    // 10:00 PM
+/* ───────────────────────── Config ─────────────────────────
+   Window + throughput targets (Central Time)
+---------------------------------------------------------------- */
+
+const CT_START_HOUR = 7;    // 7:00 AM
+const CT_END_HOUR = 22;     // 10:00 PM
 const DAILY_TARGET_POSTS = 9;
 
-// cadence per invocation
-const MAX_SCHEDULED_PER_RUN = 2;        // schedule up to 2 each run (kept small to avoid bursts)
-const RECENT_HOURS_DEDUPE = 48;
+const MAX_SCHEDULED_PER_RUN = 3;     // schedule up to 3 each run
+const RECENT_HOURS_DEDUPE = 24;      // re-allow after 24h
+const TOPIC_WINDOW_HOURS = 6;        // only consider last 6h for freshness
 
-// "x" only for now
 type Platform = "x";
+
+/* ───────────────────────── Types ───────────────────────── */
 
 type DraftRow = {
   article_id: number;
@@ -30,6 +34,8 @@ type DraftRow = {
   scheduled_for: string; // ISO
 };
 
+/* ──────────────────────── Auth helper ───────────────────── */
+
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return true; // unlocked in dev
@@ -38,51 +44,45 @@ function isAuthorized(req: NextRequest): boolean {
   return header === secret || query === secret;
 }
 
-/* ───────────────── Time helpers (Central) ───────────────── */
-
-function nowUTC(): Date { return new Date(); }
+/* ─────────────────────── Time helpers ───────────────────── */
 
 function nowInTZ(tz: string): Date {
-  // Convert "now" to a Date object that carries the wall-clock time in `tz`
-  // (offset-safe without external libs)
   const now = new Date();
-  const parts = new Date(now.toLocaleString("en-US", { timeZone: tz }));
-  // `parts` has wall-clock in tz; to convert back to UTC timestamp, shift by diff
-  const diff = now.getTime() - parts.getTime();
-  return new Date(now.getTime() - diff);
+  const localInTz = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+  const diff = now.getTime() - localInTz.getTime();
+  return new Date(now.getTime() - diff); // same instant, wall-clock of tz
 }
 
-function ctNow(): Date { return nowInTZ("America/Chicago"); }
+function ctNow(): Date {
+  return nowInTZ("America/Chicago");
+}
 
 function isWithinCTWindow(d: Date): boolean {
   const h = d.getHours();
   return h >= CT_START_HOUR && h < CT_END_HOUR;
 }
 
-function addMinutes(d: Date, mins: number): Date {
-  return new Date(d.getTime() + mins * 60_000);
-}
-
-/** schedule_for within the next 5–25 minutes (always <= 30 mins) */
-function nextIsoWithin30Min(): string {
-  const base = nowUTC();
-  const jitter = 5 + Math.floor(Math.random() * 21); // 5..25
-  const when = addMinutes(base, jitter);
+/** schedule_for within the next 2–10 minutes */
+function nextIsoWithin10Min(): string {
+  const now = new Date();
+  const jitterMinutes = 2 + Math.floor(Math.random() * 9); // 2..10
+  const when = new Date(now.getTime() + jitterMinutes * 60_000);
   when.setSeconds(0, 0);
   return when.toISOString();
 }
 
-/* ───────────────── DB helpers ───────────────── */
+/* ──────────────────────── DB helpers ───────────────────── */
 
 async function getScheduledCountTodayCT(): Promise<number> {
-  // Count scheduled posts for "today in CT" within the 7–22 window
   const rows = await dbQueryRows<{ n: string }>(
     `
-    select count(*)::text as n
-      from social_drafts
-     where status = 'scheduled'
-       and (scheduled_for at time zone 'America/Chicago')::date = (now() at time zone 'America/Chicago')::date
-       and extract(hour from (scheduled_for at time zone 'America/Chicago')) between $1 and $2 - 1
+      select count(*)::text as n
+        from social_drafts
+       where status = 'scheduled'
+         and (scheduled_for at time zone 'America/Chicago')::date
+             = (now() at time zone 'America/Chicago')::date
+         and extract(hour from (scheduled_for at time zone 'America/Chicago'))
+             between $1 and $2 - 1
     `,
     [CT_START_HOUR, CT_END_HOUR],
     "count scheduled today CT window"
@@ -90,7 +90,10 @@ async function getScheduledCountTodayCT(): Promise<number> {
   return rows.length ? Number(rows[0].n) : 0;
 }
 
-async function recentlyQueuedArticleIds(candidateIds: number[], lookbackHours: number): Promise<Set<number>> {
+async function recentlyQueuedArticleIds(
+  candidateIds: number[],
+  lookbackHours: number
+): Promise<Set<number>> {
   if (candidateIds.length === 0) return new Set<number>();
   const rows = await dbQueryRows<{ article_id: number }>(
     `
@@ -104,7 +107,7 @@ async function recentlyQueuedArticleIds(candidateIds: number[], lookbackHours: n
   return new Set(rows.map((r) => r.article_id));
 }
 
-/* ───────────────── core run ───────────────── */
+/* ───────────────────────── Core run ─────────────────────── */
 
 async function runSchedule(dry: boolean): Promise<{
   ok: true;
@@ -114,12 +117,11 @@ async function runSchedule(dry: boolean): Promise<{
   scheduledTodayCT: number;
   note?: string;
 }> {
-  // Respect Central window
+  // Respect Central-time posting window
   const ct = ctNow();
   if (!isWithinCTWindow(ct)) {
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT: 0, note: "outside CT window" };
-  }
-
+    }
   // Current throughput state
   const scheduledTodayCT = await getScheduledCountTodayCT();
   const remaining = Math.max(DAILY_TARGET_POSTS - scheduledTodayCT, 0);
@@ -127,8 +129,8 @@ async function runSchedule(dry: boolean): Promise<{
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT, note: "daily cap reached" };
   }
 
-  // Source topics/drafts
-  const topics = await fetchFreshTopics({ windowHours: 24, maxItems: 16 });
+  // Source topics/drafts (fresh)
+  const topics = await fetchFreshTopics({ windowHours: TOPIC_WINDOW_HOURS, maxItems: 16 });
   if (topics.length === 0) {
     return { ok: true, dry, scheduled: 0, deficit: remaining, scheduledTodayCT, note: "no topics" };
   }
@@ -170,12 +172,18 @@ async function runSchedule(dry: boolean): Promise<{
     body: d.body,
     cta: d.cta ?? null,
     media_url: null,
-    // ⬇️ within 30 minutes from now for timeliness
-    scheduled_for: nextIsoWithin30Min(),
+    scheduled_for: nextIsoWithin10Min(),
   }));
 
   if (dry) {
-    return { ok: true, dry, scheduled: rows.length, deficit: remaining - rows.length, scheduledTodayCT, note: "dry-run (no insert)" };
+    return {
+      ok: true,
+      dry,
+      scheduled: rows.length,
+      deficit: remaining - rows.length,
+      scheduledTodayCT,
+      note: "dry-run (no insert)",
+    };
   }
 
   const values = rows
@@ -203,10 +211,16 @@ async function runSchedule(dry: boolean): Promise<{
     params
   );
 
-  return { ok: true, dry, scheduled: rows.length, deficit: remaining - rows.length, scheduledTodayCT };
+  return {
+    ok: true,
+    dry,
+    scheduled: rows.length,
+    deficit: remaining - rows.length,
+    scheduledTodayCT,
+  };
 }
 
-/* ───────────────── tiny utils ───────────────── */
+/* ───────────────────── Tiny utils ──────────────────────── */
 
 function normalizeUrl(u: string | null | undefined): string | null {
   if (!u) return null;
@@ -226,7 +240,7 @@ function normalizeUrl(u: string | null | undefined): string | null {
   }
 }
 
-/* ───────────────── route handlers ───────────────── */
+/* ───────────────────── Route handlers ──────────────────── */
 
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
@@ -245,7 +259,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as { dry?: boolean };
     dry = body?.dry === true;
-  } catch { /* no body -> dry=false */ }
+  } catch {
+    // no body -> dry=false
+  }
   const result = await runSchedule(dry);
   return NextResponse.json(result);
 }
