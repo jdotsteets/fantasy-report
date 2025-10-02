@@ -1,19 +1,8 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "0 12 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "10 14 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "20 16 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "30 18 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "40 20 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "50 22 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "5 0 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "15 2 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "25 4 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "35 6 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "45 8 * * 0-6" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "55 10 * * 0-6" },
+    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "0 * * * *" },
+    { "path": "/api/social/agent?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/30 * * * *" },
 
     { "path": "/api/social/sections/seed?type=waivers",  "schedule": "0 14 * * 1,2" },
     { "path": "/api/social/sections/seed?type=rankings", "schedule": "0 17 * * 3" },
@@ -22,7 +11,7 @@
     { "path": "/api/social/sections/seed?type=start-sit","schedule": "0 14 * * 6,0" },
     { "path": "/api/social/sections/seed?type=news",     "schedule": "15 1 * * 1"  },
 
-    { "path": "/api/social/worker", "schedule": "*/10 * * * *" }
+    { "path": "/api/social/worker", "schedule": "*/5 * * * *" }
   ],
   "build": {
     "env": { "NODE_VERSION": "20" }

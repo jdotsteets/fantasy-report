@@ -1,4 +1,4 @@
-//app/src/writing/renderDrafts.ts
+// app/src/writing/renderDrafts.ts
 import type { Draft, Platform, Topic } from "../types";
 
 /* ───────────────────────── Config ───────────────────────── */
@@ -25,21 +25,68 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupeConsecutiveWords(s: string): string {
+  // collapse exact consecutive duplicates: "news reaction news reaction" -> "news reaction"
+  return s.replace(/\b(\w+)(\s+\1\b)+/gi, "$1");
+}
+
+/* ─────────────── Generic/placeholder suppression ─────────────── */
+
+const GENERIC_PHRASES: readonly string[] = [
+  "news reaction",
+  "reaction",
+  "breaking",
+  "update",
+  "latest",
+  "new post",
+  "read more",
+  "click here",
+  "details",
+  "story",
+  "roundup",
+];
+
+function isGeneric(s: string): boolean {
+  const n = normalize(s).replace(/[.!?]+$/g, "");
+  if (!n) return true;
+  for (const g of GENERIC_PHRASES) {
+    if (n === g || n.startsWith(`${g} `) || n.endsWith(` ${g}`)) return true;
+  }
+  // If it’s just 1–2 short words, treat as generic
+  const words = n.split(" ").filter(Boolean);
+  if (words.length <= 2 && n.length < 14) return true;
+  return false;
+}
+
+/** Quality gate for bodies; falls back to title if too weak. */
+function needsFallbackToTitle(body: string, title: string): boolean {
+  if (!body) return true;
+  const b = normalize(dedupeConsecutiveWords(body));
+  const t = normalize(cleanTitle(title));
+  if (b.length < 12) return true;
+  if (isGeneric(b)) return true;
+  // overly repetitive like "update update." or "news news reaction."
+  if (/\b(\w+)\b(?:\s+\1\b){1,}/i.test(b)) return true;
+  // if body basically equals the generic angle/stat or just equals the title without link, allow but we may still keep it.
+  return false;
+}
+
 /* ───────────────────────── Hook builder ─────────────────────────
    Strategy:
-   - If we have an explicit “angle”, lead with that (short and punchy).
-   - Else: use the cleaned, truncated title (no generic prefixes).
-   Keeps the hook tightly tied to the article.
+   - If we have a non-generic “angle”, lead with that (short and punchy).
+   - Else: use the cleaned, truncated title.
 ----------------------------------------------------------------- */
 
 function makeHook(t: Topic): string {
   const angle = (t.angle ?? "").trim();
-  if (angle.length > 0) {
-    // keep it short and actionable
+  if (angle.length > 0 && !isGeneric(angle)) {
     const short = truncate(angle.replace(/\s+/g, " "), TITLE_HOOK_MAX);
     return short;
   }
-  // fallback: title-only
   return truncate(cleanTitle(t.title), TITLE_HOOK_MAX);
 }
 
@@ -94,8 +141,9 @@ function phrasesFor(platform: Platform): readonly string[] {
 }
 
 function makeBody(t: Topic, platform: Platform, variant: number): string {
-  const stat = t.stat ? ensurePeriod(t.stat.trim()) : "";
-  const takeaway = t.angle ? ensurePeriod(t.angle.trim()) : "";
+  // sanitize placeholders from inputs
+  const goodStat = (t.stat && !isGeneric(t.stat)) ? ensurePeriod(t.stat.trim()) : "";
+  const goodAngle = (t.angle && !isGeneric(t.angle)) ? ensurePeriod(t.angle.trim()) : "";
 
   const lp = phrasesFor(platform);
   const linkPhrase = lp[variant % lp.length];
@@ -107,12 +155,24 @@ function makeBody(t: Topic, platform: Platform, variant: number): string {
 
   // Alternate ordering a bit (but keep concise)
   const variants: string[] = [
-    [stat, takeaway, linkBit].filter(Boolean).join(" ").trim(),
-    [takeaway, stat, linkBit].filter(Boolean).join(" ").trim(),
-    [(stat || takeaway), linkBit].filter(Boolean).join(" ").trim(),
+    [goodStat, goodAngle, linkBit].filter(Boolean).join(" ").trim(),
+    [goodAngle, goodStat, linkBit].filter(Boolean).join(" ").trim(),
+    [(goodStat || goodAngle), linkBit].filter(Boolean).join(" ").trim(),
   ];
 
-  return variants[variant % variants.length];
+  let body = variants[variant % variants.length];
+
+  // Clean up duplicates like "news reaction news reaction."
+  body = dedupeConsecutiveWords(body);
+
+  // Final quality gate: fallback to title if low quality
+  if (needsFallbackToTitle(body, t.title)) {
+    const titleOnly = cleanTitle(t.title);
+    // keep link behavior per platform
+    body = [titleOnly, linkBit].filter(Boolean).join(" ").trim();
+  }
+
+  return body;
 }
 
 /* ───────────────────────── Public API ───────────────────────── */
@@ -134,11 +194,11 @@ export async function renderDrafts(
         drafts.push({
           id: `${t.id}:${p}:v${i + 1}`,
           platform: p,
-          hook,                         // no generic “keys”; title/angle driven
+          hook, // title/angle driven; never generic
           body,
           cta: platformCta(p),
           mediaPath: undefined,
-          link: t.url,                  // kept for non-X platforms
+          link: t.url, // kept for non-X platforms
           status: "draft",
           scheduledFor: undefined,
           topicRef: t.id,
