@@ -11,10 +11,22 @@ export const dynamic = "force-dynamic";
 
 type Platform = "x";
 
+const DEFAULT_PLATFORMS: Platform[] = ["x"];
 const MAX_TOPICS = 8;
 const VARIANTS_PER_TOPIC = 2;
-const LOOKBACK_HOURS_DEDUPE = 24; // cross-batch by article_id
-const DEFAULT_PLATFORMS: Platform[] = ["x"];
+
+// Prefer very recent inputs for timeliness
+const TOPIC_WINDOW_HOURS = 3;
+
+// Cross-batch dedupe window by article_id
+const LOOKBACK_HOURS_DEDUPE = 24;
+
+// Keep the queue small to avoid long backlogs
+const INFLIGHT_CAP_PER_PLATFORM = 8 as const;
+const INFLIGHT_STATUSES = ["draft", "approved", "scheduled"] as const;
+
+// Auto-prune old in-flight drafts before creating new ones
+const STALE_HOURS_DELETE = 24;
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -109,6 +121,45 @@ function isNFLOnly(title: string, body?: string): boolean {
   return true;
 }
 
+async function deleteStaleInflight(staleHours: number): Promise<number> {
+  const res = await dbQuery(
+    `
+      delete from social_drafts
+       where status in ('draft','approved','scheduled')
+         and created_at < now() - interval '${staleHours} hours'
+    `
+  );
+  // dbQuery may or may not return rowCount; we ignore return type here
+  // Return 0 to keep TypeScript happy if rowCount is not exposed
+  return (res as unknown as { rowCount?: number }).rowCount ?? 0;
+}
+
+async function getInflightCount(platforms: Platform[]): Promise<Map<Platform, number>> {
+  const rows = await dbQueryRows<{ platform: Platform; cnt: number }>(
+    `select platform::text as platform, count(*)::int as cnt
+       from social_drafts
+      where status = any($1::text[])
+        and platform = any($2::text[])
+      group by platform`,
+    [INFLIGHT_STATUSES, platforms]
+  );
+  const m = new Map<Platform, number>();
+  for (const p of platforms) m.set(p, 0);
+  for (const r of rows) m.set(r.platform, r.cnt);
+  return m;
+}
+
+function computeAllowances(
+  inflight: Map<Platform, number>,
+  cap: number
+): Map<Platform, number> {
+  const allow = new Map<Platform, number>();
+  for (const [p, n] of inflight.entries()) {
+    allow.set(p, Math.max(0, cap - n));
+  }
+  return allow;
+}
+
 /* ───────────────────────── Core ───────────────────────── */
 
 async function runAgent(dry: boolean): Promise<{
@@ -116,15 +167,21 @@ async function runAgent(dry: boolean): Promise<{
   drafted: number;
   dry: boolean;
   note?: string;
+  pruned?: number;
 }> {
-  // 1) Pick topics, bias to freshness (last 6h) and NFL-only
-  const rawTopics = await fetchFreshTopics({ windowHours: 6, maxItems: MAX_TOPICS });
+  // 0) Prune stale in-flight rows so backlog never grows unbounded
+  const pruned = dry ? 0 : await deleteStaleInflight(STALE_HOURS_DELETE);
+
+  // 1) Pick topics, bias to freshness and NFL-only
+  const rawTopics = await fetchFreshTopics({ windowHours: TOPIC_WINDOW_HOURS, maxItems: MAX_TOPICS });
   const topics = rawTopics.filter((t) => {
     const tf = t as unknown as TopicForFilter;
     return isNFLOnly(tf.title ?? "", tf.body ?? tf.summary ?? "");
   });
 
-  if (topics.length === 0) return { ok: true, drafted: 0, dry, note: "no NFL topics found" };
+  if (topics.length === 0) {
+    return { ok: true, drafted: 0, dry, note: "no NFL topics found", pruned };
+  }
 
   // 2) Render variants for the target platforms
   const draftsAll = await renderDrafts(topics, {
@@ -141,7 +198,9 @@ async function runAgent(dry: boolean): Promise<{
     return true;
   });
 
-  if (drafts.length === 0) return { ok: true, drafted: 0, dry, note: "no renderable NFL drafts" };
+  if (drafts.length === 0) {
+    return { ok: true, drafted: 0, dry, note: "no renderable NFL drafts", pruned };
+  }
 
   // 3) Cross-batch de-dupe by article_id (lookback)
   const candidateIds = drafts.map((d) => toArticleId(d)).filter((n) => Number.isFinite(n));
@@ -152,10 +211,30 @@ async function runAgent(dry: boolean): Promise<{
     return Number.isFinite(aid) && !recent.has(aid);
   });
 
-  if (fresh.length === 0) return { ok: true, drafted: 0, dry, note: "all topics recently queued" };
+  if (fresh.length === 0) {
+    return { ok: true, drafted: 0, dry, note: "all topics recently queued", pruned };
+  }
+
+  // 3b) Throttle by platform to avoid big backlogs
+  const inflight = await getInflightCount(DEFAULT_PLATFORMS);
+  const allow = computeAllowances(inflight, INFLIGHT_CAP_PER_PLATFORM);
+
+  const bucketed = new Map<Platform, DraftLike[]>();
+  for (const p of DEFAULT_PLATFORMS) bucketed.set(p, []);
+
+  for (const d of fresh) {
+    const list = bucketed.get(d.platform)!;
+    if (list.length < (allow.get(d.platform) ?? 0)) list.push(d);
+  }
+
+  const toQueue: DraftLike[] = Array.from(DEFAULT_PLATFORMS).flatMap((p) => bucketed.get(p)!);
+
+  if (toQueue.length === 0) {
+    return { ok: true, drafted: 0, dry, note: "queue full (in-flight cap)", pruned };
+  }
 
   // 4) Build rows as SCHEDULED (auto-queue within ~10m)
-  const rows: DraftInsertRow[] = fresh.map((d) => ({
+  const rows: DraftInsertRow[] = toQueue.map((d) => ({
     article_id: toArticleId(d),
     platform: d.platform,
     status: "scheduled",
@@ -167,10 +246,10 @@ async function runAgent(dry: boolean): Promise<{
   }));
 
   if (dry) {
-    return { ok: true, drafted: rows.length, dry, note: "dry-run (no insert)" };
+    return { ok: true, drafted: rows.length, dry, note: "dry-run (no insert)", pruned };
   }
 
-  // 5) Bulk insert
+  // 5) Bulk insert with UPSERT safety (requires the partial unique index)
   const values = rows
     .map((_r, i) => {
       const j = i * 8;
@@ -189,15 +268,15 @@ async function runAgent(dry: boolean): Promise<{
     r.scheduled_for,
   ]);
 
-    await dbQuery(
-      `insert into social_drafts
-        (article_id, platform, status, hook, body, cta, media_url, scheduled_for)
-      values ${values}
-      on conflict on constraint u_social_drafts_article_platform_inflight do nothing`,
-      params
-    );
-    
-  return { ok: true, drafted: rows.length, dry };
+  await dbQuery(
+    `insert into social_drafts
+       (article_id, platform, status, hook, body, cta, media_url, scheduled_for)
+     values ${values}
+     on conflict on constraint u_social_drafts_article_platform_inflight do nothing`,
+    params
+  );
+
+  return { ok: true, drafted: rows.length, dry, pruned };
 }
 
 /* ───────────────────── Route Handlers ──────────────────── */
