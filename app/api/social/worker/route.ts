@@ -51,22 +51,24 @@ async function runOnce(dry = false): Promise<Result> {
   if (!bearer) return { processed: 0, postedIds: [], skipped: 0, dry };
 
   // Pull due items (status=scheduled and ready)
-  const due = await dbQueryRows<DueRow>(
-    `select d.id,
-            d.article_id,
-            d.hook,
-            d.body,
-            d.cta,
-            q.article_url
-       from social_drafts d
-       join v_social_queue q on q.id = d.id
-      where d.platform = 'x'
-        and d.status   = 'scheduled'
-        and d.scheduled_for is not null
-        and d.scheduled_for <= now()
-      order by d.id
-      limit 10`
-  );
+const due = await dbQueryRows<DueRow>(
+  `select d.id,
+          d.article_id,
+          d.hook,
+          d.body,
+          d.cta,
+          q.article_url
+     from social_drafts d
+     join v_social_queue q on q.id = d.id
+    where d.platform = 'x'
+      and d.status   = 'scheduled'
+      and d.scheduled_for is not null
+      and d.scheduled_for <= now()
+    order by q.published_at desc nulls last,
+             d.scheduled_for asc nulls last,
+             d.id desc
+    limit 10`
+);
   if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry };
 
   const client = new Client(bearer);
