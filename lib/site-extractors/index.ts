@@ -1,6 +1,22 @@
+// lib/site-extractors/index.ts
 import type { Extractor } from "./types";
-import { extractFantasyPros } from "./fantasypros";
+import { extractCBSWaivers } from "./cbs";
+import { extractFantasyPros } from "./fantasypros"; // 👈 use your file
 import { extractYahoo } from "./yahoo";
+
+
+export function getExtractor(u: URL): Extractor {
+  const host = u.hostname.toLowerCase();
+
+  if (host.endsWith("cbssports.com")) return extractCBSWaivers;
+  if (host.endsWith("fantasypros.com")) return extractFantasyPros; // 👈 map FP
+
+  // fallback: no-op extractor
+  return (_html) => [];
+}
+
+
+
 
 export { extractFantasyPros } from "./fantasypros";
 export { extractYahoo } from "./yahoo";
