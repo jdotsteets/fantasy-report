@@ -22,7 +22,7 @@ type Result = { processed: number; postedIds: number[]; skipped: number; dry?: b
 
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // unlocked in dev
+  if (!secret) return true;
   const header = req.headers.get("x-cron-secret");
   const query = new URL(req.url).searchParams.get("cron_secret");
   return header === secret || query === secret;
@@ -38,7 +38,7 @@ function baseUrl(): string {
 }
 
 async function ensureBriefShortlink(article_id: number): Promise<string> {
-  let brief = await getBriefByArticleId(article_id);
+  const brief = await getBriefByArticleId(article_id);
   if (!brief) {
     const gen = await generateBriefForArticle(article_id, true); // autopublish
     return `${baseUrl()}/b/${gen.created_brief_id}`;
@@ -67,17 +67,30 @@ async function fetchDue(): Promise<DueRow[]> {
   );
 }
 
-async function runOnce(dry = false): Promise<Result> {
-  // NOTE: `dry` => no network calls to X. Still generate/ensure brief so the worker path is exercised.
+type Mode = "live" | "dry" | "fast";
+
+/** 
+ * live: post to X and mark published
+ * dry:  build text + ensure brief shortlink, no X calls (good end-to-end test)
+ * fast: just count/preview IDs, no briefs, no X (instant)
+ */
+async function runOnce(mode: Mode): Promise<Result> {
+  if (mode === "fast") {
+    const due = await fetchDue();
+    return { processed: due.length, postedIds: due.map(d => d.id), skipped: 0, dry: true };
+  }
+
   const due = await fetchDue();
-  if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry };
+  if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry: mode !== "live" };
+
+  // Only fetch X bearer in live mode
+  const bearer = mode === "live" ? await getFreshXBearer() : null;
+  if (mode === "live" && !bearer) return { processed: 0, postedIds: [], skipped: 0 };
+
+  const client = bearer ? new Client(bearer) : null;
 
   const postedIds: number[] = [];
   let skipped = 0;
-
-  // Only initialize the client if not dry
-  const bearer = dry ? null : await getFreshXBearer();
-  const client = bearer ? new Client(bearer) : null;
 
   for (const row of due) {
     let short = "";
@@ -96,8 +109,8 @@ async function runOnce(dry = false): Promise<Result> {
     let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
     if (text.length > 270) text = text.slice(0, 267) + "…";
 
-    if (dry) {
-      // Don’t call Twitter in dry mode; just report what *would* post.
+    if (mode !== "live") {
+      // no network calls in dry/fast
       postedIds.push(row.id);
       continue;
     }
@@ -117,7 +130,7 @@ async function runOnce(dry = false): Promise<Result> {
     }
   }
 
-  return { processed: due.length, postedIds, skipped, dry };
+  return { processed: due.length, postedIds, skipped, dry: mode !== "live" };
 }
 
 export async function GET(req: NextRequest) {
@@ -125,28 +138,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  // ultra-fast diag: no X, no briefs, just counts
+  // instant diag (skip briefs + X)
   if (req.nextUrl.searchParams.get("diag") === "1") {
-    const [{ count }] = await dbQueryRows<{ count: string }>(
-      `select count(*)::text as count
-         from social_drafts d
-         join v_social_queue q on q.id = d.id
-        where d.platform = 'x'
-          and d.status   = 'scheduled'
-          and d.scheduled_for is not null
-          and d.scheduled_for <= now()`
-    );
-    return NextResponse.json({
-      ok: true,
-      hasSecret: Boolean(process.env.CRON_SECRET),
-      dueCount: Number(count ?? "0"),
-      now: new Date().toISOString(),
-    });
+    const res = await runOnce("fast");
+    return NextResponse.json({ ok: true, hasSecret: Boolean(process.env.CRON_SECRET), ...res, now: new Date().toISOString() });
   }
 
-  // fast dry-run: skips Twitter, still exercises brief creation
+  // dry=1 -> no X calls (but still ensures briefs)
   const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runOnce(dry);
+  const result = await runOnce(dry ? "dry" : "live");
   return NextResponse.json(result);
 }
 
@@ -155,6 +155,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runOnce(dry);
+  const result = await runOnce(dry ? "dry" : "live");
   return NextResponse.json(result);
 }
