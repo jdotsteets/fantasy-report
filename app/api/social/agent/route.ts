@@ -13,11 +13,16 @@ type Platform = "x";
 
 const MAX_TOPICS = 8;
 const VARIANTS_PER_TOPIC = 2;
-// keep de-dupe modest so a link doesn't re-queue too soon
-const LOOKBACK_HOURS_DEDUPE = 24;
+const LOOKBACK_HOURS_DEDUPE = 24; // cross-batch by article_id
 const DEFAULT_PLATFORMS: Platform[] = ["x"];
 
 /* ───────────────────────── Types ───────────────────────── */
+
+type TopicForFilter = {
+  title: string;
+  body?: string;
+  summary?: string;
+};
 
 type DraftLike = {
   topicRef: string | number; // article_id
@@ -25,6 +30,7 @@ type DraftLike = {
   body: string;
   cta?: string | null;
   platform: Platform;
+  link?: string | null; // for URL-level de-dupe
 };
 
 type DraftInsertRow = {
@@ -62,6 +68,24 @@ async function getRecentlyQueuedArticleIds(
   return new Set(rows.map((r) => r.article_id));
 }
 
+function normalizeUrl(u: string | null | undefined): string | null {
+  if (!u) return null;
+  try {
+    const url = new URL(u);
+    url.searchParams.delete("utm_source");
+    url.searchParams.delete("utm_medium");
+    url.searchParams.delete("utm_campaign");
+    url.searchParams.delete("utm_term");
+    url.searchParams.delete("utm_content");
+    const host = url.hostname.replace(/^www\./i, "");
+    const path = url.pathname.replace(/\/+$/, "");
+    const q = url.search ? `?${url.searchParams.toString()}` : "";
+    return `${host}${path}${q}`.toLowerCase();
+  } catch {
+    return u.trim().toLowerCase();
+  }
+}
+
 /** schedule_for within the next 2–10 minutes */
 function nextIsoWithin10Min(): string {
   const now = new Date();
@@ -69,6 +93,20 @@ function nextIsoWithin10Min(): string {
   const when = new Date(now.getTime() + jitterMinutes * 60_000);
   when.setSeconds(0, 0);
   return when.toISOString();
+}
+
+/** very lightweight NFL-only filter (exclude NCAA/college keywords) */
+function isNFLOnly(title: string, body?: string): boolean {
+  const text = `${title} ${body ?? ""}`.toLowerCase();
+  // common CFB markers/programs/conferences
+  if (
+    /\b(ncaa|college|cfb|alabama|georgia|lsu|ohio state|clemson|notre dame|auburn|michigan|longhorns|texas|usc|ucla|fsu|florida state|sec|big ten|big12|big 12|pac-12|pac 12|acc|sun belt|mac)\b/i.test(
+      text
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /* ───────────────────────── Core ───────────────────────── */
@@ -79,24 +117,37 @@ async function runAgent(dry: boolean): Promise<{
   dry: boolean;
   note?: string;
 }> {
-  // 1) Pick topics, bias to freshness (last 6h)
-  const topics = await fetchFreshTopics({ windowHours: 6, maxItems: MAX_TOPICS });
-  if (topics.length === 0) return { ok: true, drafted: 0, dry, note: "no topics found" };
+  // 1) Pick topics, bias to freshness (last 6h) and NFL-only
+  const rawTopics = await fetchFreshTopics({ windowHours: 6, maxItems: MAX_TOPICS });
+  const topics = rawTopics.filter((t) => {
+    const tf = t as unknown as TopicForFilter;
+    return isNFLOnly(tf.title ?? "", tf.body ?? tf.summary ?? "");
+  });
+
+  if (topics.length === 0) return { ok: true, drafted: 0, dry, note: "no NFL topics found" };
 
   // 2) Render variants for the target platforms
-  const drafts = await renderDrafts(topics, {
+  const draftsAll = await renderDrafts(topics, {
     platforms: DEFAULT_PLATFORMS,
     variantsPerTopic: VARIANTS_PER_TOPIC,
   });
-  if (drafts.length === 0) return { ok: true, drafted: 0, dry, note: "no renderable drafts" };
+
+  // 2a) In-batch de-dupe by normalized link (prevents duplicates across UTM variants)
+  const seenLinks = new Set<string>();
+  const drafts = (draftsAll as DraftLike[]).filter((d) => {
+    const norm = normalizeUrl(d.link ?? null) ?? String(toArticleId(d));
+    if (seenLinks.has(norm)) return false;
+    seenLinks.add(norm);
+    return true;
+  });
+
+  if (drafts.length === 0) return { ok: true, drafted: 0, dry, note: "no renderable NFL drafts" };
 
   // 3) Cross-batch de-dupe by article_id (lookback)
-  const candidateIds = drafts
-    .map((d) => toArticleId(d as DraftLike))
-    .filter((n) => Number.isFinite(n));
+  const candidateIds = drafts.map((d) => toArticleId(d)).filter((n) => Number.isFinite(n));
   const recent = await getRecentlyQueuedArticleIds(candidateIds, LOOKBACK_HOURS_DEDUPE);
 
-  const fresh = (drafts as DraftLike[]).filter((d) => {
+  const fresh = drafts.filter((d) => {
     const aid = toArticleId(d);
     return Number.isFinite(aid) && !recent.has(aid);
   });

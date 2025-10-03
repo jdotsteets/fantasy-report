@@ -75,28 +75,33 @@ function normalizeUpdatesForMethod(
     // sitemap_url irrelevant for scrape
   }
 
-  if (method === "adapter") {
-    // Set adapter from adapterKey; clear rss/scrape
-    base.adapter = payload.adapterKey ?? null;
-    base.rss_url = null;
-    base.scrape_selector = null;
+if (method === "adapter") {
+  base.adapter = payload.adapterKey ?? null;
+  base.rss_url = null;
+  base.scrape_selector = null;
 
-    // Ensure adapter_config exists
-    if (typeof base.adapter_config === "undefined" || base.adapter_config === null) {
-      base.adapter_config = {};
-    }
+  if (typeof base.adapter_config === "undefined" || base.adapter_config === null) {
+    base.adapter_config = {};
+  }
 
-    // Provide a sensible default sitemap_url if missing
-    if (!base.sitemap_url && payload.url) {
+  // ✅ Prefer an explicit sitemap/page from the caller, else fall back to the original URL,
+  // and only as a last resort default to the domain sitemap.xml.
+  if (!base.sitemap_url) {
+    const explicit = payload.updates?.sitemap_url ?? null;
+    if (explicit) {
+      base.sitemap_url = explicit;
+    } else if (payload.url) {
+      base.sitemap_url = payload.url; // keep the page-level URL that produced the 40 items
+    } else {
       try {
-        const u = new URL(payload.url);
+        const u = new URL(payload.url ?? "");
         base.sitemap_url = `${u.origin}/sitemap.xml`;
       } catch {
-        // ignore malformed URL
+        base.sitemap_url = null;
       }
     }
   }
-
+}
   // NOTE: We deliberately do NOT force sport here.
   // If you want to set sport (e.g., 'nfl') do it via payload.updates.sport
   // or add a domain-based default in your backend.
