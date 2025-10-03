@@ -1,8 +1,8 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-    { "path": "/api/social/agent-auto?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/5 12-3 * * *" },
-    { "path": "/api/social/agent?CRON_SECRET=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/30 * * * *" },
+    { "path": "/api/social/agent-auto?cron_secret=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/5 12-3 * * *" },
+    { "path": "/api/social/agent?cron_secret=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/5 12-3 * * *" },
 
     { "path": "/api/social/sections/seed?type=waivers",  "schedule": "0 14 * * 1,2" },
     { "path": "/api/social/sections/seed?type=rankings", "schedule": "0 17 * * 3" },
