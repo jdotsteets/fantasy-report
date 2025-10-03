@@ -46,34 +46,38 @@ async function ensureBriefShortlink(article_id: number): Promise<string> {
   return `${baseUrl()}/b/${brief.id}`;
 }
 
-async function runOnce(dry = false): Promise<Result> {
-  const bearer = await getFreshXBearer();
-  if (!bearer) return { processed: 0, postedIds: [], skipped: 0, dry };
+async function fetchDue(): Promise<DueRow[]> {
+  return dbQueryRows<DueRow>(
+    `select d.id,
+            d.article_id,
+            d.hook,
+            d.body,
+            d.cta,
+            q.article_url
+       from social_drafts d
+       join v_social_queue q on q.id = d.id
+      where d.platform = 'x'
+        and d.status   = 'scheduled'
+        and d.scheduled_for is not null
+        and d.scheduled_for <= now()
+      order by q.published_at desc nulls last,
+               d.scheduled_for asc nulls last,
+               d.id desc
+      limit 10`
+  );
+}
 
-  // Pull due items (status=scheduled and ready)
-const due = await dbQueryRows<DueRow>(
-  `select d.id,
-          d.article_id,
-          d.hook,
-          d.body,
-          d.cta,
-          q.article_url
-     from social_drafts d
-     join v_social_queue q on q.id = d.id
-    where d.platform = 'x'
-      and d.status   = 'scheduled'
-      and d.scheduled_for is not null
-      and d.scheduled_for <= now()
-    order by q.published_at desc nulls last,
-             d.scheduled_for asc nulls last,
-             d.id desc
-    limit 10`
-);
+async function runOnce(dry = false): Promise<Result> {
+  // NOTE: `dry` => no network calls to X. Still generate/ensure brief so the worker path is exercised.
+  const due = await fetchDue();
   if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry };
 
-  const client = new Client(bearer);
   const postedIds: number[] = [];
   let skipped = 0;
+
+  // Only initialize the client if not dry
+  const bearer = dry ? null : await getFreshXBearer();
+  const client = bearer ? new Client(bearer) : null;
 
   for (const row of due) {
     let short = "";
@@ -93,12 +97,13 @@ const due = await dbQueryRows<DueRow>(
     if (text.length > 270) text = text.slice(0, 267) + "…";
 
     if (dry) {
+      // Don’t call Twitter in dry mode; just report what *would* post.
       postedIds.push(row.id);
       continue;
     }
 
     try {
-      const res = await client.tweets.createTweet({ text });
+      const res = await client!.tweets.createTweet({ text });
       if (res.data?.id) {
         await dbQuery(`update social_drafts set status='published', updated_at=now() where id=$1`, [row.id]);
         postedIds.push(row.id);
@@ -115,16 +120,37 @@ const due = await dbQueryRows<DueRow>(
   return { processed: due.length, postedIds, skipped, dry };
 }
 
-export async function POST(req: NextRequest) {
+export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+
+  // ultra-fast diag: no X, no briefs, just counts
+  if (req.nextUrl.searchParams.get("diag") === "1") {
+    const [{ count }] = await dbQueryRows<{ count: string }>(
+      `select count(*)::text as count
+         from social_drafts d
+         join v_social_queue q on q.id = d.id
+        where d.platform = 'x'
+          and d.status   = 'scheduled'
+          and d.scheduled_for is not null
+          and d.scheduled_for <= now()`
+    );
+    return NextResponse.json({
+      ok: true,
+      hasSecret: Boolean(process.env.CRON_SECRET),
+      dueCount: Number(count ?? "0"),
+      now: new Date().toISOString(),
+    });
+  }
+
+  // fast dry-run: skips Twitter, still exercises brief creation
   const dry = req.nextUrl.searchParams.get("dry") === "1";
   const result = await runOnce(dry);
   return NextResponse.json(result);
 }
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

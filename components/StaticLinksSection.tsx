@@ -15,34 +15,32 @@ const CYCLE: StaticType[] = [
 ];
 
 type StaticRow = {
-  id: string | number;                // ← accept both
+  id: string | number;
   title: string | null;
   url: string | null;
   discovered_at?: string | null;
 };
 
-/* -------- normalize without `any` -------- */
+/* -------- helpers (typed; no any) -------- */
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
 
 const toStaticRow = (v: unknown): StaticRow | null => {
   if (!isObj(v)) return null;
-  const idRaw = v.id;
+  const idRaw = (v as { id?: unknown }).id;
   const hasId =
     typeof idRaw === "number" ||
     (typeof idRaw === "string" && idRaw.trim().length > 0);
   if (!hasId) return null;
 
-  const title =
-    typeof v.title === "string" ? v.title : null;
-  const url =
-    typeof v.url === "string" ? v.url : null;
+  const title = typeof (v as { title?: unknown }).title === "string" ? (v as { title: string }).title : null;
+  const url = typeof (v as { url?: unknown }).url === "string" ? (v as { url: string }).url : null;
   const discovered_at =
     typeof (v as { discovered_at?: unknown }).discovered_at === "string"
       ? (v as { discovered_at: string }).discovered_at
       : null;
 
-  return { id: (idRaw as string | number), title, url, discovered_at };
+  return { id: idRaw as string | number, title, url, discovered_at };
 };
 
 function normalizeStatic(payload: unknown): StaticRow[] {
@@ -60,22 +58,31 @@ function normalizeStatic(payload: unknown): StaticRow[] {
   return [];
 }
 
-/* -------- small helpers -------- */
 function domainFromUrl(u: string | null): string | null {
   if (!u) return null;
-  try { return new URL(u).hostname; } catch { return null; }
+  try {
+    return new URL(u).hostname;
+  } catch {
+    return null;
+  }
 }
 function faviconUrl(domain: string | null): string | null {
   return domain ? `https://icons.duckduckgo.com/ip3/${domain}.ico` : null;
 }
 function labelFor(kind: StaticType): string {
   switch (kind) {
-    case "rankings_ros":    return "Rankings Rest of Season";
-    case "rankings_weekly": return "Weekly Rankings";
-    case "dfs_tools":       return "DFS Tools";
-    case "projections":     return "Projections";
-    case "waiver_wire":     return "Waiver Wire";
-    default:                return "Stats";
+    case "rankings_ros":
+      return "Rankings Rest of Season";
+    case "rankings_weekly":
+      return "Weekly Rankings";
+    case "dfs_tools":
+      return "DFS Tools";
+    case "projections":
+      return "Projections";
+    case "waiver_wire":
+      return "Waiver Wire";
+    default:
+      return "Stats";
   }
 }
 const nextKind = (k: StaticType) => CYCLE[(CYCLE.indexOf(k) + 1) % CYCLE.length];
@@ -107,23 +114,53 @@ export default function StaticLinksSection({ initial = "rankings_ros" as StaticT
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [kind]);
 
   const header = useMemo(() => labelFor(kind), [kind]);
 
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
-      <header className="relative rounded-t-2xl border-b border-zinc-200">
-        <div aria-hidden className="pointer-events-none absolute inset-0 rounded-t-2xl bg-gradient-to-b from-emerald-800/10 to-emerald-800/0" />
-        <div className="relative flex items-center justify-between px-4 py-3">
-          <button className="rounded px-2 py-1 text-xl leading-none hover:bg-zinc-100" aria-label="Previous list" onClick={() => setKind(k => prevKind(k))}>◀</button>
-          <h2 className="text-lg font-semibold text-zinc-900">{header}</h2>
-          <button className="rounded px-2 py-1 text-xl leading-none hover:bg-zinc-100" aria-label="Next list" onClick={() => setKind(k => nextKind(k))}>▶</button>
+    <section
+      className={[
+        "border border-zinc-200 bg-white",
+        "rounded-t-lg sm:rounded-t-2xl",
+        "overflow-hidden",
+        "shadow-none sm:shadow-sm",
+      ].join(" ")}
+    >
+      {/* Header copied to match components/Section.tsx */}
+      <header
+        className="
+          relative
+          bg-black text-white
+          border-b border-zinc-200
+          rounded-t-lg sm:rounded-t-2xl
+          overflow-hidden
+        "
+      >
+        <div className="relative flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3">
+          <button
+            className="rounded px-2 py-1 text-xl leading-none hover:bg-white/10 focus-visible:bg-white/10"
+            aria-label="Previous list"
+            onClick={() => setKind((k) => prevKind(k))}
+          >
+            ◀
+          </button>
+          <h2 className="text-base sm:text-lg font-semibold">{header}</h2>
+          <button
+            className="rounded px-2 py-1 text-xl leading-none hover:bg-white/10 focus-visible:bg-white/10"
+            aria-label="Next list"
+            onClick={() => setKind((k) => nextKind(k))}
+          >
+            ▶
+          </button>
         </div>
       </header>
 
-      <div className="p-2">
+      {/* Body padding to mirror Section */}
+      <div className="pl-2 pr-2 py-2 sm:px-2 sm:py-3">
         {loading ? (
           <div className="p-2 text-sm text-zinc-600">Loading…</div>
         ) : error ? (

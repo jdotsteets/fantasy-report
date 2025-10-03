@@ -1,14 +1,26 @@
-// lib/site-extractors/index.ts
-import { extractCBSWaivers } from "./cbs";
+import type { Extractor } from "./types";
 import { extractFantasyPros } from "./fantasypros";
-// ...other imports
+import { extractYahoo } from "./yahoo";
 
-export function getExtractor(u: URL) {
-  const host = u.hostname.toLowerCase();
+export { extractFantasyPros } from "./fantasypros";
+export { extractYahoo } from "./yahoo";
+export type { Extractor, WaiverHit, Pos } from "./types";
 
-  if (host.includes("cbssports.com")) return extractCBSWaivers;
-  if (host.includes("fantasypros.com")) return extractFantasyPros;
+/** Map of hostname suffix → extractor */
+const SITE_EXTRACTORS: ReadonlyArray<[suffix: string, extractor: Extractor]> = [
+  ["fantasypros.com", extractFantasyPros],
+  ["sports.yahoo.com", extractYahoo],
+];
 
-  // default generic extractor (if you have one)
-  return (_html: string) => [];
+export function resolveExtractor(url: URL): Extractor | null {
+  const host = url.hostname.toLowerCase();
+  for (const [suffix, extractor] of SITE_EXTRACTORS) {
+    if (host === suffix || host.endsWith(`.${suffix}`)) return extractor;
+  }
+  return null;
+}
+
+export function extractWaivers(html: string, url: URL) {
+  const ex = resolveExtractor(url);
+  return ex ? ex(html, url) : [];
 }
