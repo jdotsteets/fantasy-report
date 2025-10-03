@@ -2,7 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
-import { getExtractor } from "@/lib/site-extractors";
+import {  extractWaivers } from "@/lib/site-extractors";
 import { mapPlayers } from "@/lib/site-extractors/mapPlayers";
 
 // Ensure Node runtime
@@ -321,8 +321,9 @@ export async function GET(req: Request) {
         for (const { a, html } of groupResults) {
           if (!html || !a.url) continue;
 
-          const extractor = getExtractor(new URL(a.url));
-          const hits = ((extractor(html, new URL(a.url)) ?? []) as WaiverHit[]) || [];
+          const urlObj = new URL(a.url);
+          const hits = extractWaivers(html, urlObj); // returns [] if no matching site
+          if (hits.length) extracted += hits.length;
           if (hits.length) extracted += hits.length;
 
           let mapped: MappedPlayer[] = [];
