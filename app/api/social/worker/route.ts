@@ -22,7 +22,7 @@ type Result = { processed: number; postedIds: number[]; skipped: number; dry?: b
 
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
+  if (!secret) return true; // unlocked when no secret set
   const header = req.headers.get("x-cron-secret");
   const query = new URL(req.url).searchParams.get("cron_secret");
   return header === secret || query === secret;
@@ -37,6 +37,15 @@ function baseUrl(): string {
   return b.replace(/\/+$/, "");
 }
 
+/* ---------- helpers: timebox & logging ---------- */
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout:${label}:${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 async function ensureBriefShortlink(article_id: number): Promise<string> {
   const brief = await getBriefByArticleId(article_id);
   if (!brief) {
@@ -46,57 +55,58 @@ async function ensureBriefShortlink(article_id: number): Promise<string> {
   return `${baseUrl()}/b/${brief.id}`;
 }
 
-async function fetchDue(): Promise<DueRow[]> {
+async function fetchDue(limit = 10): Promise<DueRow[]> {
   return dbQueryRows<DueRow>(
-    `select d.id,
-            d.article_id,
-            d.hook,
-            d.body,
-            d.cta,
-            q.article_url
+    `select d.id, d.article_id, d.hook, d.body, d.cta, q.article_url
        from social_drafts d
        join v_social_queue q on q.id = d.id
-      where d.platform = 'x'
-        and d.status   = 'scheduled'
+      where d.platform='x'
+        and d.status='scheduled'
         and d.scheduled_for is not null
         and d.scheduled_for <= now()
       order by q.published_at desc nulls last,
                d.scheduled_for asc nulls last,
                d.id desc
-      limit 10`
+      limit $1`,
+    [limit]
   );
 }
 
 type Mode = "live" | "dry" | "fast";
 
-/** 
- * live: post to X and mark published
- * dry:  build text + ensure brief shortlink, no X calls (good end-to-end test)
- * fast: just count/preview IDs, no briefs, no X (instant)
+/**
+ * live: post to X.
+ * dry:  build text + ensure brief; do NOT hit X.
+ * fast: just list IDs (no briefs, no X) — instant.
  */
 async function runOnce(mode: Mode): Promise<Result> {
+  const started = Date.now();
+  const due = await fetchDue(10);
+
   if (mode === "fast") {
-    const due = await fetchDue();
     return { processed: due.length, postedIds: due.map(d => d.id), skipped: 0, dry: true };
   }
-
-  const due = await fetchDue();
   if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry: mode !== "live" };
 
-  // Only fetch X bearer in live mode
-  const bearer = mode === "live" ? await getFreshXBearer() : null;
-  if (mode === "live" && !bearer) return { processed: 0, postedIds: [], skipped: 0 };
-
-  const client = bearer ? new Client(bearer) : null;
+  let client: Client | null = null;
+  if (mode === "live") {
+    const bearer = await withTimeout(getFreshXBearer(), 8000, "getFreshXBearer");
+    if (!bearer) return { processed: 0, postedIds: [], skipped: 0 };
+    client = new Client(bearer);
+  }
 
   const postedIds: number[] = [];
   let skipped = 0;
 
   for (const row of due) {
+    console.log("[worker] processing id", row.id, "mode", mode);
+
     let short = "";
     try {
-      short = await ensureBriefShortlink(row.article_id);
-    } catch {
+      // timebox brief generation to 10s so one slow item doesn't stall the batch
+      short = await withTimeout(ensureBriefShortlink(row.article_id), 10000, `ensureBrief:${row.article_id}`);
+    } catch (err) {
+      console.warn("[worker] brief failed", row.id, String(err));
       skipped += 1;
       await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
       continue;
@@ -107,46 +117,63 @@ async function runOnce(mode: Mode): Promise<Result> {
     parts.push(short);
 
     let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
-    if (text.length > 270) text = text.slice(0, 267) + "…";
+    if (text.length > 270) text = `${text.slice(0, 267)}…`;
 
     if (mode !== "live") {
-      // no network calls in dry/fast
       postedIds.push(row.id);
       continue;
     }
 
     try {
-      const res = await client!.tweets.createTweet({ text });
+      const res = await withTimeout(client!.tweets.createTweet({ text }), 8000, `tweet:${row.id}`);
       if (res.data?.id) {
         await dbQuery(`update social_drafts set status='published', updated_at=now() where id=$1`, [row.id]);
         postedIds.push(row.id);
+        console.log("[worker] published", row.id);
       } else {
         skipped += 1;
         await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
+        console.warn("[worker] no id in response", row.id);
       }
-    } catch {
+    } catch (err) {
       skipped += 1;
       await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
+      console.warn("[worker] tweet failed", row.id, String(err));
     }
   }
+
+  console.log("[worker] done in", Date.now() - started, "ms",
+              "processed", due.length, "postedIds", postedIds.length, "skipped", skipped);
 
   return { processed: due.length, postedIds, skipped, dry: mode !== "live" };
 }
 
 export async function GET(req: NextRequest) {
+  // quick, auth-less diag moved BEFORE gate helps when debugging; remove later if you prefer
+  if (req.nextUrl.searchParams.get("diag") === "1") {
+    const [{ count }] = await dbQueryRows<{ count: string }>(
+      `select count(*)::text as count
+         from social_drafts d
+         join v_social_queue q on q.id = d.id
+        where d.platform='x'
+          and d.status='scheduled'
+          and d.scheduled_for is not null
+          and d.scheduled_for <= now()`
+    );
+    return NextResponse.json({
+      ok: true,
+      hasSecret: Boolean(process.env.CRON_SECRET),
+      dueCount: Number(count ?? "0"),
+      now: new Date().toISOString(),
+    });
+  }
+
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  // instant diag (skip briefs + X)
-  if (req.nextUrl.searchParams.get("diag") === "1") {
-    const res = await runOnce("fast");
-    return NextResponse.json({ ok: true, hasSecret: Boolean(process.env.CRON_SECRET), ...res, now: new Date().toISOString() });
-  }
-
-  // dry=1 -> no X calls (but still ensures briefs)
-  const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runOnce(dry ? "dry" : "live");
+  const mode: Mode = req.nextUrl.searchParams.get("dry") === "1" ? "dry" : "live";
+  const result = await runOnce(mode);
   return NextResponse.json(result);
 }
 
@@ -154,7 +181,7 @@ export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runOnce(dry ? "dry" : "live");
+  const mode: Mode = req.nextUrl.searchParams.get("dry") === "1" ? "dry" : "live";
+  const result = await runOnce(mode);
   return NextResponse.json(result);
 }

@@ -16,8 +16,6 @@ export function getExtractor(u: URL): Extractor {
 }
 
 
-
-
 export { extractFantasyPros } from "./fantasypros";
 export { extractYahoo } from "./yahoo";
 export type { Extractor, WaiverHit, Pos } from "./types";
