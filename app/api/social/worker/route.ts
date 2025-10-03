@@ -1,132 +1,215 @@
-// app/api/social/worker/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { Client } from "twitter-api-sdk";
-import { dbQuery, dbQueryRows } from "@/lib/db";
-import { getFreshXBearer } from "@/app/src/social/xAuth";
-import { generateBriefForArticle } from "@/lib/agent/generateBrief";
-import { getBriefByArticleId } from "@/lib/briefs";
+// app/src/writing/renderDrafts.ts
+import type { Draft, Platform, Topic } from "@/app/src/types";
+import { htmlDecode } from "@/app/src/utils/htmlDecode";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+/* ───────────────────────── Config ───────────────────────── */
 
-type DueRow = {
-  id: number;
-  article_id: number;
-  hook: string;
-  body: string;
-  cta: string | null;
-  article_url: string | null;
+const MAX_VARIANTS_PER_TOPIC = 3 as const; // safety; real count comes from caller
+const TITLE_HOOK_MAX = 90;
+
+/** If true, X body will NOT include a link phrase (worker adds /b/{id}). */
+const OMIT_LINK_IN_X_BODY = true;
+
+/* ───────────────────────── Utils ───────────────────────── */
+
+function ensurePeriod(s: string): string {
+  if (!s) return s;
+  const last = s[s.length - 1];
+  return /[.!?]/.test(last) ? s : `${s}.`;
+}
+
+function cleanText(s: string): string {
+  // Decode entities, collapse whitespace, trim.
+  return htmlDecode(s).replace(/\s+/g, " ").trim();
+}
+
+function cleanTitle(s: string): string {
+  return cleanText(s);
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupeConsecutiveWords(s: string): string {
+  // collapse exact consecutive duplicates: "news reaction news reaction" -> "news reaction"
+  return s.replace(/\b(\w+)(\s+\1\b)+/gi, "$1");
+}
+
+/* ─────────────── Generic/placeholder suppression ─────────────── */
+
+const GENERIC_PHRASES: readonly string[] = [
+  "news reaction",
+  "reaction",
+  "breaking",
+  "update",
+  "latest",
+  "new post",
+  "read more",
+  "click here",
+  "details",
+  "story",
+  "roundup",
+];
+
+function isGeneric(s: string): boolean {
+  const n = normalize(s).replace(/[.!?]+$/g, "");
+  if (!n) return true;
+  for (const g of GENERIC_PHRASES) {
+    if (n === g || n.startsWith(`${g} `) || n.endsWith(` ${g}`)) return true;
+  }
+  // If it’s just 1–2 short words, treat as generic
+  const words = n.split(" ").filter(Boolean);
+  if (words.length <= 2 && n.length < 14) return true;
+  return false;
+}
+
+/** Quality gate for bodies; falls back to title if too weak. */
+function needsFallbackToTitle(body: string, title: string): boolean {
+  if (!body) return true;
+  const b = normalize(dedupeConsecutiveWords(body));
+  const t = normalize(cleanTitle(title));
+  if (b.length < 12) return true;
+  if (isGeneric(b)) return true;
+  // overly repetitive like "update update." or "news news reaction."
+  if (/\b(\w+)\b(?:\s+\1\b){1,}/i.test(b)) return true;
+  return false;
+}
+
+/* ───────────────────────── Hook builder ─────────────────────────
+   Strategy:
+   - If we have a non-generic “angle”, lead with that (short and punchy).
+   - Else: use the cleaned, decoded, truncated title.
+----------------------------------------------------------------- */
+
+function makeHook(t: Topic): string {
+  const angle = cleanText(t.angle ?? "");
+  if (angle.length > 0 && !isGeneric(angle)) {
+    const short = truncate(angle, TITLE_HOOK_MAX);
+    return short;
+  }
+  return truncate(cleanTitle(t.title), TITLE_HOOK_MAX);
+}
+
+/* ───────────────────────── Body/CTA builders ───────────────────────── */
+
+function platformCta(platform: Platform): string | undefined {
+  if (platform === "x" || platform === "threads") return undefined;
+  return "More at thefantasyreport.com";
+}
+
+const LINK_PHRASES_BASE = {
+  x: [
+    // Intentionally unused if OMIT_LINK_IN_X_BODY = true
+    `Full breakdown:`,
+    `More:`,
+    `Details:`,
+  ],
+  threads: [
+    `Full breakdown:`,
+    `More:`,
+    `Details:`,
+  ],
+  instagram: [
+    "Tap bio for waivers → thefantasyreport.com",
+    "More in bio → thefantasyreport.com",
+    "Full analysis in bio → thefantasyreport.com",
+  ],
+  tiktok: [
+    "Full picks → thefantasyreport.com",
+    "More → thefantasyreport.com",
+    "Deep dive → thefantasyreport.com",
+  ],
+  facebook: [
+    "Full write-up → thefantasyreport.com",
+    "More analysis → thefantasyreport.com",
+    "Details → thefantasyreport.com",
+  ],
+} as const;
+
+type BaseKey = keyof typeof LINK_PHRASES_BASE;
+
+/** If Platform includes alias channels, point them at a base key */
+const PLATFORM_ALIAS: Partial<Record<Platform, BaseKey>> = {
+  reels: "instagram",
+  shorts: "tiktok",
 };
 
-type Result = { processed: number; postedIds: number[]; skipped: number; dry?: boolean };
-
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // unlocked in dev
-  const header = req.headers.get("x-cron-secret");
-  const query = new URL(req.url).searchParams.get("cron_secret");
-  return header === secret || query === secret;
+function phrasesFor(platform: Platform): readonly string[] {
+  const key = (PLATFORM_ALIAS[platform] ?? platform) as BaseKey;
+  return LINK_PHRASES_BASE[key] ?? LINK_PHRASES_BASE.facebook;
 }
 
-function stripRawLinks(text: string): string {
-  return text.replace(/\bhttps?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim();
-}
+function makeBody(t: Topic, platform: Platform, variant: number): string {
+  // sanitize & decode placeholders from inputs
+  const goodStat = t.stat && !isGeneric(t.stat) ? ensurePeriod(cleanText(t.stat)) : "";
+  const goodAngle = t.angle && !isGeneric(t.angle) ? ensurePeriod(cleanText(t.angle)) : "";
 
-function baseUrl(): string {
-  const b = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
-  return b.replace(/\/+$/, "");
-}
+  const lp = phrasesFor(platform);
+  const linkPhrase = lp[variant % lp.length];
 
-async function ensureBriefShortlink(article_id: number): Promise<string> {
-  let brief = await getBriefByArticleId(article_id);
-  if (!brief) {
-    const gen = await generateBriefForArticle(article_id, true); // autopublish
-    return `${baseUrl()}/b/${gen.created_brief_id}`;
+  const linkBit =
+    platform === "x" && OMIT_LINK_IN_X_BODY
+      ? "" // worker will append /b/{id}
+      : (t.url ? `${linkPhrase} ${t.url}` : "").trim();
+
+  // Alternate ordering a bit (but keep concise)
+  const variants: string[] = [
+    [goodStat, goodAngle, linkBit].filter(Boolean).join(" ").trim(),
+    [goodAngle, goodStat, linkBit].filter(Boolean).join(" ").trim(),
+    [(goodStat || goodAngle), linkBit].filter(Boolean).join(" ").trim(),
+  ];
+
+  let body = variants[variant % variants.length];
+
+  // Clean up duplicates like "news reaction news reaction."
+  body = dedupeConsecutiveWords(body);
+
+  // Final quality gate: fallback to title if low quality
+  if (needsFallbackToTitle(body, t.title)) {
+    const titleOnly = cleanTitle(t.title);
+    body = [titleOnly, linkBit].filter(Boolean).join(" ").trim();
   }
-  return `${baseUrl()}/b/${brief.id}`;
+
+  return body;
 }
 
-async function runOnce(dry = false): Promise<Result> {
-  const bearer = await getFreshXBearer();
-  if (!bearer) return { processed: 0, postedIds: [], skipped: 0, dry };
+/* ───────────────────────── Public API ───────────────────────── */
 
-  // Pull due items (status=scheduled and ready)
-  const due = await dbQueryRows<DueRow>(
-    `select d.id,
-            d.article_id,
-            d.hook,
-            d.body,
-            d.cta,
-            q.article_url
-       from social_drafts d
-       join v_social_queue q on q.id = d.id
-      where d.platform = 'x'
-        and d.status   = 'scheduled'
-        and d.scheduled_for is not null
-        and d.scheduled_for <= now()
-      order by d.id
-      limit 10`
-  );
-  if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry };
+export async function renderDrafts(
+  topics: Topic[],
+  cfg: { platforms: Platform[]; variantsPerTopic: number }
+): Promise<Draft[]> {
+  const drafts: Draft[] = [];
+  const perTopic = Math.min(cfg.variantsPerTopic, MAX_VARIANTS_PER_TOPIC);
 
-  const client = new Client(bearer);
-  const postedIds: number[] = [];
-  let skipped = 0;
+  for (const t of topics) {
+    // pre-clean once per topic
+    const hook = makeHook(t); // one clean hook per topic
 
-  for (const row of due) {
-    let short = "";
-    try {
-      short = await ensureBriefShortlink(row.article_id);
-    } catch {
-      skipped += 1;
-      await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
-      continue;
-    }
+    for (const p of cfg.platforms) {
+      for (let i = 0; i < perTopic; i += 1) {
+        const body = makeBody(t, p, i);
 
-    const parts: string[] = [row.hook, stripRawLinks(row.body)];
-    if (row.cta) parts.push(row.cta);
-    parts.push(short);
-
-    let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
-    if (text.length > 270) text = text.slice(0, 267) + "…";
-
-    if (dry) {
-      postedIds.push(row.id);
-      continue;
-    }
-
-    try {
-      const res = await client.tweets.createTweet({ text });
-      if (res.data?.id) {
-        await dbQuery(`update social_drafts set status='published', updated_at=now() where id=$1`, [row.id]);
-        postedIds.push(row.id);
-      } else {
-        skipped += 1;
-        await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
+        drafts.push({
+          id: `${t.id}:${p}:v${i + 1}`,
+          platform: p,
+          hook, // title/angle driven; never generic; entities decoded
+          body, // entities decoded and quality-checked
+          cta: platformCta(p),
+          mediaPath: undefined,
+          link: t.url, // kept for non-X platforms
+          status: "draft",
+          scheduledFor: undefined,
+          topicRef: t.id,
+        });
       }
-    } catch {
-      skipped += 1;
-      await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
     }
   }
 
-  return { processed: due.length, postedIds, skipped, dry };
-}
-
-export async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
-  const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runOnce(dry);
-  return NextResponse.json(result);
-}
-
-export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
-  const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runOnce(dry);
-  return NextResponse.json(result);
+  return drafts;
 }
