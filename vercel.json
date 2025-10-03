@@ -1,8 +1,9 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-    { "path": "/api/social/agent-auto?cron_secret=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/5 12-3 * * *" },
-    { "path": "/api/social/agent?cron_secret=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/5 12-3 * * *" },
+
+    { "path": "/api/social/agent-auto?cron_secret=abcdefghijklmnopqrstuvwxyz1234567890", "schedule": "*/5 12-23,0-3 * * *" },
+    { "path": "/api/social/worker?cron_secret=abcdefghijklmnopqrstuvwxyz1234567890",     "schedule": "*/5 12-23,0-3 * * *" },
 
     { "path": "/api/social/sections/seed?type=waivers",  "schedule": "0 14 * * 1,2" },
     { "path": "/api/social/sections/seed?type=rankings", "schedule": "0 17 * * 3" },
@@ -11,15 +12,9 @@
     { "path": "/api/social/sections/seed?type=start-sit","schedule": "0 14 * * 6,0" },
     { "path": "/api/social/sections/seed?type=news",     "schedule": "15 1 * * 1"  },
 
-    { "path": "/api/social/worker", "schedule": "*/5 12-3 * * *" },
-    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 2" }, 
-    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 5" }, 
-    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 6" }  
- 
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 2" },
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 5" },
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 6" }
   ],
-  "build": {
-    "env": { "NODE_VERSION": "20" }
-  }
-
-  
+  "build": { "env": { "NODE_VERSION": "20" } }
 }

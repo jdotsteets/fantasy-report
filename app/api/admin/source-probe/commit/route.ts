@@ -25,6 +25,15 @@ async function triggerIngestForSource(
   }
 }
 
+function getBaseUrl(): string {
+  // Prefer explicit public base
+  if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
+  // Vercel provides the domain here (no protocol); add https
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  // Fallback for local dev
+  return "http://localhost:3000";
+}
+
 /** Normalize & enforce per-method field rules */
 function normalizeUpdatesForMethod(
   method: ProbeMethod,
