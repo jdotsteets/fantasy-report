@@ -1,3 +1,4 @@
+//appt/src/types.ts
 export type Platform = "x" | "threads" | "tiktok" | "reels" | "instagram" | "facebook" | "shorts";
 export type PostStatus = "draft" | "approved" | "scheduled" | "published" | "failed";
 

@@ -1,58 +1,45 @@
 // lib/social/threadBuilder.ts
-import type { SectionRow, SectionKey } from "@/lib/sectionQuery";
+import type { SectionKey } from "@/lib/sectionQuery";
+import { composeThreadLead, composeThreadReplies } from "@/app/src/social/compose";
 
-export type ThreadConfig = {
-  section: Extract<SectionKey, "waiver-wire" | "start-sit">;
-  weekHint?: number | null;          // optional, will be appended to headline if present
-  siteRoot?: string;                 // default "https://www.thefantasyreport.com"
-  maxItems?: number;                 // default 5
+// Minimal row shape expected from fetchSectionItems()
+type Row = {
+  title: string;
+  url: string;
+  source: string | null;
+  published_at?: string | null;
 };
 
-export type ThreadPost = { text: string };
+export function buildThread(
+  cfg: { section: Extract<SectionKey, "waiver-wire" | "start-sit">; weekHint: number | null; maxItems: number },
+  rows: Row[]
+): string[] {
+  const items = rows.slice(0, Math.max(1, Math.min(cfg.maxItems, 10)));
 
-const MAX_TWEET = 280;
+  // Lead tweet: a clean headline for the thread
+  const weekBit = cfg.weekHint ? ` (Week ${cfg.weekHint})` : "";
+  const leadHook =
+    cfg.section === "waiver-wire"
+      ? `Top Waiver Wire targets${weekBit}`
+      : `Start/Sit calls to consider${weekBit}`;
 
-function ensureMax(s: string, limit: number): string {
-  if (s.length <= limit) return s;
-  // reserve 1 char for ellipsis
-  return s.slice(0, Math.max(0, limit - 1)) + "…";
-}
+  // Optional body blurb
+  const body =
+    cfg.section === "waiver-wire"
+      ? `Here are notable adds and quick notes.`
+      : `Key plays and pivots based on matchups.`;
 
-function linkFrom(row: SectionRow): string {
-  // Prefer canonical_url if present; fallback to url.
-  return (row.canonical_url && row.canonical_url.trim().length ? row.canonical_url : row.url) || "";
-}
+  const lead = composeThreadLead({ hook: leadHook, body });
 
-function openerFor(section: ThreadConfig["section"], weekHint?: number | null): string {
-  if (section === "waiver-wire") {
-    return weekHint && weekHint > 0
-      ? `🚨 Top Waiver Wire Columns — Week ${weekHint} 🧵`
-      : "🚨 Top Waiver Wire Columns 🧵";
-  }
-  // start-sit
-  return weekHint && weekHint > 0
-    ? `🧠 Start/Sit Columns — Week ${weekHint} 🧵`
-    : "🧠 Start/Sit Columns 🧵";
-}
-
-export function buildThread(config: ThreadConfig, rows: SectionRow[]): ThreadPost[] {
-  const maxItems = Math.max(1, Math.min(config.maxItems ?? 5, 10));
-  const items = rows.slice(0, maxItems);
-
-  const opener = openerFor(config.section, config.weekHint);
-  const posts: ThreadPost[] = [{ text: ensureMax(opener, MAX_TWEET) }];
-
-  items.forEach((row, i) => {
-    const provider = row.source ? row.source : "";
-    const base = `${i + 1}. ${provider ? `${provider} — ` : ""}${row.title}`;
-    const url = linkFrom(row);
-    // Keep each item within 280 chars. Add newline before URL for clarity.
-    const text = ensureMax(`${base}\n${url}`, MAX_TWEET);
-    posts.push({ text });
+  // Replies: bullet-ish lines with title + url
+  const replyLines = items.map((r) => {
+    const t = r.title.replace(/\s+/g, " ").trim();
+    const u = r.url;
+    const src = r.source ? ` — ${r.source}` : "";
+    return `• ${t}${src} ${u}`;
   });
 
-  const cta = "More fantasy football headlines updated all day:\nhttps://www.thefantasyreport.com";
-  posts.push({ text: ensureMax(cta, MAX_TWEET) });
+  const replies = composeThreadReplies(replyLines);
 
-  return posts;
+  return [lead, ...replies];
 }

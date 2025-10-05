@@ -4,75 +4,135 @@ import { fetchSectionItems, type SectionKey } from "@/lib/sectionQuery";
 import { buildThread } from "@/lib/social/threadBuilder";
 import { postThread } from "@/lib/social/x";
 
-// Node runtime is required for crypto (OAuth) and fetch to X API v1.1
+// If XPost is exported from lib/social/x, import it instead:
+// import type { XPost } from "@/lib/social/x";
+type XPost = { text: string };
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Params = { section: string };
+/* ───────────────────────── Types/consts ───────────────────────── */
 
-function toSectionKey(s: string): Extract<SectionKey, "waiver-wire" | "start-sit"> | null {
-  if (s === "waiver-wire" || s === "start-sit") return s;
-  return null;
+type Params = { section: string };
+type AllowedSection = Extract<SectionKey, "waiver-wire" | "start-sit">;
+
+const LIMIT_MIN = 1;
+const LIMIT_MAX = 10;
+const DEFAULT_LIMIT = 5;
+const DEFAULT_DAYS = 21;
+const DEFAULT_PER_PROVIDER_CAP = 3;
+
+/* ───────────────────────── Helpers ───────────────────────── */
+
+function toSectionKey(s: string): AllowedSection | null {
+  return s === "waiver-wire" || s === "start-sit" ? s : null;
 }
+
+function clampInt(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function parseIntOrNull(v: string | null): number | null {
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseBool(v: string | null): boolean {
+  return v === "1" || v === "true";
+}
+
+/** Accepts either a plain string or { text } and returns a proper XPost. */
+function toXPost(p: string | { text: string }): XPost {
+  return typeof p === "string" ? { text: p } : { text: p.text };
+}
+
+/* ───────────────────────── Route ───────────────────────── */
 
 export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
   const { section } = await ctx.params;
   const key = toSectionKey(section);
   if (!key) {
-    return NextResponse.json({ ok: false, error: "Unsupported section. Use 'waiver-wire' or 'start-sit'." }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "Unsupported section. Use 'waiver-wire' or 'start-sit'." },
+      { status: 400 }
+    );
   }
 
   const url = new URL(req.url);
-  const limit = Number(url.searchParams.get("limit") ?? "5");
-  const dry = url.searchParams.get("dry") === "1" || url.searchParams.get("dry") === "true";
 
-  // Optional: accept week from query (?week=5). If omitted, we leave it null.
-  const weekParam = url.searchParams.get("week");
-  const week = weekParam ? Number(weekParam) : null;
+  const limitRaw = parseIntOrNull(url.searchParams.get("limit"));
+  const limit = clampInt(limitRaw ?? DEFAULT_LIMIT, LIMIT_MIN, LIMIT_MAX);
 
-  // Pull the latest items with your existing function.
-  // - maxAgeHours omitted for non-news sections
-  // - perProviderCap is enforced inside fetchSectionItems unless filters are set
-  const rows = await fetchSectionItems({
-    key,
-    limit: Math.max(1, Math.min(limit, 10)),
-    offset: 0,
-    days: 21,                 // recent 3 weeks window feels right for these sections
-    week: week ?? null,       // use if provided
-    staticMode: "exclude",
-    perProviderCap: 3,        // align w/ your current policy
-    sport: "nfl",
-  });
+  const dry = parseBool(url.searchParams.get("dry"));
+
+  const week = parseIntOrNull(url.searchParams.get("week"));
+  const days = clampInt(parseIntOrNull(url.searchParams.get("days")) ?? DEFAULT_DAYS, 1, 60);
+  const perProviderCap = clampInt(
+    parseIntOrNull(url.searchParams.get("perProviderCap")) ?? DEFAULT_PER_PROVIDER_CAP,
+    1,
+    10
+  );
+
+  const sport = (url.searchParams.get("sport") ?? "nfl").toLowerCase();
+
+  // Fetch items for the thread
+  let rows;
+  try {
+    rows = await fetchSectionItems({
+      key,
+      limit,
+      offset: 0,
+      days,
+      week: week ?? null,
+      staticMode: "exclude",
+      perProviderCap,
+      sport,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { ok: false, error: "Fetch failed", detail: String(err) },
+      { status: 502 }
+    );
+  }
 
   if (!rows.length) {
     return NextResponse.json({ ok: false, error: "No items found for section." }, { status: 404 });
   }
 
-  const posts = buildThread({ section: key, weekHint: week ?? null, maxItems: limit }, rows);
+  // Thread builder may return string[] or {text:string}[]
+  const rawPosts = buildThread({ section: key, weekHint: week ?? null, maxItems: limit }, rows) as Array<
+    string | { text: string }
+  >;
+
+  // Normalize to XPost[]
+  const xPosts: XPost[] = rawPosts.map(toXPost);
 
   try {
-    const result = await postThread(posts, dry);
+    const result = await postThread(xPosts, dry);
     return NextResponse.json({
       ok: true,
       section: key,
       week,
-      count: posts.length,
+      days,
+      perProviderCap,
+      count: xPosts.length,
       postedIds: result.ids,
       dry: result.dry,
-      preview: dry ? posts : undefined, // show the composed thread on dry run
+      preview: dry ? xPosts : undefined, // show composed tweets on dry run
     });
   } catch (err) {
     return NextResponse.json(
-      { ok: false, error: (err as Error).message, preview: posts },
+      { ok: false, error: "Post failed", detail: String(err), preview: xPosts },
       { status: 500 }
     );
   }
 }
 
-// Convenience GET to preview (dry-run) without posting.
+/** Convenience GET to preview (forces dry-run). */
 export async function GET(req: NextRequest, ctx: { params: Promise<Params> }) {
-  const url = new URL(req.url);
-  url.searchParams.set("dry", "1");
-  const newReq = new NextRequest(url.toString(), { method: "POST", headers: req.headers });
-  return POST(newReq, ctx);
+  const u = new URL(req.url);
+  u.searchParams.set("dry", "1");
+  const replay = new NextRequest(u.toString(), { method: "POST", headers: req.headers });
+  return POST(replay, ctx);
 }
