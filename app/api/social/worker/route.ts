@@ -37,6 +37,39 @@ function baseUrl(): string {
   return b.replace(/\/+$/, "");
 }
 
+/* ---------- helpers: text compose & de-dupe ---------- */
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Remove the hook from the start of the body if it's repeated there (case-insensitive). */
+function stripLeadingHook(hook: string, body: string): string {
+  const h = (hook ?? "").trim();
+  const b = (body ?? "").trim();
+  if (!h || !b) return b;
+
+  // If body exactly equals hook, drop it entirely.
+  if (b.localeCompare(h, undefined, { sensitivity: "accent" }) === 0) return "";
+
+  // If body begins with hook, remove it plus common separators.
+  const re = new RegExp(`^${escapeRegex(h)}(?:[\\s\\-–—:|]+)?`, "i");
+  return b.replace(re, "").trim();
+}
+
+function composeTweetText(row: DueRow, short: string): string {
+  const hook = (row.hook ?? "").trim();
+  const body = stripLeadingHook(hook, stripRawLinks(row.body ?? ""));
+  const parts: string[] = [hook];
+  if (body) parts.push(body);
+  if (row.cta) parts.push(row.cta);
+  parts.push(short);
+
+  let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
+  if (text.length > 270) text = `${text.slice(0, 267)}…`;
+  return text;
+}
+
 /* ---------- helpers: timebox & logging ---------- */
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -112,12 +145,7 @@ async function runOnce(mode: Mode): Promise<Result> {
       continue;
     }
 
-    const parts: string[] = [row.hook, stripRawLinks(row.body)];
-    if (row.cta) parts.push(row.cta);
-    parts.push(short);
-
-    let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
-    if (text.length > 270) text = `${text.slice(0, 267)}…`;
+    const text = composeTweetText(row, short);
 
     if (mode !== "live") {
       postedIds.push(row.id);

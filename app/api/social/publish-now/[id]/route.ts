@@ -1,3 +1,4 @@
+// app/api/publish-now/[id]/route.ts
 import { NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery, dbQueryRows } from "@/lib/db";
@@ -26,6 +27,34 @@ function stripRawLinks(text: string): string {
 function baseUrl(): string {
   const b = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
   return b.replace(/\/+$/, "");
+}
+
+/* ---------- helpers: text compose & de-dupe ---------- */
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripLeadingHook(hook: string, body: string): string {
+  const h = (hook ?? "").trim();
+  const b = (body ?? "").trim();
+  if (!h || !b) return b;
+  if (b.localeCompare(h, undefined, { sensitivity: "accent" }) === 0) return "";
+  const re = new RegExp(`^${escapeRegex(h)}(?:[\\s\\-–—:|]+)?`, "i");
+  return b.replace(re, "").trim();
+}
+
+function composeTweetText(row: DraftRow, short: string): string {
+  const hook = (row.hook ?? "").trim();
+  const body = stripLeadingHook(hook, stripRawLinks(row.body ?? ""));
+  const parts: string[] = [hook];
+  if (body) parts.push(body);
+  if (row.cta) parts.push(row.cta);
+  parts.push(short);
+
+  let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
+  if (text.length > 270) text = text.slice(0, 267) + "…";
+  return text;
 }
 
 async function ensureBriefShortlink(article_id: number): Promise<string> {
@@ -79,12 +108,7 @@ export async function POST(
     return NextResponse.json({ error: "Brief link failed", detail: String(e) }, { status: 502 });
   }
 
-  const parts: string[] = [row.hook, stripRawLinks(row.body)];
-  if (row.cta) parts.push(row.cta);
-  parts.push(short);
-
-  let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
-  if (text.length > 270) text = text.slice(0, 267) + "…";
+  const text = composeTweetText(row, short);
 
   const client = new Client(bearer);
   try {
