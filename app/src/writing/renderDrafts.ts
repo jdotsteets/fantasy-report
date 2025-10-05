@@ -14,7 +14,7 @@ const OMIT_LINK_IN_X_BODY = true;
 
 function ensurePeriod(s: string): string {
   if (!s) return s;
-  const last = s[s.length - 1];
+  const last = s[s.length - 1] ?? "";
   return /[.!?]/.test(last) ? s : `${s}.`;
 }
 
@@ -77,14 +77,12 @@ function needsFallbackToTitle(body: string, title: string): boolean {
   if (isGeneric(b)) return true;
   // overly repetitive like "update update." or "news news reaction."
   if (/\b(\w+)\b(?:\s+\1\b){1,}/i.test(b)) return true;
+  // If body is already effectively the title, treat as weak (we'll handle dedupe later)
+  if (b === t) return true;
   return false;
 }
 
-/* ───────────────────────── Hook builder ─────────────────────────
-   Strategy:
-   - If we have a non-generic “angle”, lead with that (short and punchy).
-   - Else: use the cleaned, decoded, truncated title.
------------------------------------------------------------------ */
+/* ───────────────────────── Hook builder ───────────────────────── */
 
 function makeHook(t: Topic): string {
   const angle = cleanText(t.angle ?? "");
@@ -132,8 +130,6 @@ const LINK_PHRASES_BASE = {
 } as const;
 
 type BaseKey = keyof typeof LINK_PHRASES_BASE;
-
-/** If Platform includes alias channels, point them at a base key */
 const PLATFORM_ALIAS: Partial<Record<Platform, BaseKey>> = {
   reels: "instagram",
   shorts: "tiktok",
@@ -145,7 +141,6 @@ function phrasesFor(platform: Platform): readonly string[] {
 }
 
 function makeBody(t: Topic, platform: Platform, variant: number): string {
-  // sanitize & decode placeholders from inputs
   const goodStat = t.stat && !isGeneric(t.stat) ? ensurePeriod(cleanText(t.stat)) : "";
   const goodAngle = t.angle && !isGeneric(t.angle) ? ensurePeriod(cleanText(t.angle)) : "";
 
@@ -178,6 +173,30 @@ function makeBody(t: Topic, platform: Platform, variant: number): string {
   return body;
 }
 
+/* ─────────────── Hook/Body de-duplication (key fix) ─────────────── */
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripLeadingHookFromBody(hook: string, body: string): string {
+  if (!hook || !body) return body;
+
+  const hookClean = cleanText(hook);
+  const bodyClean = cleanText(body);
+
+  // If body equals hook exactly, drop it.
+  if (normalize(bodyClean) === normalize(hookClean)) {
+    return "";
+  }
+
+  // If body starts with hook (optionally followed by separators), remove that part.
+  const re = new RegExp(`^${escapeRegex(hookClean)}(?:[\\s\\-–—:|]+)?`, "i");
+  const stripped = bodyClean.replace(re, "").trim();
+
+  return stripped;
+}
+
 /* ───────────────────────── Public API ───────────────────────── */
 
 export async function renderDrafts(
@@ -188,21 +207,23 @@ export async function renderDrafts(
   const perTopic = Math.min(cfg.variantsPerTopic, MAX_VARIANTS_PER_TOPIC);
 
   for (const t of topics) {
-    // pre-clean once per topic
     const hook = makeHook(t); // one clean hook per topic
 
     for (const p of cfg.platforms) {
       for (let i = 0; i < perTopic; i += 1) {
-        const body = makeBody(t, p, i);
+        let body = makeBody(t, p, i);
+
+        // 🔑 Prevent duplicated headline: if body starts with (or equals) the hook, strip it.
+        body = stripLeadingHookFromBody(hook, body);
 
         drafts.push({
           id: `${t.id}:${p}:v${i + 1}`,
           platform: p,
-          hook, // title/angle driven; never generic; entities decoded
-          body, // entities decoded and quality-checked
+          hook,                  // title/angle driven; never generic; entities decoded
+          body,                  // no duplicate of hook; may be empty on X (worker adds link)
           cta: platformCta(p),
           mediaPath: undefined,
-          link: t.url, // kept for non-X platforms
+          link: t.url,           // kept for non-X platforms
           status: "draft",
           scheduledFor: undefined,
           topicRef: t.id,
