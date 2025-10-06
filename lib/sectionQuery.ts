@@ -184,20 +184,25 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const rows = await dbQueryRows<SectionRow>(sql, params);
 
   /* ───────────────────────── Post-query filter ───────────────────────── */
-  const badTitlePattern = /\b(radio|broadcast|coverage|station|schedule)\b/i;
+  const badTitlePattern = /\b(radio|broadcast|coverage|station)\b/i; // removed 'schedule'
+  const waiverTitleOk = (t: string) =>
+    /\b(waiver|wire|adds?|pickups?|stashes?)\b/i.test(t);
+  const startSitTitleOk = (t: string) =>
+    /(start\/sit|start-?sit|who (to|should i) start|lineup decisions|sit\/start)/i.test(t);
 
   return rows.filter(r => {
-    const t = r.title?.toLowerCase() ?? "";
+    const t = (r.title ?? "").toLowerCase();
 
-    // Exclude off-topic or media listings
+    // exclude obvious non-articles
     if (badTitlePattern.test(t)) return false;
 
-    // Additional topical sanity for key sections
+    // if topics already include the section key, let it pass
+    const topicsHasKey = Array.isArray(r.topics) && r.topics.includes(key);
+
     if (key === "waiver-wire") {
-      if (!/waiver/.test(t)) return false;
-    }
-    if (key === "start-sit") {
-      if (!/(start\/sit|start-sit|sit\/start|who to start)/.test(t)) return false;
+      if (!(topicsHasKey || waiverTitleOk(t))) return false;
+    } else if (key === "start-sit") {
+      if (!(topicsHasKey || startSitTitleOk(t))) return false;
     }
 
     return true;
