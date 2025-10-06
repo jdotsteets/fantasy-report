@@ -33,7 +33,6 @@ function explainTwitterError(err: unknown): string {
     const res = e?.response as Response | undefined;
     if (res && typeof res.status === "number") {
       parts.push(`httpStatus=${res.status}`);
-      // @ts-expect-error – not always present, runtime guard above
       const body = (e as any).responseBody ?? (e as any).body ?? null;
       if (body) parts.push(`body=${typeof body === "string" ? body : JSON.stringify(body)}`);
     }
