@@ -76,7 +76,6 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const staticMode: "exclude" | "only" | "any" = opts.staticMode ?? "exclude";
   const staticType = (opts.staticType ?? "").trim() || null;
 
-  // If filtering by provider or sourceId, we disable per-provider cap entirely.
   const hasProviderFilter = Boolean(provider) || typeof sourceId === "number";
   const perProviderCap: number | null = hasProviderFilter
     ? null
@@ -97,10 +96,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   if (staticType) where.push(`a.static_type = $${push(staticType)}`);
 
   if (typeof sourceId === "number") where.push(`a.source_id = $${push(sourceId)}`);
-  if (provider) {
-    // Match canonical provider label from sources table
-    where.push(`s.provider ILIKE $${push(provider)}`);
-  }
+  if (provider) where.push(`s.provider ILIKE $${push(provider)}`);
 
   if (isNews) {
     where.push(`(
@@ -185,6 +181,25 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
       LIMIT $${push(limit)} OFFSET $${push(offset)};
     `;
 
-  return dbQueryRows<SectionRow>(sql, params);
-}
+  const rows = await dbQueryRows<SectionRow>(sql, params);
 
+  /* ───────────────────────── Post-query filter ───────────────────────── */
+  const badTitlePattern = /\b(radio|broadcast|coverage|station|schedule)\b/i;
+
+  return rows.filter(r => {
+    const t = r.title?.toLowerCase() ?? "";
+
+    // Exclude off-topic or media listings
+    if (badTitlePattern.test(t)) return false;
+
+    // Additional topical sanity for key sections
+    if (key === "waiver-wire") {
+      if (!/waiver/.test(t)) return false;
+    }
+    if (key === "start-sit") {
+      if (!/(start\/sit|start-sit|sit\/start|who to start)/.test(t)) return false;
+    }
+
+    return true;
+  });
+}
