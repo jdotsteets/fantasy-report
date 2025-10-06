@@ -1,5 +1,7 @@
 // app/src/social/xAuth.ts
 import { dbQuery, dbQueryRows } from "@/lib/db";
+import { Buffer } from "node:buffer";
+
 
 type TokRow = {
   account_username: string;
