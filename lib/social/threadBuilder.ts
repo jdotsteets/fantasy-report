@@ -1,6 +1,7 @@
 // lib/social/threadBuilder.ts
 import type { SectionKey } from "@/lib/sectionQuery";
 import { composeThreadLead, composeThreadReplies } from "@/app/src/social/compose";
+import { htmlDecode } from "@/app/src/utils/htmlDecode";
 
 // Minimal row shape expected from fetchSectionItems()
 type Row = {
@@ -23,7 +24,7 @@ export function buildThread(cfg: ThreadCfg, rows: Row[]): string[] {
   const items = rows.slice(0, Math.max(1, Math.min(cfg.maxItems, 10)));
   const site = (cfg.siteRoot ?? DEFAULT_SITE).replace(/\/+$/, "");
 
-  // Lead tweet: explicitly mention upcoming Week # waivers and include site link
+  // Lead tweet: explicitly mention upcoming Week # + site link
   const weekBit = cfg.weekHint ? `Week ${cfg.weekHint} ` : "";
   const leadHook =
     cfg.section === "waiver-wire"
@@ -35,21 +36,20 @@ export function buildThread(cfg: ThreadCfg, rows: Row[]): string[] {
       ? "Top pickups and quick notes."
       : "Key plays and pivots based on matchups.";
 
-  // Include site link on the lead via `short`
   const lead = composeThreadLead({
     hook: leadHook,
     body,
-    short: site,      // <-- ensures the first tweet links to thefantasyreport.com
+    short: site,     // first tweet links to thefantasyreport.com
     maxChars: 270,
   });
 
-  // Replies: each includes a direct link to the source article
+  // Replies: each includes decoded title + direct source link
   const replyLines = items.map((r, idx) => {
-    const t = (r.title ?? "").replace(/\s+/g, " ").trim();
+    const rawTitle = (r.title ?? "").replace(/\s+/g, " ").trim();
+    const title = htmlDecode(rawTitle);            // ← decode &#038;, &#39;, etc.
     const src = r.source ? ` — ${r.source}` : "";
     const u = (r.url ?? "").trim();
-    // force a direct link on every reply line
-    return `${idx + 1}. ${t}${src}\n${u}`;
+    return `${idx + 1}. ${title}${src}\n${u}`;
   });
 
   const replies = composeThreadReplies(replyLines, 270);
