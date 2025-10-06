@@ -108,11 +108,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
   // Normalize to XPost[]
   const xPosts: XPost[] = rawPosts.map(toXPost);
 
-  const paceMsParam = parseInt(url.searchParams.get("paceMs") ?? "", 10);
-  const paceMs = Number.isFinite(paceMsParam) ? Math.max(0, paceMsParam) : undefined;
+// inside app/api/social/publish-thread/[section]/route.ts after you build xPosts:
+const paceMsParam = Number(url.searchParams.get("paceMs") ?? "");
+const paceMs = Number.isFinite(paceMsParam) ? Math.max(0, paceMsParam) : undefined;
 
-  const result = await postThread(xPosts, { dry, paceMs }); // ← uses new options
-  
+const result = await postThread(xPosts, { dry, paceMs }); // <-- uses options form
+
 // ...
 
   try {
