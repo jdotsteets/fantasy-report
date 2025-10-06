@@ -1,3 +1,4 @@
+// lib/social/threadBuilder.ts
 import type { SectionKey } from "@/lib/sectionQuery";
 import { composeThreadLead, composeThreadReplies } from "@/app/src/social/compose";
 import { htmlDecode } from "@/app/src/utils/htmlDecode";
@@ -18,19 +19,14 @@ type ThreadCfg = {
 
 const DEFAULT_SITE = "https://www.thefantasyreport.com";
 
-function isMonday(): boolean {
+/** Central Time weekday helper (no external libs) */
+function weekdayInCentral(): number {
   const now = new Date();
-  // adjust to Central Time (UTC-5 or -6 depending on DST)
-  const offset = now.getTimezoneOffset();
-  const local = new Date(now.getTime() - offset * 60000);
-  return local.getDay() === 1;
-}
-
-function isTuesday(): boolean {
-  const now = new Date();
-  const offset = now.getTimezoneOffset();
-  const local = new Date(now.getTime() - offset * 60000);
-  return local.getDay() === 2;
+  // Intl.DateTimeFormat with timeZone avoids manual DST math.
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short" });
+  const short = fmt.format(now); // Sun/Mon/Tue...
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[short] ?? now.getUTCDay();
 }
 
 export function buildThread(cfg: ThreadCfg, rows: Row[]): string[] {
@@ -38,36 +34,40 @@ export function buildThread(cfg: ThreadCfg, rows: Row[]): string[] {
   const site = (cfg.siteRoot ?? DEFAULT_SITE).replace(/\/+$/, "");
 
   const weekBit = cfg.weekHint ? `Week ${cfg.weekHint}` : "this week";
+  const wd = weekdayInCentral();
 
-  // 🧵 Dynamic headline based on day (Mon vs Tue)
+  // 🧵 Thready opener variants (Mon/Tue special)
   let leadHook = "";
   let body = "";
 
   if (cfg.section === "waiver-wire") {
-    if (isMonday()) {
-      leadHook = `🚨 Get an early start on ${weekBit} waiver wire action!`;
-      body = `Here's your first look at this week’s top priority adds. 🧵`;
-    } else if (isTuesday()) {
-      leadHook = `🔥 Don't miss ${weekBit}'s top waiver wire pickups!`;
-      body = `Here are the must-adds before waivers process. 🧵`;
+    if (wd === 1) {
+      // Monday
+      leadHook = `🚨 Get an early start on ${weekBit} waiver-wire action!`;
+      body = `First look at this week’s priority adds. 🧵`;
+    } else if (wd === 2) {
+      // Tuesday
+      leadHook = `🔥 Don’t miss ${weekBit}’s top waiver-wire pickups!`;
+      body = `Must-add targets before waivers process. 🧵`;
     } else {
-      leadHook = `Top ${weekBit} waiver wire targets 🧵`;
-      body = `Key pickups and stashes to help your fantasy team.`;
+      // Other days
+      leadHook = `Top ${weekBit} waiver-wire targets 🧵`;
+      body = `Key pickups and stashes to help your roster.`;
     }
   } else {
-    // start/sit fallback
-    leadHook = `🧠 Start/Sit Calls ${weekBit} 🧵`;
-    body = `Matchup-based pivots and lineup edges for ${weekBit}.`;
+    leadHook = `🧠 Start/Sit calls ${weekBit} 🧵`;
+    body = `Matchup-based pivots for lineup edges.`;
   }
 
-  // Always include the site link in the lead tweet
+  // Include the site link explicitly in the opener via composer "short"
   const lead = composeThreadLead({
     hook: leadHook,
-    body: `${body} ${site}`,
+    body,
+    short: site,        // ensures the first tweet has https://www.thefantasyreport.com
     maxChars: 270,
   });
 
-  // Replies — decode HTML and always include link
+  // Replies: each line has decoded title + direct source URL
   const replyLines = items.map((r, idx) => {
     const title = htmlDecode((r.title ?? "").replace(/\s+/g, " ").trim());
     const src = r.source ? ` — ${r.source}` : "";
