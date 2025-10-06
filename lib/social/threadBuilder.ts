@@ -10,36 +10,49 @@ type Row = {
   published_at?: string | null;
 };
 
-export function buildThread(
-  cfg: { section: Extract<SectionKey, "waiver-wire" | "start-sit">; weekHint: number | null; maxItems: number },
-  rows: Row[]
-): string[] {
-  const items = rows.slice(0, Math.max(1, Math.min(cfg.maxItems, 10)));
+type ThreadCfg = {
+  section: Extract<SectionKey, "waiver-wire" | "start-sit">;
+  weekHint: number | null;
+  maxItems: number;
+  siteRoot?: string; // optional, defaults to thefantasyreport.com
+};
 
-  // Lead tweet: a clean headline for the thread
-  const weekBit = cfg.weekHint ? ` (Week ${cfg.weekHint})` : "";
+const DEFAULT_SITE = "https://www.thefantasyreport.com";
+
+export function buildThread(cfg: ThreadCfg, rows: Row[]): string[] {
+  const items = rows.slice(0, Math.max(1, Math.min(cfg.maxItems, 10)));
+  const site = (cfg.siteRoot ?? DEFAULT_SITE).replace(/\/+$/, "");
+
+  // Lead tweet: explicitly mention upcoming Week # waivers and include site link
+  const weekBit = cfg.weekHint ? `Week ${cfg.weekHint} ` : "";
   const leadHook =
     cfg.section === "waiver-wire"
-      ? `Top Waiver Wire targets${weekBit}`
-      : `Start/Sit calls to consider${weekBit}`;
+      ? `${weekBit}Waiver Wire targets`
+      : `${weekBit}Start/Sit calls to consider`;
 
-  // Optional body blurb
   const body =
     cfg.section === "waiver-wire"
-      ? `Here are notable adds and quick notes.`
-      : `Key plays and pivots based on matchups.`;
+      ? "Top pickups and quick notes."
+      : "Key plays and pivots based on matchups.";
 
-  const lead = composeThreadLead({ hook: leadHook, body });
-
-  // Replies: bullet-ish lines with title + url
-  const replyLines = items.map((r) => {
-    const t = r.title.replace(/\s+/g, " ").trim();
-    const u = r.url;
-    const src = r.source ? ` — ${r.source}` : "";
-    return `• ${t}${src} ${u}`;
+  // Include site link on the lead via `short`
+  const lead = composeThreadLead({
+    hook: leadHook,
+    body,
+    short: site,      // <-- ensures the first tweet links to thefantasyreport.com
+    maxChars: 270,
   });
 
-  const replies = composeThreadReplies(replyLines);
+  // Replies: each includes a direct link to the source article
+  const replyLines = items.map((r, idx) => {
+    const t = (r.title ?? "").replace(/\s+/g, " ").trim();
+    const src = r.source ? ` — ${r.source}` : "";
+    const u = (r.url ?? "").trim();
+    // force a direct link on every reply line
+    return `${idx + 1}. ${t}${src}\n${u}`;
+  });
+
+  const replies = composeThreadReplies(replyLines, 270);
 
   return [lead, ...replies];
 }
