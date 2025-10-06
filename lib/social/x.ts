@@ -134,3 +134,71 @@ export async function postThread(posts: XPost[], opts?: boolean | PostThreadOpti
 
   return { ids, dry: false };
 }
+
+// lib/social/x.ts (append these exports; keep existing code as-is)
+export async function postRoot(text: string, opts?: boolean | PostThreadOptions): Promise<{ id: string; dry: boolean }> {
+  const o: Required<PostThreadOptions> =
+    typeof opts === "boolean"
+      ? { dry: opts, paceMs: 0, attempts: 5, baseBackoffMs: 1500, maxBackoffMs: 60_000 }
+      : {
+          dry: Boolean(opts?.dry),
+          paceMs: 0,
+          attempts: Math.max(1, opts?.attempts ?? 5),
+          baseBackoffMs: Math.max(200, opts?.baseBackoffMs ?? 1500),
+          maxBackoffMs: Math.max(1000, opts?.maxBackoffMs ?? 60_000),
+        };
+
+  if (o.dry) return { id: "", dry: true };
+
+  const bearer = await getFreshXBearer();
+  if (!bearer) throw new Error("No OAuth2 bearer. Run /api/x/connect (tweet.write scope).");
+
+  const client = new Client(bearer);
+  const root = await createWithRetry(client, { text }, o.attempts, o.baseBackoffMs, o.maxBackoffMs);
+  if (!root.id) throw new Error(root.detail ? `Failed to create root tweet: ${root.detail}` : "Failed to create root tweet.");
+  return { id: root.id, dry: false };
+}
+
+/** Post replies only (chained to an existing rootId). */
+export async function postReplies(
+  texts: XPost[],
+  rootId: string,
+  opts?: boolean | PostThreadOptions
+): Promise<{ ids: string[]; dry: boolean }> {
+  const list = texts.map(t => (t.text ?? "").trim()).filter(Boolean);
+  const o: Required<PostThreadOptions> =
+    typeof opts === "boolean"
+      ? { dry: opts, paceMs: 7000, attempts: 5, baseBackoffMs: 1500, maxBackoffMs: 60_000 }
+      : {
+          dry: Boolean(opts?.dry),
+          paceMs: Math.max(0, opts?.paceMs ?? Number(process.env.X_THREAD_PACE_MS ?? 7000)),
+          attempts: Math.max(1, opts?.attempts ?? 5),
+          baseBackoffMs: Math.max(200, opts?.baseBackoffMs ?? 1500),
+          maxBackoffMs: Math.max(1000, opts?.maxBackoffMs ?? 60_000),
+        };
+
+  if (o.dry) return { ids: [], dry: true };
+
+  const bearer = await getFreshXBearer();
+  if (!bearer) throw new Error("No OAuth2 bearer. Run /api/x/connect (tweet.write scope).");
+
+  const client = new Client(bearer);
+  const ids: string[] = [];
+  let lastId = rootId;
+
+  for (let i = 0; i < list.length; i += 1) {
+    if (o.paceMs > 0) await new Promise(r => setTimeout(r, o.paceMs));
+    const r = await createWithRetry(
+      client,
+      { text: list[i], reply: { in_reply_to_tweet_id: lastId } },
+      o.attempts,
+      o.baseBackoffMs,
+      o.maxBackoffMs
+    );
+    if (!r.id) throw new Error(r.detail ? `Failed to create reply #${i + 1}: ${r.detail}` : `Failed to create reply #${i + 1}`);
+    ids.push(r.id);
+    lastId = r.id;
+  }
+  return { ids, dry: false };
+}
+
