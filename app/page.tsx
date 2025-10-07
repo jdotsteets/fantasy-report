@@ -154,16 +154,41 @@ const weekLabel = (wk: number) => `Week ${wk}`;
 const SPORT = "nfl";
 const DEFAULT_DAYS = 45;
 
-const mapRow = (a: DbRow): Article => ({
-  id: a.id,
-  title: a.title,
-  url: a.url,
-  canonical_url: a.canonical_url,
-  domain: a.domain,
-  image_url: a.image_url ?? null,
-  published_at: a.published_at ?? null,
-  source: a.source,
-});
+// keep the same signature
+const mapRow = (a: DbRow): Article => {
+  // narrow helpers without `any`
+  const str = (k: keyof DbRow): string | null =>
+    (k in a && typeof a[k] === "string" ? (a[k] as string) : null);
+
+  const num = (k: keyof DbRow): number | null =>
+    (k in a && typeof a[k] === "number" ? (a[k] as number) : null);
+
+  const strArr = (k: keyof DbRow): string[] | null => {
+    const v = k in a ? (a[k] as unknown) : null;
+    return Array.isArray(v)
+      ? (v.filter((t): t is string => typeof t === "string"))
+      : null;
+  };
+
+  return {
+    id: a.id,
+    title: a.title,
+    url: a.url,
+    canonical_url: a.canonical_url,
+    domain: a.domain,
+    image_url: a.image_url ?? null,
+    published_at: a.published_at ?? null,
+    source: a.source,
+
+    // ✅ pass through topic metadata for relevance/backfill
+    primary_topic: str("primary_topic"),
+    secondary_topic: str("secondary_topic"),
+    topics: strArr("topics"),
+
+    // useful for waiver/start-sit scoping
+    week: num("week"),
+  };
+};
 
 const hasRealImage = (a: Article) => {
   const u = getSafeImageUrl(a.image_url);

@@ -1,3 +1,4 @@
+// components/LoadMoreSection.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -5,7 +6,29 @@ import Section from "@/components/Section";
 import ArticleList from "@/components/ArticleList";
 import type { Article } from "@/types/sources";
 
-type SectionKey = "rankings" | "start-sit" | "waiver-wire" | "dfs" | "injury" | "advice" | "news";
+// API/route key (what your /api/section expects)
+type SectionKey =
+  | "rankings"
+  | "start-sit"
+  | "waiver-wire"
+  | "dfs"
+  | "injury"
+  | "advice"
+  | "news";
+
+// UI key (what ArticleList expects for its filter.section)
+type UISectionKey =
+  | "waivers"
+  | "rankings"
+  | "start-sit"
+  | "injury"
+  | "dfs"
+  | "news"
+  | "advice";
+
+function toUIKey(k: SectionKey): UISectionKey {
+  return k === "waiver-wire" ? "waivers" : k;
+}
 
 type Props = {
   title: string;
@@ -15,7 +38,7 @@ type Props = {
   days?: number;
   week?: number | null;
   sourceId?: number;
-  provider?: string; 
+  provider?: string;
 };
 
 export default function LoadMoreSection({
@@ -34,7 +57,7 @@ export default function LoadMoreSection({
   const [error, setError] = useState<string | null>(null);
   const offsetRef = useRef<number>(initialItems.length);
 
-  // 🔁 Reset when filters/inputs change (new source, week, etc.)
+  // 🔁 Reset when inputs change
   useEffect(() => {
     setItems(initialItems);
     offsetRef.current = initialItems.length;
@@ -58,10 +81,11 @@ export default function LoadMoreSection({
       });
       if (sectionKey === "waiver-wire" && week != null) params.set("week", String(week));
       if (typeof sourceId === "number" && Number.isFinite(sourceId)) {
-        params.set("sourceId", String(sourceId)); // must match API param name
+        params.set("sourceId", String(sourceId));
       }
-      if (typeof provider === "string" && provider.trim() !== "") params.set("provider", provider); // ← NEW
-
+      if (typeof provider === "string" && provider.trim() !== "") {
+        params.set("provider", provider);
+      }
 
       const res = await fetch(`/api/section?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -81,33 +105,32 @@ export default function LoadMoreSection({
     }
   }
 
-
-
   return (
     <Section title={title}>
-      <ArticleList items={items} />
+      {/* ✅ pass the mapped section so ArticleList applies relevance/backfill */}
+      <ArticleList items={items} filter={{ section: toUIKey(sectionKey) }} />
 
-     <div className="mt-2 px-2 sm:px-3">  {/* ← add horizontal padding */}
-    {error ? (
-      <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-        {error}
-      </div>
-    ) : null}
+      <div className="mt-2 px-2 sm:px-3">
+        {error ? (
+          <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </div>
+        ) : null}
 
-    {!done ? (
-      <button
-        onClick={loadMore}
-        className="w-full rounded-lg border px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-60"
-        disabled={loading}
-      >
-        {loading ? "Loading…" : btnLabel}
-      </button>
-    ) : (
-      <div className="w-full select-none px-3 py-2 text-center text-xs text-zinc-500">
-        No more {title.toLowerCase()}.
+        {!done ? (
+          <button
+            onClick={loadMore}
+            className="w-full rounded-lg border px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-60"
+            disabled={loading}
+          >
+            {loading ? "Loading…" : btnLabel}
+          </button>
+        ) : (
+          <div className="w-full select-none px-3 py-2 text-center text-xs text-zinc-500">
+            No more {title.toLowerCase()}.
+          </div>
+        )}
       </div>
-    )}
-  </div>
     </Section>
   );
 }

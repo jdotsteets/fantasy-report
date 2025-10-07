@@ -1,17 +1,23 @@
+// components/ArticleList.tsx
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { Article } from "@/types/sources";
-import { getSafeImageUrl, FALLBACK, isLikelyFavicon, isLikelyHeadshot, isLikelyAuthorHeadshot } from "@/lib/images";
+import type { Article, TopicKey } from "@/types/sources";
+import {
+  getSafeImageUrl,
+  FALLBACK,
+  isLikelyFavicon,
+  isLikelyAuthorHeadshot,
+} from "@/lib/images";
 import { normalizeTitle } from "@/lib/strings";
-import SmartImage from "./SmartImage";
 
 type ImagesMode = "all" | "first" | "hero";
 const MODE_KEY = "ffa_images_mode";
 
-type SectionKey = "waivers" | "rankings" | "start-sit" | "injury" | "dfs" | "news";
+// include "advice"
+type SectionKey = "waivers" | "rankings" | "start-sit" | "injury" | "dfs" | "news" | "advice";
 type Filter = { section?: SectionKey; source?: string };
 
 type Props = {
@@ -21,32 +27,26 @@ type Props = {
   filter?: Filter;
 };
 
+const SECTION_TO_TOPIC: Record<SectionKey, string> = {
+  waivers: "waiver-wire",
+  rankings: "rankings",
+  "start-sit": "start-sit",
+  injury: "injury",
+  dfs: "dfs",
+  news: "news",
+  advice: "advice",
+};
+
 function fmtDate(iso?: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
   return d.toLocaleString();
 }
 
-// Optional section matcher (only applies if filter.section provided)
-function matchesSection(a: Article, section?: SectionKey): boolean {
-  if (!section) return true;
+/* ───────────────────────── Relevance Logic ───────────────────────── */
 
-  // 1) Trust the DB when present
-  if (a.primary_topic) {
-    // map UI key "waivers" -> DB "waiver-wire"
-    const map: Record<SectionKey, Article["primary_topic"]> = {
-      waivers: "waiver-wire",
-      rankings: "rankings",
-      "start-sit": "start-sit",
-      injury: "injury",
-      dfs: "dfs",
-      news: "news",
-    };
-    if (a.primary_topic === map[section]) return true;
-  }
-
-  // 2) Fallback: legacy regex if DB is null/missing
-  const title = (normalizeTitle(a.title) ?? "").toLowerCase();
+function heuristicMatch(section: SectionKey, a: Article): boolean {
+  const title = normalizeTitle(a.title || "").toLowerCase();
   const url = (a.canonical_url ?? a.url ?? "").toLowerCase();
   const has = (re: RegExp) => re.test(title) || re.test(url);
 
@@ -62,8 +62,48 @@ function matchesSection(a: Article, section?: SectionKey): boolean {
     case "dfs":
       return has(/\bdfs\b|\bdraftkings\b|\bfanduel\b|\bgpp\b|\bcash games?\b|\b(lineup|stack)s?\b/);
     case "news":
-      return true;
+      return true; // broad; rely on recency
+    case "advice":
+      return has(/\badvice\b|\bhelp\b|\btips?\b|\bstrategy\b|\bguide\b/);
   }
+}
+
+/** 2 = primary_topic; 1 = secondary/topics/heuristic; 0 = none */
+function sectionRelevance(a: Article, section?: SectionKey): 0 | 1 | 2 {
+  if (!section) return 2;
+
+  const topic = SECTION_TO_TOPIC[section];
+
+  const primary: string | null = a.primary_topic ?? null;
+  const secondary: string | null = a.secondary_topic ?? null;
+
+  // normalize topics to a readonly string[]
+  const topics: readonly string[] = Array.isArray(a.topics)
+    ? (a.topics.filter((t): t is string => typeof t === "string") as readonly string[])
+    : [];
+
+  if (primary === topic) return 2;
+  if (secondary === topic) return 1;
+  if (topics.includes(topic)) return 1;
+  if (heuristicMatch(section, a)) return 1;
+
+  return 0;
+}
+
+/** Score → filter (>0) → sort (score desc, then recency) */
+function selectForSection(articles: Article[], section: SectionKey | undefined): Article[] {
+  const scored = articles
+    .map((a) => ({ a, score: sectionRelevance(a, section) }))
+    .filter((x) => x.score > 0)
+    .sort((x, y) => {
+      if (y.score !== x.score) return y.score - x.score;
+      const ad = x.a.published_at ? Date.parse(x.a.published_at) : 0;
+      const bd = y.a.published_at ? Date.parse(y.a.published_at) : 0;
+      return bd - ad;
+    })
+    .map((x) => x.a);
+
+  return scored;
 }
 
 /** Typography */
@@ -86,14 +126,24 @@ export default function ArticleList({ items, title, className, filter }: Props) 
     return () => window.removeEventListener("ffa:imagesMode", onChange as EventListener);
   }, []);
 
-  // Apply optional filters; if you don't pass filter.section/source, nothing is filtered here.
   const filtered = useMemo(() => {
     let out = items;
-    if (filter?.section) out = out.filter((a) => matchesSection(a, filter.section));
+
     if (filter?.source) {
       const s = filter.source.toLowerCase();
       out = out.filter((a) => (a.source ?? "").toLowerCase() === s);
     }
+
+    if (filter?.section) {
+      out = selectForSection(out, filter.section);
+    } else {
+      out = [...out].sort((a, b) => {
+        const ad = a.published_at ? Date.parse(a.published_at) : 0;
+        const bd = b.published_at ? Date.parse(b.published_at) : 0;
+        return bd - ad;
+      });
+    }
+
     return out;
   }, [items, filter?.section, filter?.source]);
 
@@ -117,7 +167,12 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
             // Image handling
             let candidate = getSafeImageUrl(r.image_url);
-            if (!candidate || candidate === FALLBACK || isLikelyFavicon(candidate) || isLikelyAuthorHeadshot(candidate) ) {
+            if (
+              !candidate ||
+              candidate === FALLBACK ||
+              isLikelyFavicon(candidate) ||
+              isLikelyAuthorHeadshot(candidate)
+            ) {
               candidate = null;
             }
             const wantImage = mode === "all" ? true : mode === "first" ? idx === 0 : false;
@@ -147,32 +202,32 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
                 {/* Two-column row: favicon | (title + meta) */}
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-<div className="flex items-center gap-2">
-  {favicon ? (
-        <Image
-          src={favicon}
-          alt=""
-          width={18}
-          height={18}
-          unoptimized
-          className="h-[18px] w-[18px] shrink-0 -translate-y-0.5"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
-  ) : (
-    <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200 -translate-y-0.5" />
-  )}
-  <div className="min-w-0 flex-1">
-    <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
-      {displayTitle}
-    </h3>
-    <div className={SUBHEADLINE_TEXT_CLS}>
-      <span>{fmtDate(r.published_at)}</span>
-      <span>• {r.source}</span>
-    </div>
-  </div>
-</div>
+                  <div className="flex items-center gap-2">
+                    {favicon ? (
+                      <Image
+                        src={favicon}
+                        alt=""
+                        width={18}
+                        height={18}
+                        unoptimized
+                        className="h-[18px] w-[18px] shrink-0 -translate-y-0.5"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200 -translate-y-0.5" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
+                        {displayTitle}
+                      </h3>
+                      <div className={SUBHEADLINE_TEXT_CLS}>
+                        <span>{fmtDate(r.published_at)}</span>
+                        <span>• {r.source}</span>
+                      </div>
+                    </div>
+                  </div>
                 </Link>
               </li>
             );

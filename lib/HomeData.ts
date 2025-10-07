@@ -49,9 +49,95 @@ function keyOf(r: SectionRow): string {
   return (r.canonical_url || r.url || String(r.id)).toLowerCase();
 }
 
-/** remove duplicates across sections based on ORDERED_SECTIONS priority */
-function dedupeAcrossSections(sections: Record<SectionKey, SectionRow[]>): Record<SectionKey, SectionRow[]> {
-  const seen = new Set<string>();
+/** normalize a provider key for balancing/capping (fallback to source name) */
+function providerKey(r: SectionRow): string {
+  // SectionRow doesn’t expose provider_key; use lowercased source name as a stable proxy
+  return (r.source ?? "unknown").toLowerCase();
+}
+
+/* ───────────────────────── Section/topic helpers ───────────────────────── */
+
+const SECTION_TO_TOPIC: Record<SectionKey, string> = {
+  "start-sit": "start-sit",
+  "waiver-wire": "waiver-wire",
+  "injury": "injury",
+  "dfs": "dfs",
+  "rankings": "rankings",
+  "advice": "advice",
+  "news": "news",
+};
+
+/** newest-first date compare */
+function byRecencyDesc(a: SectionRow, b: SectionRow): number {
+  const ad = a.published_at ? Date.parse(a.published_at) : 0;
+  const bd = b.published_at ? Date.parse(b.published_at) : 0;
+  return bd - ad;
+}
+
+/**
+ * Rank a single section:
+ *  1. all primary_topic matches (recency desc)
+ *  1b. avoid back-to-back same provider across the first `firstWindow`
+ *  1c. enforce per-provider cap across the entire list
+ *  2. backfill with secondary/topic matches (recency desc)
+ */
+function rankWithinSection(
+  rows: SectionRow[],
+  section: SectionKey,
+  perProviderCap: number,
+  firstWindow: number = 10
+): SectionRow[] {
+  const topic = SECTION_TO_TOPIC[section];
+
+  const primaries = rows.filter(r => r.primary_topic === topic).sort(byRecencyDesc);
+  const secondaries = rows
+    .filter(r => r.primary_topic !== topic && Array.isArray(r.topics) && r.topics.includes(topic))
+    .sort(byRecencyDesc);
+
+  // Interleave primaries to avoid back-to-back same provider in the first window
+  const firstBlock: SectionRow[] = [];
+  const overflowPrimaries: SectionRow[] = [];
+
+  for (const r of primaries) {
+    const last = firstBlock[firstBlock.length - 1];
+    if (firstBlock.length < firstWindow && (!last || providerKey(last) !== providerKey(r))) {
+      firstBlock.push(r);
+    } else {
+      overflowPrimaries.push(r);
+    }
+  }
+
+  // Combine: balanced primaries (first window) + remaining primaries + secondaries as backfill
+  const combined: SectionRow[] = firstBlock.concat(overflowPrimaries, secondaries);
+
+  // Enforce per-provider cap if provided (>0)
+  if (perProviderCap > 0) {
+    const counts = new Map<string, number>();
+    const capped: SectionRow[] = [];
+    for (const r of combined) {
+      const pk = providerKey(r);
+      const n = counts.get(pk) ?? 0;
+      if (n < perProviderCap) {
+        capped.push(r);
+        counts.set(pk, n + 1);
+      }
+    }
+    return capped;
+  }
+
+  return combined;
+}
+
+/**
+ * Topic-aware cross-section de-dupe.
+ * Earlier sections only “own” a URL if its primary_topic actually matches that section’s topic.
+ * We still suppress exact-duplicate URLs already owned by a previous section.
+ */
+function dedupeAcrossSectionsTopicAware(
+  sections: Record<SectionKey, SectionRow[]>
+): Record<SectionKey, SectionRow[]> {
+  const seenOwned = new Set<string>(); // URLs owned by a true-primary earlier section
+  const seenAny = new Set<string>();   // any URL emitted (prevents literal duplicates within the same section)
   const out: Record<SectionKey, SectionRow[]> = {
     "start-sit": [],
     "waiver-wire": [],
@@ -63,17 +149,34 @@ function dedupeAcrossSections(sections: Record<SectionKey, SectionRow[]>): Recor
   };
 
   for (const key of ORDERED_SECTIONS) {
+    const topic = SECTION_TO_TOPIC[key];
     const next: SectionRow[] = [];
+
     for (const row of sections[key] || []) {
       const k = keyOf(row);
-      if (seen.has(k)) continue;
-      seen.add(k);
+
+      // If an earlier section truly owned this URL (primary match), suppress it here.
+      if (seenOwned.has(k)) continue;
+
+      // Prevent exact duplicates within the same section pass
+      if (seenAny.has(`${key}:${k}`)) continue;
+      seenAny.add(`${key}:${k}`);
+
+      // Emit it
       next.push(row);
+
+      // If this section is the row's primary, mark as owned → later sections will suppress it
+      if (row.primary_topic === topic) {
+        seenOwned.add(k);
+      }
     }
     out[key] = next;
   }
+
   return out;
 }
+
+/* ───────────────────────── Main API ───────────────────────── */
 
 export async function getHomeData(
   opts: HomeDataOptions = {},
@@ -91,11 +194,15 @@ export async function getHomeData(
   };
 }> {
   const baseLimit = clamp(opts.limitPerSection ?? 12, 1, 50);
+
+  // NOTE: this is a *global per-section* cap used in ranking phase.
+  // Your /api/section route may also enforce its own cap server-side for page 1.
   const perProviderCap = clamp(
     opts.perProviderCap ?? Math.max(1, Math.floor(baseLimit / 3)),
     1,
     10,
   );
+
   const days = clamp(opts.days ?? 45, 1, 365);
   const week = typeof opts.week === "number" ? clamp(opts.week, 0, 30) : null;
 
@@ -127,8 +234,8 @@ export async function getHomeData(
     fetchSectionItems({ key: "injury",      limit: limits.injuries,  ...shared }),
   ]);
 
-  // Cross-section de-dupe by priority
-  const deduped = dedupeAcrossSections({
+  // Cross-section de-dupe (topic-aware so true primaries keep ownership)
+  const deduped = dedupeAcrossSectionsTopicAware({
     "start-sit":   startSit,
     "waiver-wire": waivers,
     "injury":      injury,
@@ -138,14 +245,14 @@ export async function getHomeData(
     "news":        news,
   });
 
-  // Map back to UI names
-  const startSitOut = deduped["start-sit"];
-  const waiversOut  = deduped["waiver-wire"];
-  const injuryOut   = deduped["injury"];
-  const dfsOut      = deduped["dfs"];
-  const rankingsOut = deduped["rankings"];
-  const adviceOut   = deduped["advice"];
-  const newsOut     = deduped["news"];
+  // Apply section-specific ranking + provider balancing + backfill
+  const startSitOut = rankWithinSection(deduped["start-sit"], "start-sit", perProviderCap);
+  const waiversOut  = rankWithinSection(deduped["waiver-wire"], "waiver-wire", perProviderCap);
+  const injuryOut   = rankWithinSection(deduped["injury"], "injury", perProviderCap);
+  const dfsOut      = rankWithinSection(deduped["dfs"], "dfs", perProviderCap);
+  const rankingsOut = rankWithinSection(deduped["rankings"], "rankings", perProviderCap);
+  const adviceOut   = rankWithinSection(deduped["advice"], "advice", perProviderCap);
+  const newsOut     = rankWithinSection(deduped["news"], "news", perProviderCap);
 
   // Hero pool (deduped by id) and cap
   const heroLimit = clamp(opts.limitHero ?? 24, 1, 100);
@@ -174,7 +281,8 @@ export async function getHomeData(
   };
 }
 
-// Optional single section helper (preserves your staticMode override support)
+/* ───────────────────────── Optional single-section helper ───────────────────────── */
+
 export async function getSectionItems(
   key: SectionKey,
   opts: {

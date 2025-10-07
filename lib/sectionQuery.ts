@@ -27,6 +27,8 @@ export type SectionRow = {
   topics: string[] | null;
   week: number | null;
   is_player_page?: boolean | null;
+  primary_topic: string | null;
+  secondary_topic: string | null;
   // (optional) expose these later if you want:
   // is_static?: boolean | null;
   // static_type?: string | null;
@@ -77,9 +79,12 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const staticType = (opts.staticType ?? "").trim() || null;
 
   const hasProviderFilter = Boolean(provider) || typeof sourceId === "number";
-  const perProviderCap: number | null = hasProviderFilter
-    ? null
-    : Math.max(1, Math.min(opts.perProviderCap ?? 3, 3));
+// after (clamp to 1..10 if provided, otherwise default 3):
+const perProviderCap: number | null = hasProviderFilter
+  ? null
+  : (opts.perProviderCap == null
+      ? 3
+      : Math.max(1, Math.min(opts.perProviderCap, 10)));
 
   const params: Array<string | number> = [];
   let p = 0;
@@ -181,22 +186,19 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
       LIMIT $${push(limit)} OFFSET $${push(offset)};
     `;
 
-  const rows = await dbQueryRows<SectionRow>(sql, params);
+const rows = await dbQueryRows<SectionRow>(sql, params);
 
   /* ───────────────────────── Post-query filter ───────────────────────── */
-  const badTitlePattern = /\b(radio|broadcast|coverage|station)\b/i; // removed 'schedule'
+  const badTitlePattern = /\b(radio|broadcast|coverage|station)\b/i;
   const waiverTitleOk = (t: string) =>
     /\b(waiver|wire|adds?|pickups?|stashes?)\b/i.test(t);
   const startSitTitleOk = (t: string) =>
     /(start\/sit|start-?sit|who (to|should i) start|lineup decisions|sit\/start)/i.test(t);
 
-  return rows.filter(r => {
+  let filtered = rows.filter(r => {
     const t = (r.title ?? "").toLowerCase();
-
-    // exclude obvious non-articles
     if (badTitlePattern.test(t)) return false;
 
-    // if topics already include the section key, let it pass
     const topicsHasKey = Array.isArray(r.topics) && r.topics.includes(key);
 
     if (key === "waiver-wire") {
@@ -204,7 +206,30 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
     } else if (key === "start-sit") {
       if (!(topicsHasKey || startSitTitleOk(t))) return false;
     }
-
     return true;
   });
+
+  // ✅ NEW: if the provider cap starved the page, backfill uncapped to hit `limit`
+  if (perProviderCap && filtered.length < limit) {
+    const need = limit - filtered.length;
+
+    // re-run the same query uncapped
+    const uncapped = await fetchSectionItems({
+      ...opts,
+      perProviderCap: null,        // disable cap
+      offset: 0,                   // ignore original offset to get freshest
+    });
+
+    const seen = new Set(filtered.map(r => (r.canonical_url || r.url || String(r.id)).toLowerCase()));
+    for (const r of uncapped) {
+      const k = (r.canonical_url || r.url || String(r.id)).toLowerCase();
+      if (seen.has(k)) continue;
+      filtered.push(r);
+      seen.add(k);
+      if (filtered.length >= limit) break;
+    }
+  }
+
+  return filtered;
 }
+ 

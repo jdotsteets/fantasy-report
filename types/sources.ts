@@ -1,5 +1,14 @@
 // /types/sources.ts
 
+export type TopicKey =
+  | "waiver-wire"
+  | "rankings"
+  | "start-sit"
+  | "injury"
+  | "dfs"
+  | "news"
+  | "advice";
+
 
 export type SourceRow = {
   id: number;
@@ -67,7 +76,7 @@ export type Article = {
   image_url?: string | null;
   discovered_at?: string | null;
   summary?: string | null;
-  topics?: [];
+  topics?: readonly string[] | null;
   players?: [];
   sport?: string | null;
   Article?: string | null;

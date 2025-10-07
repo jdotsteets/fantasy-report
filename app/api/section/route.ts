@@ -1,3 +1,4 @@
+//app/api/section/route.ts
 import { NextResponse } from "next/server";
 import { fetchSectionItems, SectionKey } from "@/lib/sectionQuery";
 
@@ -16,16 +17,16 @@ function toKey(v: string | null): SectionKey | "" {
   return (all as readonly string[]).includes(s) ? (s as SectionKey) : "";
 }
 
+// app/api/section/route.ts
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const key = toKey(url.searchParams.get("key"));
 
-    const provider = (url.searchParams.get("provider") || "").trim(); // human label (e.g., "ESPN Fantasy")
+    const provider = (url.searchParams.get("provider") || "").trim();
     const sourceId = url.searchParams.get("sourceId");
     const hasProviderFilter = Boolean(provider) || Boolean(sourceId);
 
-    // If filtered to a provider, show more rows by default
     const baseLimit = clampInt(url.searchParams.get("limit"), 12, 1, 100);
     const limit = hasProviderFilter ? Math.max(baseLimit, 50) : baseLimit;
 
@@ -39,10 +40,11 @@ export async function GET(req: Request) {
       ? clampInt(freshHoursParam, 72, 1, 24 * 14)
       : undefined;
 
-    // IMPORTANT: when provider filter is present, completely disable the per-provider cap by sending null
-    const perProviderCap = hasProviderFilter
-      ? null
-      : clampInt(url.searchParams.get("perProviderCap"), Math.max(1, Math.floor(limit / 3)), 1, 10);
+    // ✅ Disable provider cap when:
+    // - a provider filter is used, OR
+    // - we're loading subsequent pages (offset > 0)
+    const baseCap = clampInt(url.searchParams.get("perProviderCap"), Math.max(1, Math.floor(limit / 3)), 1, 10);
+    const perProviderCap = (hasProviderFilter || offset > 0) ? null : baseCap;
 
     const items = await fetchSectionItems({
       key,
@@ -50,8 +52,8 @@ export async function GET(req: Request) {
       offset,
       days,
       week,
-      perProviderCap,            // <-- now number | null
-      provider: provider || undefined, // we’ll ILIKE this against sources.provider
+      perProviderCap,                 // number | null
+      provider: provider || undefined,
       sourceId: sourceId ? Number(sourceId) : undefined,
       maxAgeHours,
     });
