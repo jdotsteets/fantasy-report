@@ -1,4 +1,3 @@
-// app/api/social/worker/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery, dbQueryRows } from "@/lib/db";
@@ -48,11 +47,7 @@ function stripLeadingHook(hook: string, body: string): string {
   const h = (hook ?? "").trim();
   const b = (body ?? "").trim();
   if (!h || !b) return b;
-
-  // If body exactly equals hook, drop it entirely.
   if (b.localeCompare(h, undefined, { sensitivity: "accent" }) === 0) return "";
-
-  // If body begins with hook, remove it plus common separators.
   const re = new RegExp(`^${escapeRegex(h)}(?:[\\s\\-–—:|]+)?`, "i");
   return b.replace(re, "").trim();
 }
@@ -136,7 +131,6 @@ async function runOnce(mode: Mode): Promise<Result> {
 
     let short = "";
     try {
-      // timebox brief generation to 10s so one slow item doesn't stall the batch
       short = await withTimeout(ensureBriefShortlink(row.article_id), 10000, `ensureBrief:${row.article_id}`);
     } catch (err) {
       console.warn("[worker] brief failed", row.id, String(err));
@@ -177,7 +171,7 @@ async function runOnce(mode: Mode): Promise<Result> {
 }
 
 export async function GET(req: NextRequest) {
-  // quick, auth-less diag moved BEFORE gate helps when debugging; remove later if you prefer
+  // Keep diag probe available even when disabled
   if (req.nextUrl.searchParams.get("diag") === "1") {
     const [{ count }] = await dbQueryRows<{ count: string }>(
       `select count(*)::text as count
@@ -196,6 +190,11 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
+  if (process.env.DISABLE_POSTERS === "1") {
+    return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
+  }
+
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -206,6 +205,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
+  if (process.env.DISABLE_POSTERS === "1") {
+    return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
+  }
+
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

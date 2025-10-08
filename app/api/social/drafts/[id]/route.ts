@@ -33,6 +33,11 @@ function isIsoOrNull(s: unknown): s is string | null {
   return !Number.isNaN(d.getTime());
 }
 
+function isInPastIso(iso: string): boolean {
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) && t < Date.now();
+}
+
 export async function GET(req: Request) {
   try {
     const id = getIdFromUrl(req);
@@ -66,7 +71,7 @@ export async function PATCH(req: Request) {
     try {
       body = (await req.json()) as PatchBody;
     } catch {
-      // empty body is allowed, but it won’t change anything
+      // empty body allowed
     }
 
     if (body.status !== undefined && !isValidStatus(body.status)) {
@@ -76,10 +81,26 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "scheduled_for must be ISO string or null" }, { status: 400 });
     }
 
+    // Kill-switch: prevent transitions that would trigger auto-posting when disabled
+    if (
+      process.env.DISABLE_POSTERS === "1" &&
+      (body.status === "approved" || body.status === "scheduled" || body.status === "published")
+    ) {
+      return NextResponse.json(
+        { error: "Posting disabled", note: "DISABLE_POSTERS=1 blocks status changes to approved/scheduled/published." },
+        { status: 503 }
+      );
+    }
+
     // If scheduling without a timestamp, default to +30m
     let scheduledFor: string | null | undefined = body.scheduled_for;
     if (body.status === "scheduled" && scheduledFor === undefined) {
       scheduledFor = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    }
+
+    // Disallow scheduling in the past
+    if (scheduledFor && isInPastIso(scheduledFor)) {
+      return NextResponse.json({ error: "scheduled_for cannot be in the past" }, { status: 400 });
     }
 
     // Build dynamic update set
@@ -122,8 +143,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const id = getIdFromUrl(req);
-    const res = await dbQuery(`delete from social_drafts where id = $1`, [id]);
-    // res.rowCount may not be available depending on your db helper; ignore if so
+    await dbQuery(`delete from social_drafts where id = $1`, [id]);
     return NextResponse.json({ ok: true, id });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });

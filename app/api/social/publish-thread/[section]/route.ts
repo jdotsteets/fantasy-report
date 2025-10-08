@@ -2,9 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchSectionItems, type SectionKey } from "@/lib/sectionQuery";
 import { buildThread } from "@/lib/social/threadBuilder";
-import { postThread, postRoot, postReplies } from "@/lib/social/x";
-
-export type XPost = { text: string };
+import { postThread, postRoot, postReplies, type XPost } from "@/lib/social/x";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,16 +69,10 @@ type HttpishError = {
 function isHttpishError(err: unknown): err is HttpishError {
   if (!err || typeof err !== "object") return false;
   const maybe = err as Record<string, unknown>;
-  return (
-    "status" in maybe ||
-    "headers" in maybe ||
-    "message" in maybe ||
-    "name" in maybe
-  );
+  return "status" in maybe || "headers" in maybe || "message" in maybe || "name" in maybe;
 }
 
 function parseRateLimitResetMs(err: HttpishError): number | null {
-  // Try to honor X headers if your client bubbles them up.
   const hdrs = err.headers;
   if (!hdrs) return null;
 
@@ -90,19 +82,16 @@ function parseRateLimitResetMs(err: HttpishError): number | null {
     return lowerKey ? (hdrs as Record<string, string>)[lowerKey] ?? null : null;
   };
 
-  // X rate headers vary; try common ones
   const reset = get("x-rate-limit-reset");
   if (reset) {
-    // Some libs provide epoch seconds, others ms; handle both
     const n = Number(reset);
     if (Number.isFinite(n)) {
-      if (n > 10_000_000_000) return Math.max(0, n - Date.now()); // looks like ms epoch
+      if (n > 10_000_000_000) return Math.max(0, n - Date.now()); // ms epoch
       const targetMs = n * 1000;
       return Math.max(0, targetMs - Date.now());
     }
   }
 
-  // Retry-After (seconds)
   const ra = get("retry-after");
   if (ra) {
     const n = Number(ra);
@@ -114,12 +103,7 @@ function parseRateLimitResetMs(err: HttpishError): number | null {
 
 async function retryOn429<T>(
   fn: () => Promise<T>,
-  opts: {
-    attempts: number;
-    baseBackoffMs: number;
-    maxBackoffMs: number;
-    jitterPct: number;
-  }
+  opts: { attempts: number; baseBackoffMs: number; maxBackoffMs: number; jitterPct: number }
 ): Promise<T> {
   const { attempts, baseBackoffMs, maxBackoffMs, jitterPct } = opts;
   let backoff = baseBackoffMs;
@@ -130,25 +114,16 @@ async function retryOn429<T>(
     } catch (err: unknown) {
       const httpish = isHttpishError(err) ? err : undefined;
       const status = httpish?.status ?? 0;
+      if (status !== 429 || i === attempts - 1) throw err;
 
-      // Only retry on 429; everything else bubble up immediately
-      if (status !== 429 || i === attempts - 1) {
-        throw err;
-      }
-
-      // If headers indicate a reset, honor it (plus small jitter)
       const resetMs = httpish ? parseRateLimitResetMs(httpish) : null;
-      const waitMs = resetMs !== null ? resetMs + withJitter(1000, 0.5) : withJitter(backoff, jitterPct);
+      const waitMs =
+        resetMs !== null ? resetMs + withJitter(1000, 0.5) : withJitter(backoff, jitterPct);
 
       await sleep(Math.min(waitMs, maxBackoffMs));
-
-      // Exponential-ish backoff for the next loop
       backoff = Math.min(backoff * 2, maxBackoffMs);
     }
   }
-
-  // Should be unreachable because we either return or throw above
-  // but TypeScript wants a return.
   // eslint-disable-next-line @typescript-eslint/only-throw-error
   throw new Error("Exhausted retries without success.");
 }
@@ -156,6 +131,11 @@ async function retryOn429<T>(
 /* ───────────────────────── Route ───────────────────────── */
 
 export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
+  // Kill-switch: set DISABLE_POSTERS=1 to pause automation
+  if (process.env.DISABLE_POSTERS === "1") {
+    return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
+  }
+
   const { section } = await ctx.params;
   const key = toSectionKey(section);
   if (!key) {
@@ -197,7 +177,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
     parseIntOrNull(url.searchParams.get("maxBackoffMs")) ?? DEFAULT_MAX_BACKOFF_MS
   );
   const jitterPctParam = Number(url.searchParams.get("jitterPct") ?? "");
-  const jitterPct = Number.isFinite(jitterPctParam) ? Math.max(0, Math.min(1, jitterPctParam)) : DEFAULT_JITTER_PCT;
+  const jitterPct = Number.isFinite(jitterPctParam)
+    ? Math.max(0, Math.min(1, jitterPctParam))
+    : DEFAULT_JITTER_PCT;
 
   // Fetch items for the thread
   let rows;
@@ -213,10 +195,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
       sport,
     });
   } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: "Fetch failed", detail: String(err) },
-      { status: 502 }
-    );
+    return NextResponse.json({ ok: false, error: "Fetch failed", detail: String(err) }, { status: 502 });
   }
 
   if (!rows.length) {
@@ -251,8 +230,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
         return NextResponse.json({ ok: false, error: "Nothing to post." }, { status: 400 });
       }
 
-      const { id } = await retryOn429(
-        () => postRoot(xPosts[0].text, { dry: false }),
+      const rootRes = await retryOn429(
+        () => postRoot(xPosts[0], { dry: false }),
         { attempts, baseBackoffMs, maxBackoffMs, jitterPct }
       );
 
@@ -262,7 +241,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
         week,
         days,
         perProviderCap,
-        rootId: id,
+        rootId: rootRes.ids[0] ?? null,
         count: 1,
         dry: false,
       });
@@ -273,13 +252,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
       if (!rootId) {
         return NextResponse.json({ ok: false, error: "Missing rootId for replies." }, { status: 400 });
       }
-      const replies = xPosts.slice(1);
-      if (replies.length === 0) {
+      const repliesTexts = xPosts.slice(1).map((p) => p.text);
+      if (repliesTexts.length === 0) {
         return NextResponse.json({ ok: true, section: key, week, rootId, postedIds: [], dry: false });
       }
 
       const result = await retryOn429(
-        () => postReplies(replies, rootId, { dry: false, paceMs }),
+        () => postReplies(repliesTexts, rootId, { dry: false, paceMs }),
         { attempts, baseBackoffMs, maxBackoffMs, jitterPct }
       );
 
@@ -296,8 +275,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
     }
 
     // Default: one-shot post (fast by default; pace if provided)
+    const opener = xPosts[0];
+    const replies = xPosts.slice(1).map((p) => p.text);
+
     const result = await retryOn429(
-      () => postThread(xPosts, { dry: false, paceMs }),
+      () => postThread(opener, replies, { dry: false, paceMs }),
       { attempts, baseBackoffMs, maxBackoffMs, jitterPct }
     );
 

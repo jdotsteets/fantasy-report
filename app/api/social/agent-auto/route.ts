@@ -121,7 +121,8 @@ async function runSchedule(dry: boolean): Promise<{
   const ct = ctNow();
   if (!isWithinCTWindow(ct)) {
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT: 0, note: "outside CT window" };
-    }
+  }
+
   // Current throughput state
   const scheduledTodayCT = await getScheduledCountTodayCT();
   const remaining = Math.max(DAILY_TARGET_POSTS - scheduledTodayCT, 0);
@@ -243,6 +244,11 @@ function normalizeUrl(u: string | null | undefined): string | null {
 /* ───────────────────── Route handlers ──────────────────── */
 
 export async function GET(req: NextRequest) {
+  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
+  if (process.env.DISABLE_POSTERS === "1") {
+    return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
+  }
+
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -252,6 +258,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
+  if (process.env.DISABLE_POSTERS === "1") {
+    return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
+  }
+
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

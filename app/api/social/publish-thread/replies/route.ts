@@ -1,7 +1,8 @@
+// app/api/social/publish-thread/replies/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { fetchSectionItems, type SectionKey } from "@/lib/sectionQuery";
 import { buildThread } from "@/lib/social/threadBuilder";
-import { postReplies } from "@/lib/social/x";
+import { postReplies, type XPost } from "@/lib/social/x";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,8 +16,6 @@ const LIMIT_MAX = 10;
 const DEFAULT_LIMIT = 5;
 const DEFAULT_DAYS = 21;
 const DEFAULT_PER_PROVIDER_CAP = 3;
-
-export type XPost = { text: string };
 
 /* ─────────────── Helpers ─────────────── */
 
@@ -54,6 +53,11 @@ function toXPost(p: string | { text: string }): XPost {
  *   - dry=1 (preview only)
  */
 export async function POST(req: NextRequest) {
+  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
+  if (process.env.DISABLE_POSTERS === "1") {
+    return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
+  }
+
   const url = new URL(req.url);
 
   const rootId = url.searchParams.get("rootId") ?? "";
@@ -128,7 +132,7 @@ export async function POST(req: NextRequest) {
       rootId,
       count: replies.length,
       dry: true,
-      preview: replies,
+      preview: replies, // XPost[] for preview
     });
   }
 
@@ -146,7 +150,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await postReplies(replies, rootId, { dry: false, paceMs });
+    // Convert to the shape expected by postReplies: string[] (texts only)
+    const replyTexts = replies.map((r) => r.text);
+    const result = await postReplies(replyTexts, rootId, { dry: false, paceMs });
     return NextResponse.json({
       ok: true,
       section: key,
