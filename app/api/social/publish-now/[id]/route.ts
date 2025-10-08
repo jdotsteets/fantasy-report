@@ -1,3 +1,4 @@
+//app/api/social/publish-now/[id]/route.ts
 import { NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery, dbQueryRows } from "@/lib/db";
@@ -7,6 +8,47 @@ import { getBriefByArticleId } from "@/lib/briefs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// add near top with other imports
+type CreateTweetResult = {
+  id: string | null;
+  detail?: string;
+  rateLimited?: boolean;
+  resetAt?: number; // epoch seconds
+};
+
+function readResetAtFromError(err: unknown): number | undefined {
+  try {
+    const e = err as { response?: { headers?: Headers } };
+    const h = e?.response?.headers;
+    const raw = h?.get?.("x-rate-limit-reset");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// replace your createWithRetry with a single-attempt version for publish-now
+async function createOnce(
+  client: Client,
+  text: string,
+  perCallTimeoutMs = 8000
+): Promise<CreateTweetResult> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), perCallTimeoutMs);
+    const res = await client.tweets.createTweet({ text }, { signal: ctrl.signal as AbortSignal });
+    clearTimeout(timer);
+    const id = res.data?.id ?? null;
+    return id ? { id } : { id: null, detail: "No tweet id in response" };
+  } catch (err) {
+    const detail = explainTwitterError(err);
+    const resetAt = readResetAtFromError(err);
+    const rateLimited = detail.includes("429");
+    return { id: null, detail, rateLimited, resetAt };
+  }
+}
 
 type DraftRow = {
   id: number;
@@ -148,44 +190,66 @@ export async function POST(
     return NextResponse.json({ error: "Bad id" }, { status: 400 });
   }
 
-  const rows = await dbQueryRows<DraftRow>(
-    `select d.id,
-            d.article_id,
-            d.hook,
-            d.body,
-            d.cta,
-            q.article_url,
-            d.platform,
-            d.status
-       from social_drafts d
-       join v_social_queue q on q.id = d.id
-      where d.id = $1
-      limit 1`,
-    [idNum]
+  // --- acquire a global advisory lock to serialize publishes ---
+  const lockKey = 90210; // any constant int64 split; pg uses two int4 internally
+  const got = await dbQueryRows<{ got: boolean }>(
+    "select pg_try_advisory_lock($1) as got",
+    [lockKey]
   );
-  if (rows.length === 0) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
-
-  const row = rows[0];
-  if (row.platform !== "x") return NextResponse.json({ error: "Only X supported here" }, { status: 400 });
-  if (row.status === "published") return NextResponse.json({ ok: true, note: "Already published" });
-
-  const bearer = await getFreshXBearer();
-  if (!bearer) return NextResponse.json({ error: "X not connected" }, { status: 400 });
-
-  // Ensure brief shortlink
-  let short = "";
-  try {
-    short = await ensureBriefShortlink(row.article_id);
-  } catch (e) {
-    return NextResponse.json({ error: "Brief link failed", detail: String(e) }, { status: 502 });
+  if (!got[0]?.got) {
+    return NextResponse.json(
+      { error: "Another publish in progress. Try again in ~60s." },
+      { status: 429 }
+    );
   }
 
-  const text = composeTweetText(row, short);
-
   try {
+    const rows = await dbQueryRows<DraftRow>(
+      `select d.id, d.article_id, d.hook, d.body, d.cta,
+              q.article_url, d.platform, d.status
+         from social_drafts d
+         join v_social_queue q on q.id = d.id
+        where d.id = $1
+        limit 1`,
+      [idNum]
+    );
+    if (rows.length === 0) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
+
+    const row = rows[0];
+    if (row.platform !== "x") return NextResponse.json({ error: "Only X supported here" }, { status: 400 });
+    if (row.status === "published") return NextResponse.json({ ok: true, note: "Already published" });
+
+    const bearer = await getFreshXBearer();
+    if (!bearer) return NextResponse.json({ error: "X not connected" }, { status: 400 });
+
+    // Ensure brief shortlink
+    let short = "";
+    try {
+      short = await ensureBriefShortlink(row.article_id);
+    } catch (e) {
+      return NextResponse.json({ error: "Brief link failed", detail: String(e) }, { status: 502 });
+    }
+
+    const text = composeTweetText(row, short);
+
     const client = new Client(bearer);
-    const sent = await createWithRetry(client, text, 5, 1500, 60_000, 8000);
+
+    // SINGLE attempt here
+    const sent = await createOnce(client, text, 8000);
+
     if (!sent.id) {
+      if (sent.rateLimited) {
+        // don’t poison the draft
+        await dbQuery(`update social_drafts set status='approved', updated_at=now() where id=$1`, [row.id]);
+        return NextResponse.json(
+          {
+            error: "Rate limited by X",
+            detail: sent.detail ?? "429",
+            resetAt: sent.resetAt ?? null
+          },
+          { status: 429 }
+        );
+      }
       await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
       return NextResponse.json(
         { error: "Tweet failed", detail: sent.detail ?? "Unknown error" },
@@ -195,8 +259,9 @@ export async function POST(
 
     await dbQuery(`update social_drafts set status='published', updated_at=now() where id=$1`, [row.id]);
     return NextResponse.json({ ok: true, tweetId: sent.id, shortlink: short });
-  } catch (e) {
-    await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
-    return NextResponse.json({ error: "Tweet error", detail: String(e) }, { status: 502 });
+
+  } finally {
+    // always release the lock
+    await dbQuery("select pg_advisory_unlock($1)", [lockKey]).catch(() => {});
   }
 }
