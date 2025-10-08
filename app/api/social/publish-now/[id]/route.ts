@@ -169,7 +169,7 @@ export async function POST(
   }
 
   // Global serialize: prevent overlapping publishes with same token
-  const lockKey = 90210; // arbitrary global key
+  const lockKey = 90211; // arbitrary global key
   const got = await dbQueryRows<{ got: boolean }>(
     "select pg_try_advisory_lock($1) as got",
     [lockKey]
