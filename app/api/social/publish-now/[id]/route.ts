@@ -8,6 +8,7 @@ import { getBriefByArticleId } from "@/lib/briefs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /* ---------------- types ---------------- */
 
@@ -87,7 +88,17 @@ function composeTweetText(row: DraftRow, short: string): string {
   return text;
 }
 
-/* ---------------- error helpers ---------------- */
+/* ---------------- timeouts & error helpers ---------------- */
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout:${label}:${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
 
 function headerNum(h: MaybeHeaders, key: string): number | undefined {
   if (!h || typeof h.get !== "function") return undefined;
@@ -208,12 +219,23 @@ export async function POST(
       return NextResponse.json({ error: "X not connected" }, { status: 400 });
     }
 
-    // Ensure brief shortlink (used in tweet body)
+    // Ensure brief shortlink (timeboxed, with safe fallback)
     let short = "";
     try {
-      short = await ensureBriefShortlink(row.article_id);
+      short = await withTimeout(
+        ensureBriefShortlink(row.article_id),
+        8000,
+        `brief:${row.article_id}`
+      );
     } catch (e) {
-      return NextResponse.json({ error: "Brief link failed", detail: String(e) }, { status: 502 });
+      // Fallback to article URL or site root; do not fail the request
+      short = row.article_url ?? baseUrl();
+      // eslint-disable-next-line no-console
+      console.warn("[publish-now] brief failed, using fallback URL", {
+        id: row.id,
+        article_id: row.article_id,
+        detail: String(e),
+      });
     }
 
     const text = composeTweetText(row, short);
