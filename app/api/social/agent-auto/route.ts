@@ -205,12 +205,13 @@ async function runSchedule(dry: boolean): Promise<{
     r.scheduled_for,
   ]);
 
-  await dbQuery(
-    `insert into social_drafts
+await dbQuery(
+  `insert into social_drafts
       (article_id, platform, status, hook, body, cta, media_url, scheduled_for)
-     values ${values}`,
-    params
-  );
+     values ${values}
+     on conflict on constraint u_social_drafts_article_platform_inflight do nothing`,
+  params
+);
 
   return {
     ok: true,
