@@ -7,22 +7,17 @@ import { dbQuery, dbQueryRows } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/* ───────────────────────── Config ─────────────────────────
-   Window + throughput targets (Central Time)
----------------------------------------------------------------- */
-
-const CT_START_HOUR = 7;    // 7:00 AM
-const CT_END_HOUR = 22;     // 10:00 PM
+/* ── Config ── */
+const CT_START_HOUR = 7;
+const CT_END_HOUR = 22;
 const DAILY_TARGET_POSTS = 9;
-
-const MAX_SCHEDULED_PER_RUN = 3;     // schedule up to 3 each run
-const RECENT_HOURS_DEDUPE = 24;      // re-allow after 24h
-const TOPIC_WINDOW_HOURS = 6;        // only consider last 6h for freshness
+const MAX_SCHEDULED_PER_RUN = 3;
+const RECENT_HOURS_DEDUPE = 24;
+const TOPIC_WINDOW_HOURS = 6;
 
 type Platform = "x";
 
-/* ───────────────────────── Types ───────────────────────── */
-
+/* ── Types ── */
 type DraftRow = {
   article_id: number;
   platform: Platform;
@@ -34,45 +29,55 @@ type DraftRow = {
   scheduled_for: string; // ISO
 };
 
-/* ──────────────────────── Auth helper ───────────────────── */
+// NEW: discriminated union so runSchedule can return an error cleanly
+type RunOk = {
+  ok: true;
+  dry: boolean;
+  scheduled: number;
+  deficit: number;
+  scheduledTodayCT: number;
+  note?: string;
+};
+type RunErr = {
+  ok: false;
+  error: string;
+  detail?: string;
+};
+type RunResult = RunOk | RunErr;
 
+/* ── Auth helper ── */
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // unlocked in dev
+  if (!secret) return true;
   const header = req.headers.get("x-cron-secret");
   const query = new URL(req.url).searchParams.get("cron_secret");
   return header === secret || query === secret;
 }
 
-/* ─────────────────────── Time helpers ───────────────────── */
-
+/* ── Time helpers ── */
 function nowInTZ(tz: string): Date {
   const now = new Date();
   const localInTz = new Date(now.toLocaleString("en-US", { timeZone: tz }));
   const diff = now.getTime() - localInTz.getTime();
-  return new Date(now.getTime() - diff); // same instant, wall-clock of tz
+  return new Date(now.getTime() - diff);
 }
-
 function ctNow(): Date {
   return nowInTZ("America/Chicago");
 }
-
 function isWithinCTWindow(d: Date): boolean {
   const h = d.getHours();
   return h >= CT_START_HOUR && h < CT_END_HOUR;
 }
-
 /** schedule_for within the next 2–10 minutes */
 function nextIsoWithin10Min(): string {
   const now = new Date();
-  const jitterMinutes = 2 + Math.floor(Math.random() * 9); // 2..10
+  const jitterMinutes = 2 + Math.floor(Math.random() * 9);
   const when = new Date(now.getTime() + jitterMinutes * 60_000);
   when.setSeconds(0, 0);
   return when.toISOString();
 }
 
-/* ──────────────────────── DB helpers ───────────────────── */
-
+/* ── DB helpers ── */
 async function getScheduledCountTodayCT(): Promise<number> {
   const rows = await dbQueryRows<{ n: string }>(
     `
@@ -107,30 +112,19 @@ async function recentlyQueuedArticleIds(
   return new Set(rows.map((r) => r.article_id));
 }
 
-/* ───────────────────────── Core run ─────────────────────── */
-
-async function runSchedule(dry: boolean): Promise<{
-  ok: true;
-  dry: boolean;
-  scheduled: number;
-  deficit: number;
-  scheduledTodayCT: number;
-  note?: string;
-}> {
-  // Respect Central-time posting window
+/* ── Core run ── */
+async function runSchedule(dry: boolean): Promise<RunResult> {
   const ct = ctNow();
   if (!isWithinCTWindow(ct)) {
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT: 0, note: "outside CT window" };
   }
 
-  // Current throughput state
   const scheduledTodayCT = await getScheduledCountTodayCT();
   const remaining = Math.max(DAILY_TARGET_POSTS - scheduledTodayCT, 0);
   if (remaining === 0) {
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT, note: "daily cap reached" };
   }
 
-  // Source topics/drafts (fresh)
   const topics = await fetchFreshTopics({ windowHours: TOPIC_WINDOW_HOURS, maxItems: 16 });
   if (topics.length === 0) {
     return { ok: true, dry, scheduled: 0, deficit: remaining, scheduledTodayCT, note: "no topics" };
@@ -162,7 +156,6 @@ async function runSchedule(dry: boolean): Promise<{
     return { ok: true, dry, scheduled: 0, deficit: remaining, scheduledTodayCT, note: "all links recently used" };
   }
 
-  // How many to schedule this run
   const toSchedule = Math.min(remaining, MAX_SCHEDULED_PER_RUN, fresh.length);
 
   const rows: DraftRow[] = fresh.slice(0, toSchedule).map((d) => ({
@@ -205,25 +198,29 @@ async function runSchedule(dry: boolean): Promise<{
     r.scheduled_for,
   ]);
 
-await dbQuery(
-  `insert into social_drafts
-      (article_id, platform, status, hook, body, cta, media_url, scheduled_for)
-     values ${values}
-     on conflict on constraint u_social_drafts_article_platform_inflight do nothing`,
-  params
-);
+  // Friendlier insert error handling (idempotent via ON CONFLICT)
+  try {
+    await dbQuery(
+      `insert into social_drafts
+         (article_id, platform, status, hook, body, cta, media_url, scheduled_for)
+       values ${values}
+       on conflict do nothing`,
+      params
+    );
+  } catch (err) {
+    return { ok: false, error: "insert failed", detail: String(err) };
+  }
 
   return {
     ok: true,
     dry,
-    scheduled: rows.length,
+    scheduled: rows.length, // attempted (conflicts safely ignored)
     deficit: remaining - rows.length,
     scheduledTodayCT,
   };
 }
 
-/* ───────────────────── Tiny utils ──────────────────────── */
-
+/* ── Tiny utils ── */
 function normalizeUrl(u: string | null | undefined): string | null {
   if (!u) return null;
   try {
@@ -242,28 +239,23 @@ function normalizeUrl(u: string | null | undefined): string | null {
   }
 }
 
-/* ───────────────────── Route handlers ──────────────────── */
-
+/* ── Route handlers ── */
 export async function GET(req: NextRequest) {
-  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const dry = req.nextUrl.searchParams.get("dry") === "1";
   const result = await runSchedule(dry);
-  return NextResponse.json(result);
+  return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }
 
 export async function POST(req: NextRequest) {
-  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -275,5 +267,5 @@ export async function POST(req: NextRequest) {
     // no body -> dry=false
   }
   const result = await runSchedule(dry);
-  return NextResponse.json(result);
+  return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }
