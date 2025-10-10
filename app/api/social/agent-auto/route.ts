@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchFreshTopics } from "@/app/src/inputs/topics";
 import { renderDrafts } from "@/app/src/writing/renderDrafts";
 import { dbQuery, dbQueryRows } from "@/lib/db";
+import type { Topic } from "@/app/src/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,9 @@ const DAILY_TARGET_POSTS = 9;
 const MAX_SCHEDULED_PER_RUN = 3;
 const RECENT_HOURS_DEDUPE = 24;
 const TOPIC_WINDOW_HOURS = 6;
+
+// NEW: default quota for advice per batch (can be overridden via ?minAdvice=)
+const DEFAULT_MIN_ADVICE_PER_BATCH = 2 as const;
 
 type Platform = "x";
 
@@ -29,7 +33,6 @@ type DraftRow = {
   scheduled_for: string; // ISO
 };
 
-// NEW: discriminated union so runSchedule can return an error cleanly
 type RunOk = {
   ok: true;
   dry: boolean;
@@ -44,6 +47,10 @@ type RunErr = {
   detail?: string;
 };
 type RunResult = RunOk | RunErr;
+
+type Quotas = {
+  minAdvice: number;
+};
 
 /* ── Auth helper ── */
 function isAuthorized(req: NextRequest): boolean {
@@ -112,8 +119,55 @@ async function recentlyQueuedArticleIds(
   return new Set(rows.map((r) => r.article_id));
 }
 
+/* ── Advice helpers ── */
+
+function isAdviceTopic(t: Topic): boolean {
+  // Your topics.ts sets angle="actionable advice" for advice/tips/strategy/how-to
+  return (t.angle ?? "").toLowerCase() === "actionable advice";
+}
+
+/** Interleave two lists, starting with A (advice) for better variety. */
+function interleave<T>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length) out.push(a[i++]);
+    if (j < b.length) out.push(b[j++]);
+  }
+  return out;
+}
+
+/** Pick at least `minAdvice`, then fill remaining from others; interleave for variety. */
+function pickTopicsWithAdviceQuota(
+  topics: Topic[],
+  desiredCount: number,
+  minAdvice: number
+): Topic[] {
+  const advice = topics.filter(isAdviceTopic);
+  const other = topics.filter((t) => !isAdviceTopic(t));
+
+  const mustAdvice = Math.min(minAdvice, desiredCount, advice.length);
+  const advicePick = advice.slice(0, mustAdvice);
+  const remainingSlots = Math.max(0, desiredCount - advicePick.length);
+  const otherPick = other.slice(0, remainingSlots);
+
+  // If we still have slots (not enough advice/other), fill from whichever has more left.
+  const shortfall = desiredCount - (advicePick.length + otherPick.length);
+  if (shortfall > 0) {
+    const moreAdvice = advice.slice(advicePick.length);
+    const moreOther = other.slice(otherPick.length);
+    const tail = [...moreAdvice, ...moreOther].slice(0, shortfall);
+    // Interleave with current picks for variety
+    const mixed = interleave(advicePick, otherPick);
+    return [...mixed, ...tail];
+  }
+
+  return interleave(advicePick, otherPick);
+}
+
 /* ── Core run ── */
-async function runSchedule(dry: boolean): Promise<RunResult> {
+async function runSchedule(dry: boolean, quotas: Quotas): Promise<RunResult> {
   const ct = ctNow();
   if (!isWithinCTWindow(ct)) {
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT: 0, note: "outside CT window" };
@@ -125,12 +179,18 @@ async function runSchedule(dry: boolean): Promise<RunResult> {
     return { ok: true, dry, scheduled: 0, deficit: 0, scheduledTodayCT, note: "daily cap reached" };
   }
 
-  const topics = await fetchFreshTopics({ windowHours: TOPIC_WINDOW_HOURS, maxItems: 16 });
+  // Fetch fresh candidate topics (we’ll subselect to enforce the advice quota)
+  const topics = await fetchFreshTopics({ windowHours: TOPIC_WINDOW_HOURS, maxItems: 32 });
   if (topics.length === 0) {
     return { ok: true, dry, scheduled: 0, deficit: remaining, scheduledTodayCT, note: "no topics" };
   }
 
-  const drafts = await renderDrafts(topics, { platforms: ["x"], variantsPerTopic: 1 });
+  // Decide how many we want this run, then pick topics with advice quota
+  const desiredThisRun = Math.min(remaining, MAX_SCHEDULED_PER_RUN, topics.length);
+  const selectedTopics = pickTopicsWithAdviceQuota(topics, desiredThisRun, quotas.minAdvice);
+
+  // Render just the selected topics
+  const drafts = await renderDrafts(selectedTopics, { platforms: ["x"], variantsPerTopic: 1 });
   if (drafts.length === 0) {
     return { ok: true, dry, scheduled: 0, deficit: remaining, scheduledTodayCT, note: "no drafts" };
   }
@@ -198,7 +258,6 @@ async function runSchedule(dry: boolean): Promise<RunResult> {
     r.scheduled_for,
   ]);
 
-  // Friendlier insert error handling (idempotent via ON CONFLICT)
   try {
     await dbQuery(
       `insert into social_drafts
@@ -214,7 +273,7 @@ async function runSchedule(dry: boolean): Promise<RunResult> {
   return {
     ok: true,
     dry,
-    scheduled: rows.length, // attempted (conflicts safely ignored)
+    scheduled: rows.length,
     deficit: remaining - rows.length,
     scheduledTodayCT,
   };
@@ -247,8 +306,14 @@ export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const dry = req.nextUrl.searchParams.get("dry") === "1";
-  const result = await runSchedule(dry);
+  const url = new URL(req.url);
+  const minAdviceParam = Number(url.searchParams.get("minAdvice") ?? "");
+  const minAdvice = Number.isFinite(minAdviceParam)
+    ? Math.max(0, Math.min(MAX_SCHEDULED_PER_RUN, minAdviceParam))
+    : DEFAULT_MIN_ADVICE_PER_BATCH;
+
+  const dry = url.searchParams.get("dry") === "1";
+  const result = await runSchedule(dry, { minAdvice });
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }
 
@@ -259,6 +324,13 @@ export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+
+  const url = new URL(req.url);
+  const minAdviceParam = Number(url.searchParams.get("minAdvice") ?? "");
+  const minAdvice = Number.isFinite(minAdviceParam)
+    ? Math.max(0, Math.min(MAX_SCHEDULED_PER_RUN, minAdviceParam))
+    : DEFAULT_MIN_ADVICE_PER_BATCH;
+
   let dry = false;
   try {
     const body = (await req.json()) as { dry?: boolean };
@@ -266,6 +338,6 @@ export async function POST(req: NextRequest) {
   } catch {
     // no body -> dry=false
   }
-  const result = await runSchedule(dry);
+  const result = await runSchedule(dry, { minAdvice });
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }
