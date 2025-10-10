@@ -1,12 +1,15 @@
+// app/api/social/worker/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Client } from "twitter-api-sdk";
 import { dbQuery, dbQueryRows } from "@/lib/db";
 import { getFreshXBearer } from "@/app/src/social/xAuth";
 import { generateBriefForArticle } from "@/lib/agent/generateBrief";
 import { getBriefByArticleId } from "@/lib/briefs";
+import { composeThreadLead } from "@/app/src/social/compose"; // ✅ unified compose
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type DueRow = {
   id: number;
@@ -21,14 +24,10 @@ type Result = { processed: number; postedIds: number[]; skipped: number; dry?: b
 
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // unlocked when no secret set
+  if (!secret) return true;
   const header = req.headers.get("x-cron-secret");
   const query = new URL(req.url).searchParams.get("cron_secret");
   return header === secret || query === secret;
-}
-
-function stripRawLinks(text: string): string {
-  return text.replace(/\bhttps?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim();
 }
 
 function baseUrl(): string {
@@ -36,41 +35,15 @@ function baseUrl(): string {
   return b.replace(/\/+$/, "");
 }
 
-/* ---------- helpers: text compose & de-dupe ---------- */
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Remove the hook from the start of the body if it's repeated there (case-insensitive). */
-function stripLeadingHook(hook: string, body: string): string {
-  const h = (hook ?? "").trim();
-  const b = (body ?? "").trim();
-  if (!h || !b) return b;
-  if (b.localeCompare(h, undefined, { sensitivity: "accent" }) === 0) return "";
-  const re = new RegExp(`^${escapeRegex(h)}(?:[\\s\\-–—:|]+)?`, "i");
-  return b.replace(re, "").trim();
-}
-
-function composeTweetText(row: DueRow, short: string): string {
-  const hook = (row.hook ?? "").trim();
-  const body = stripLeadingHook(hook, stripRawLinks(row.body ?? ""));
-  const parts: string[] = [hook];
-  if (body) parts.push(body);
-  if (row.cta) parts.push(row.cta);
-  parts.push(short);
-
-  let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
-  if (text.length > 270) text = `${text.slice(0, 267)}…`;
-  return text;
-}
-
-/* ---------- helpers: timebox & logging ---------- */
+/* ---------- helpers: timebox, brief, fetch due ---------- */
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`timeout:${label}:${ms}ms`)), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
   });
 }
 
@@ -100,6 +73,56 @@ async function fetchDue(limit = 10): Promise<DueRow[]> {
   );
 }
 
+/* ---------- X helpers: compose + rate-limit handling ---------- */
+
+function composeTweetText(row: DueRow, short: string): string {
+  return composeThreadLead({
+    hook: row.hook,
+    body: row.body,
+    cta: row.cta,
+    short,
+    maxChars: 270,
+  });
+}
+
+type MaybeHeaders = { get(name: string): string | null } | undefined;
+type TwitterLikeError = {
+  status?: number;
+  response?: { status?: number; headers?: MaybeHeaders };
+  message?: string;
+  name?: string;
+  body?: string;
+  responseBody?: string;
+};
+
+function headerNum(h: MaybeHeaders, key: string): number | undefined {
+  if (!h || typeof h.get !== "function") return undefined;
+  const raw = h.get(key);
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function isRateLimit(err: unknown): boolean {
+  const e = err as TwitterLikeError;
+  const st = e?.status ?? e?.response?.status;
+  if (st === 429) return true;
+  const msg = `${e?.name ?? ""} ${e?.message ?? ""} ${e?.body ?? e?.responseBody ?? ""}`;
+  return msg.includes("429");
+}
+
+function resetSeconds(err: unknown): number | null {
+  const e = err as TwitterLikeError;
+  const reset = headerNum(e?.response?.headers, "x-rate-limit-reset");
+  if (typeof reset === "number") {
+    const deltaMs = reset * 1000 - Date.now();
+    return Math.max(0, Math.round(deltaMs / 1000));
+  }
+  const ra = headerNum(e?.response?.headers, "retry-after");
+  return typeof ra === "number" ? ra : null;
+}
+
+/* ---------- main run ---------- */
+
 type Mode = "live" | "dry" | "fast";
 
 /**
@@ -112,7 +135,7 @@ async function runOnce(mode: Mode): Promise<Result> {
   const due = await fetchDue(10);
 
   if (mode === "fast") {
-    return { processed: due.length, postedIds: due.map(d => d.id), skipped: 0, dry: true };
+    return { processed: due.length, postedIds: due.map((d) => d.id), skipped: 0, dry: true };
   }
   if (due.length === 0) return { processed: 0, postedIds: [], skipped: 0, dry: mode !== "live" };
 
@@ -129,9 +152,14 @@ async function runOnce(mode: Mode): Promise<Result> {
   for (const row of due) {
     console.log("[worker] processing id", row.id, "mode", mode);
 
+    // brief link
     let short = "";
     try {
-      short = await withTimeout(ensureBriefShortlink(row.article_id), 10000, `ensureBrief:${row.article_id}`);
+      short = await withTimeout(
+        ensureBriefShortlink(row.article_id),
+        10_000,
+        `ensureBrief:${row.article_id}`
+      );
     } catch (err) {
       console.warn("[worker] brief failed", row.id, String(err));
       skipped += 1;
@@ -158,20 +186,45 @@ async function runOnce(mode: Mode): Promise<Result> {
         console.warn("[worker] no id in response", row.id);
       }
     } catch (err) {
+      // If rate limited, re-schedule instead of failing the draft
+      if (isRateLimit(err)) {
+        const bump = Math.max(resetSeconds(err) ?? 600, 300); // wait at least 5–10m
+        await dbQuery(
+          `update social_drafts
+             set status='scheduled',
+                 scheduled_for = now() + ($1 || ' seconds')::interval,
+                 updated_at = now()
+           where id=$2`,
+          [String(bump), row.id]
+        );
+        console.warn("[worker] rate-limited; rescheduled", row.id, "in", bump, "seconds");
+      } else {
+        await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
+        console.warn("[worker] tweet failed", row.id, String(err));
+      }
       skipped += 1;
-      await dbQuery(`update social_drafts set status='failed', updated_at=now() where id=$1`, [row.id]);
-      console.warn("[worker] tweet failed", row.id, String(err));
     }
   }
 
-  console.log("[worker] done in", Date.now() - started, "ms",
-              "processed", due.length, "postedIds", postedIds.length, "skipped", skipped);
+  console.log(
+    "[worker] done in",
+    Date.now() - started,
+    "ms",
+    "processed",
+    due.length,
+    "postedIds",
+    postedIds.length,
+    "skipped",
+    skipped
+  );
 
   return { processed: due.length, postedIds, skipped, dry: mode !== "live" };
 }
 
+/* ---------- route handlers ---------- */
+
 export async function GET(req: NextRequest) {
-  // Keep diag probe available even when disabled
+  // quick diag
   if (req.nextUrl.searchParams.get("diag") === "1") {
     const [{ count }] = await dbQueryRows<{ count: string }>(
       `select count(*)::text as count
@@ -190,11 +243,9 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -205,11 +256,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // Kill-switch: set DISABLE_POSTERS=1 in env to pause automation
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

@@ -23,9 +23,6 @@ function cleanText(s: string): string {
   return htmlDecode(s).replace(/\s+/g, " ").trim();
 }
 
-function cleanTitle(s: string): string {
-  return cleanText(s);
-}
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
@@ -179,22 +176,45 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function toAsciiLite(s: string): string {
+  return (s ?? "")
+    .normalize("NFKC")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, "-")
+    .replace(/\u00A0/g, " ")    // nbsp
+    .replace(/\u200B/g, "")     // zero-width space
+    .replace(/\u2026/g, "...")  // ellipsis char → three dots
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function stripLeadingHookFromBody(hook: string, body: string): string {
   if (!hook || !body) return body;
 
-  const hookClean = cleanText(hook);
-  const bodyClean = cleanText(body);
+  const h = toAsciiLite(cleanText(hook));
+  let b = toAsciiLite(cleanText(body));
 
-  // If body equals hook exactly, drop it.
-  if (normalize(bodyClean) === normalize(hookClean)) {
-    return "";
+  // Exactly equal after normalization → drop entirely
+  if (b.localeCompare(h, undefined, { sensitivity: "base" }) === 0) return "";
+
+  // Flexible prefix: hook + optional small separator run (":", "-", "|", "...") + spaces
+  const sep = String.raw`[\s]*[|:\-]*\.{0,3}[\s]*`;
+  const re = new RegExp(`^${escapeRegex(h)}${sep}`, "i");
+
+  // Remove once
+  b = b.replace(re, "").trim();
+
+  // If body *still* starts with hook (e.g., "Hook… Hook rest"), remove again
+  if (b.toLowerCase().startsWith(h.toLowerCase())) {
+    b = b.replace(re, "").trim();
   }
 
-  // If body starts with hook (optionally followed by separators), remove that part.
-  const re = new RegExp(`^${escapeRegex(hookClean)}(?:[\\s\\-–—:|]+)?`, "i");
-  const stripped = bodyClean.replace(re, "").trim();
+  return b;
+}
 
-  return stripped;
+function cleanTitle(s: string): string {
+  return toAsciiLite(cleanText(s));
 }
 
 /* ───────────────────────── Public API ───────────────────────── */

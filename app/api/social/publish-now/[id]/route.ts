@@ -5,6 +5,13 @@ import { dbQuery, dbQueryRows } from "@/lib/db";
 import { getFreshXBearer } from "@/app/src/social/xAuth";
 import { generateBriefForArticle } from "@/lib/agent/generateBrief";
 import { getBriefByArticleId } from "@/lib/briefs";
+/* ---------------- helpers: sanitize/compose ---------------- */
+import {
+  composeThreadLead,
+  stripRawLinks,
+  stripLeadingHook,
+} from "@/app/src/social/compose"; // ⬅️ add this import up top
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,22 +51,12 @@ type TwitterLikeError = {
 
 /* ---------------- helpers: sanitize/compose ---------------- */
 
-function stripRawLinks(text: string): string {
-  return (text ?? "").replace(/\bhttps?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim();
-}
-
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function stripLeadingHook(hook: string, body: string): string {
-  const h = (hook ?? "").trim();
-  const b = (body ?? "").trim();
-  if (!h || !b) return b;
-  if (b.localeCompare(h, undefined, { sensitivity: "accent" }) === 0) return "";
-  const re = new RegExp(`^${escapeRegex(h)}(?:[\\s\\-–—:|]+)?`, "i");
-  return b.replace(re, "").trim();
-}
+
+
 
 function baseUrl(): string {
   const b = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
@@ -75,18 +72,18 @@ async function ensureBriefShortlink(article_id: number): Promise<string> {
   return `${baseUrl()}/b/${brief.id}`;
 }
 
+/** Compose the tweet text safely with unified normalization & stripping. */
 function composeTweetText(row: DraftRow, short: string): string {
-  const hook = (row.hook ?? "").trim();
-  const body = stripLeadingHook(hook, stripRawLinks(row.body ?? ""));
-  const parts: string[] = [hook];
-  if (body) parts.push(body);
-  if (row.cta) parts.push(row.cta);
-  parts.push(short);
-
-  let text = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
-  if (text.length > 270) text = text.slice(0, 267) + "…";
-  return text;
+  // Uses the shared composeThreadLead helper (handles ellipses, em-dashes, etc.)
+  return composeThreadLead({
+    hook: row.hook,
+    body: row.body,
+    cta: row.cta,
+    short,
+    maxChars: 270,
+  });
 }
+
 
 /* ---------------- timeouts & error helpers ---------------- */
 
