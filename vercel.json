@@ -1,16 +1,10 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-
-
-    { "path": "/api/social/agent-auto?cron_secret=__CRON_SECRET__", "schedule": "*/15 13-03 * * *" },
-
-
-    { "path": "/api/social/worker?cron_secret=__CRON_SECRET__", "schedule": "*/10 * * * *" },
-
-    { "path": "/api/social/sections/seed?type=waivers",  "schedule": "0 14 * * 1,2" },
-    { "path": "/api/social/sections/seed?type=rankings", "schedule": "0 17 * * 3" },
-    { "path": "/api/social/sections/seed?type=start-sit","schedule": "0 14 * * 6,0" },
+    { "path": "/api/social/sections/seed/waivers",  "schedule": "0 14 * * 1,2" },
+    { "path": "/api/social/sections/seed/rankings", "schedule": "0 17 * * 3" },
+    { "path": "/api/social/sections/seed/start-sit", "schedule": "0 14 * * 6" },
+    { "path": "/api/social/sections/seed/start-sit", "schedule": "0 14 * * 0" },
     { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 2" },
     { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 5" },
     { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 6" }
