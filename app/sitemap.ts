@@ -2,6 +2,9 @@
 import type { MetadataRoute } from "next";
 import { dbQuery } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 3600;
+
 const ORIGIN = "https://www.thefantasyreport.com";
 
 const SECTION_PATHS: string[] = [
@@ -47,7 +50,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     WHERE (published_at IS NOT NULL AND published_at >= NOW() - INTERVAL '400 days')
        OR (published_at IS NULL AND discovered_at >= NOW() - INTERVAL '400 days')
     ORDER BY COALESCE(published_at, discovered_at) DESC
-    LIMIT 50000
+    LIMIT 5000
   `);
 
   const articleEntries: MetadataRoute.Sitemap = rows.map<MetadataRoute.Sitemap[number]>((r) => {
