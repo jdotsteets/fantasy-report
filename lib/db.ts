@@ -11,23 +11,52 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 // eslint-disable-next-line no-var
 declare global { var __pgPool__: Pool | undefined }
 
-const url =
-  process.env.DATABASE_URL ??
-  process.env.DATABASE_URL_POOLER;
+// Prefer DATABASE_URL; fall back to DATABASE_URL_POOLER for legacy envs
+const rawUrl = process.env.DATABASE_URL ?? process.env.DATABASE_URL_POOLER;
+if (!rawUrl) throw new Error("Missing DATABASE_URL / DATABASE_URL_POOLER");
 
 const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? "10", 10);
 const IDLE = Number.parseInt(process.env.PG_IDLE_TIMEOUT_MS ?? "30000", 10); // 30s
 const ACQUIRE = Number.parseInt(process.env.PG_ACQUIRE_TIMEOUT_MS ?? "8000", 10); // 8s
 
-export const pool: Pool = globalThis.__pgPool__ ?? new Pool({
-  connectionString: url,
-  max: Number.isFinite(MAX) ? MAX : 10,
-  idleTimeoutMillis: Number.isFinite(IDLE) ? IDLE : 30_000,
-  connectionTimeoutMillis: Number.isFinite(ACQUIRE) ? ACQUIRE : 8_000,
-  keepAlive: true,
-  allowExitOnIdle: true,
-  ssl: { rejectUnauthorized: false },
-});
+// ✅ TLS handling:
+// Default: require TLS and accept MITM/self-signed chains (fixes SELF_SIGNED_CERT_IN_CHAIN on corp networks)
+// Opt out ONLY by setting PGSSLMODE=disable
+const SSL =
+  (process.env.PGSSLMODE ?? "").toLowerCase() === "disable"
+    ? false
+    : { rejectUnauthorized: false };
+
+// IMPORTANT: strip sslmode from URL so pg doesn't override ssl options internally.
+function stripSslmode(u: string): string {
+  try {
+    const x = new URL(u);
+    // Remove sslmode if present; we control TLS via `ssl:` option.
+    x.searchParams.delete("sslmode");
+    // Also remove empty "?" if no params remain
+    if ([...x.searchParams.keys()].length === 0) x.search = "";
+    return x.toString();
+  } catch {
+    // Fallback: remove sslmode query param if URL parsing fails
+    return u
+      .replace(/[?&]sslmode=[^&]+/i, "")
+      .replace(/\?$/, "");
+  }
+}
+
+const url = stripSslmode(rawUrl);
+
+export const pool: Pool =
+  globalThis.__pgPool__ ??
+  new Pool({
+    connectionString: url,
+    max: Number.isFinite(MAX) ? MAX : 10,
+    idleTimeoutMillis: Number.isFinite(IDLE) ? IDLE : 30_000,
+    connectionTimeoutMillis: Number.isFinite(ACQUIRE) ? ACQUIRE : 8_000,
+    keepAlive: true,
+    allowExitOnIdle: true,
+    ssl: SSL,
+  });
 
 if (!globalThis.__pgPool__) globalThis.__pgPool__ = pool;
 
@@ -59,7 +88,9 @@ export async function dbQuery<T extends QueryResultRow>(
     const ms = Date.now() - t0;
     if (ms > 500) {
       // Keep lightweight perf signal; adjust threshold as needed
-      console.log(`[db] slow ${ms}ms ${label ?? text.slice(0, 60).replace(/\s+/g, " ")}…`);
+      console.log(
+        `[db] slow ${ms}ms ${label ?? text.slice(0, 60).replace(/\s+/g, " ")}…`
+      );
     }
     return res;
   } catch (err) {

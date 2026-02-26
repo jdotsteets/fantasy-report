@@ -79,12 +79,16 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const staticType = (opts.staticType ?? "").trim() || null;
 
   const hasProviderFilter = Boolean(provider) || typeof sourceId === "number";
-// after (clamp to 1..10 if provided, otherwise default 3):
-const perProviderCap: number | null = hasProviderFilter
-  ? null
-  : (opts.perProviderCap == null
-      ? 3
-      : Math.max(1, Math.min(opts.perProviderCap, 10)));
+
+  // Treat `null` as an explicit "disable cap"
+  const perProviderCap: number | null =
+    hasProviderFilter
+      ? null
+      : (opts.perProviderCap === null
+          ? null
+          : (opts.perProviderCap === undefined
+              ? 3
+              : Math.max(1, Math.min(opts.perProviderCap, 10))));
 
   const params: Array<string | number> = [];
   let p = 0;
@@ -104,11 +108,7 @@ const perProviderCap: number | null = hasProviderFilter
   if (provider) where.push(`s.provider ILIKE $${push(provider)}`);
 
   if (isNews) {
-    where.push(`(
-      a.primary_topic IS NULL
-      OR a.primary_topic = 'news'
-      OR a.primary_topic NOT IN ('rankings','start-sit','waiver-wire','dfs','injury','advice')
-    )`);
+    where.push(newsPredicateSQL());
     where.push(`a.published_at >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval`);
   } else {
     const idx = push(key);
@@ -123,12 +123,27 @@ const perProviderCap: number | null = hasProviderFilter
   }
 
   const baseSelect = `
-    SELECT
-      a.*,
-      s.name     AS source,
-      s.provider AS provider,
-      LOWER(COALESCE(NULLIF(s.provider,''), s.name)) AS provider_key,
-      a.published_at AS pub_ts
+SELECT
+  a.id,
+  a.title,
+  a.url,
+  a.canonical_url,
+  a.domain,
+  a.image_url,
+  a.published_at,
+  a.discovered_at,
+  a.topics,
+  a.week,
+  a.primary_topic,
+  a.sport,
+  a.is_player_page,
+  a.is_static,
+  a.static_type,
+  a.source_id,
+  s.name     AS source,
+  s.provider AS provider,
+  LOWER(COALESCE(NULLIF(s.provider,''), s.name)) AS provider_key,
+  a.published_at AS pub_ts
     FROM articles a
     JOIN sources  s ON s.id = a.source_id
     WHERE ${where.join(" AND ")}
@@ -186,7 +201,7 @@ const perProviderCap: number | null = hasProviderFilter
       LIMIT $${push(limit)} OFFSET $${push(offset)};
     `;
 
-const rows = await dbQueryRows<SectionRow>(sql, params);
+  const rows = await dbQueryRows<SectionRow>(sql, params);
 
   /* ───────────────────────── Post-query filter ───────────────────────── */
   const badTitlePattern = /\b(radio|broadcast|coverage|station)\b/i;
@@ -209,15 +224,13 @@ const rows = await dbQueryRows<SectionRow>(sql, params);
     return true;
   });
 
-  // ✅ NEW: if the provider cap starved the page, backfill uncapped to hit `limit`
+  // ✅ Backfill uncapped (safe now: perProviderCap:null truly disables)
   if (perProviderCap && filtered.length < limit) {
-    const need = limit - filtered.length;
-
-    // re-run the same query uncapped
     const uncapped = await fetchSectionItems({
       ...opts,
-      perProviderCap: null,        // disable cap
-      offset: 0,                   // ignore original offset to get freshest
+      perProviderCap: null,
+      offset: 0,
+      limit, // keep it bounded
     });
 
     const seen = new Set(filtered.map(r => (r.canonical_url || r.url || String(r.id)).toLowerCase()));
@@ -232,4 +245,3 @@ const rows = await dbQueryRows<SectionRow>(sql, params);
 
   return filtered;
 }
- 

@@ -1,5 +1,5 @@
 // app/page.tsx
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import type { Metadata } from "next";
 
 import Section from "@/components/Section";
@@ -18,19 +18,23 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 // ——— Hero API fetch (manual recent or auto-breaking) ———
+const apiHero: HeroApiHero | null = null; // avoid DB hit via /api/hero/current during SSR
+// ——— Hero API fetch (manual recent or auto-breaking) ———
 type HeroApiHero = { title: string; href: string; src?: string; source: string };
 type HeroApiResp = { mode: "manual" | "auto" | "empty"; hero: HeroApiHero | null };
 
-async function fetchCurrentHero(): Promise<HeroApiHero | null> {
-  const origin =
-    process.env.NEXT_PUBLIC_SITE_ORIGIN?.trim() ||
-    SITE_ORIGIN; // your constant above
+// If you want to avoid the extra DB hit via /api/hero/current during SSR,
+// keep this `null` and the page will fall back to "first news with image".
 
+
+// Keep this around only if you plan to re-enable API hero later.
+// (Currently unused when apiHero is null.)
+const fetchCurrentHero = cache(async function fetchCurrentHero(): Promise<HeroApiHero | null> {
+  const origin = process.env.NEXT_PUBLIC_SITE_ORIGIN?.trim() || SITE_ORIGIN;
   try {
     const res = await fetch(`${origin}/api/hero/current`, {
       method: "GET",
       cache: "no-store",
-      // Next.js SSR sometimes needs explicit revalidation hint:
       next: { revalidate: 0 },
     });
     if (!res.ok) return null;
@@ -39,7 +43,8 @@ async function fetchCurrentHero(): Promise<HeroApiHero | null> {
   } catch {
     return null;
   }
-}
+});
+
 // Drop utilities that work by id *or* href (canonical or raw)
 const dropById =
   (id: number | null) =>
@@ -315,14 +320,18 @@ export default async function Page({
     limitHero: isFilterMode ? 24 : 12,
   };
 
-  const data: HomePayload = await getHomeData({
-    sport: SPORT,
-    days,
-    week: CURRENT_WEEK,
-    sourceId: selectedSourceId ?? undefined,
-    provider: selectedProvider ?? undefined,
-    ...limits,
-  });
+const data: HomePayload = await getHomeData({
+  sport: SPORT,
+  days,
+  week: CURRENT_WEEK,
+  sourceId: selectedSourceId ?? undefined,
+  provider: selectedProvider ?? undefined,
+  selectedSection:
+  selectedSection === "waivers"
+    ? "waiver-wire"
+    : selectedSection,
+  ...limits,
+});
 
   // Normalize to Article[]
   const latest = data.items.latest.map(mapRow);
@@ -334,40 +343,28 @@ export default async function Page({
   const injuries = data.items.injuries.map(mapRow);
 
 // Pick hero via API (manual/auto). If none, fallback to first news with image.
-const apiHero = await fetchCurrentHero();
+const apiHero = null; // avoid DB hit via /api/hero/current during SSR
 
-let heroRow: Article | null = null;
-let hero: HeroData | null = null;
+let heroRow: Article | null = latest.find(hasRealImage) ?? null;
 
-if (apiHero) {
-  hero = {
-    title: apiHero.title,
-    href: apiHero.href,
-    src: apiHero.src ?? getSafeImageUrl(null) ?? FALLBACK,
-    source: apiHero.source,
-  };
-} else {
-  // Fallback: take first news item with a good image (your old behavior)
-  heroRow = latest.find(hasRealImage) ?? null;
-  hero = heroRow
-    ? {
-        title: heroRow.title,
-        href: heroRow.canonical_url ?? heroRow.url ?? `/go/${heroRow.id}`,
-        src: getSafeImageUrl(heroRow.image_url)!,
-        source: heroRow.source ?? "",
-      }
-    : null;
-}
+let hero: HeroData | null = heroRow
+  ? {
+      title: heroRow.title,
+      href: heroRow.canonical_url ?? heroRow.url ?? `/go/${heroRow.id}`,
+      src: getSafeImageUrl(heroRow.image_url)!,
+      source: heroRow.source ?? "",
+    }
+  : null;
 
 // Remove hero from lists.
 // If we used API hero, drop by href; if we used fallback news row, drop by id.
-const latestFiltered   = apiHero ? dropByHref(hero?.href ?? null)(latest)   : dropById(heroRow?.id ?? null)(latest);
-const rankingsFiltered = apiHero ? dropByHref(hero?.href ?? null)(rankings) : dropById(heroRow?.id ?? null)(rankings);
-const startSitFiltered = apiHero ? dropByHref(hero?.href ?? null)(startSit) : dropById(heroRow?.id ?? null)(startSit);
-const adviceFiltered   = apiHero ? dropByHref(hero?.href ?? null)(advice)   : dropById(heroRow?.id ?? null)(advice);
-const dfsFiltered      = apiHero ? dropByHref(hero?.href ?? null)(dfs)      : dropById(heroRow?.id ?? null)(dfs);
-const waiversFiltered  = apiHero ? dropByHref(hero?.href ?? null)(waivers)  : dropById(heroRow?.id ?? null)(waivers);
-const injuriesFiltered = apiHero ? dropByHref(hero?.href ?? null)(injuries) : dropById(heroRow?.id ?? null)(injuries);
+const latestFiltered   = dropById(heroRow?.id ?? null)(latest);
+const rankingsFiltered = dropById(heroRow?.id ?? null)(rankings);
+const startSitFiltered = dropById(heroRow?.id ?? null)(startSit);
+const adviceFiltered   = dropById(heroRow?.id ?? null)(advice);
+const dfsFiltered      = dropById(heroRow?.id ?? null)(dfs);
+const waiversFiltered  = dropById(heroRow?.id ?? null)(waivers);
+const injuriesFiltered = dropById(heroRow?.id ?? null)(injuries);
 
 const showHero = selectedSection === null && hero !== null;
 

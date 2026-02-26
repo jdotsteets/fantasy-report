@@ -11,10 +11,14 @@ const MANUAL_TTL_MINUTES = 360; // 6 hours
 const TIMEOUT_DB_MS = 1_500;
 const TIMEOUT_NEWS_MS = 2_500;
 
+// Simple in-memory TTL cache (per server instance)
+let __heroCache: { at: number; body: string } | null = null;
+const HERO_TTL_MS = 30_000;
+
 // Tweak as you like
-const NEWS_LIMIT = 36;       // pool size to score
-const NEWS_DAYS = 3;         // lookback
-const PER_PROVIDER_CAP = 3;  // keep variety in pool
+const NEWS_LIMIT = 36; // pool size to score
+const NEWS_DAYS = 3; // lookback
+const PER_PROVIDER_CAP = 3; // keep variety in pool
 
 type HeroRow = {
   id: number;
@@ -42,15 +46,37 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`timeout:${label}:${ms}ms`)), ms);
     p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); },
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
     );
   });
 }
 
+function headersNoStore() {
+  // Keep it "no-store" for client caching semantics, but we still get in-memory TTL
+  return { "content-type": "application/json", "cache-control": "no-store" };
+}
+
+function respondCached(payload: HeroPayload, status = 200) {
+  const body = JSON.stringify(payload);
+  __heroCache = { at: Date.now(), body };
+  return new Response(body, { status, headers: headersNoStore() });
+}
+
 function okJson(payload: HeroPayload, status = 200) {
+  // Keep your previous cache headers for CDN (harmless), but also populate the in-memory TTL cache.
+  // We return a NextResponse so you still get the nice json() behavior.
   const res = NextResponse.json(payload, { status });
   res.headers.set("Cache-Control", "public, max-age=15, s-maxage=30, stale-while-revalidate=60");
+
+  // Also set the in-memory cache body so repeated SSR calls don’t re-hit DB.
+  __heroCache = { at: Date.now(), body: JSON.stringify(payload) };
   return res;
 }
 
@@ -65,8 +91,11 @@ function scoreNews(rows: SectionRow[]): SectionRow | undefined {
       let score = 0;
       // breaking / transaction / injury language
       if (
-        /breaking|news|per\s+source|ruled\s+out|injury|carted|trade|signed|released|activated|designated/i.test(t)
-      ) score += 50;
+        /breaking|news|per\s+source|ruled\s+out|injury|carted|trade|signed|released|activated|designated/i.test(
+          t
+        )
+      )
+        score += 50;
       if (/actives|inactives|status|game-time/i.test(t)) score += 20;
 
       // freshness curve (0–12h favored)
@@ -83,6 +112,11 @@ function scoreNews(rows: SectionRow[]): SectionRow | undefined {
 }
 
 export async function GET(_req: NextRequest) {
+  // ✅ In-memory TTL cache (fast path)
+  if (__heroCache && Date.now() - __heroCache.at < HERO_TTL_MS) {
+    return new Response(__heroCache.body, { headers: headersNoStore() });
+  }
+
   try {
     // 1) recent manual hero (fast path, time-capped)
     const manual = await withTimeout(
@@ -150,7 +184,7 @@ export async function GET(_req: NextRequest) {
   } catch (err) {
     console.error("[/api/hero/current] failed:", err);
     // Hard fallback so the route never 504s
-    return okJson(
+    return respondCached(
       {
         mode: "fallback",
         hero: {
