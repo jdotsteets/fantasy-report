@@ -15,7 +15,8 @@ declare global { var __pgPool__: Pool | undefined }
 const rawUrl = process.env.DATABASE_URL ?? process.env.DATABASE_URL_POOLER;
 if (!rawUrl) throw new Error("Missing DATABASE_URL / DATABASE_URL_POOLER");
 
-const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? "10", 10);
+// Prefer explicit PGPOOL_MAX, then legacy PG_MAX. Keep default conservative for serverless.
+const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? process.env.PG_MAX ?? "3", 10);
 const IDLE = Number.parseInt(process.env.PG_IDLE_TIMEOUT_MS ?? "30000", 10); // 30s
 const ACQUIRE = Number.parseInt(process.env.PG_ACQUIRE_TIMEOUT_MS ?? "8000", 10); // 8s
 
