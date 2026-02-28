@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.CRON_SECRET || process.env.ADMIN_TOKEN || "";
+  const secret = process.env.CRON_SECRET || process.env.ADMIN_TOKEN || process.env.ADMIN_KEY || "";
   if (secret && (req.headers.get("authorization") ?? "") !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

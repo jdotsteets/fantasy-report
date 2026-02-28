@@ -6,7 +6,7 @@ export function middleware(req: NextRequest) {
   const adminPath = req.nextUrl.pathname.startsWith("/admin");
   if (!adminPath) return NextResponse.next();
 
-  const token = process.env.ADMIN_TOKEN; // set this in your .env
+  const token = process.env.ADMIN_TOKEN || process.env.ADMIN_KEY; // set in env
   if (!token) return NextResponse.next(); // no token -> don't block
 
   // If cookie already present, allow
@@ -25,7 +25,7 @@ export function middleware(req: NextRequest) {
 
   // Otherwise block with a minimal prompt
   return new NextResponse(
-    "Unauthorized. Append ?key=YOUR_ADMIN_TOKEN once to unlock.",
+    "Unauthorized. Append ?key=YOUR_ADMIN_KEY once to unlock.",
     { status: 401 }
   );
 }

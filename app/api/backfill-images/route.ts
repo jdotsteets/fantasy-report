@@ -126,7 +126,7 @@ export async function GET(req: NextRequest) {
   // Auth
   const url = new URL(req.url);
   const token = bearer(req) ?? url.searchParams.get("key") ?? "";
-  const secret = process.env.CRON_SECRET || process.env.ADMIN_TOKEN || "";
+  const secret = process.env.CRON_SECRET || process.env.ADMIN_TOKEN || process.env.ADMIN_KEY || "";
   if (secret && token !== secret) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
