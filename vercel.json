@@ -1,7 +1,7 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-    { "path": "/api/social/agent-auto", "schedule": "*/30 12-4 * * *" },
+    { "path": "/api/social/agent-auto", "schedule": "*/30 * * * *" },
     { "path": "/api/social/worker", "schedule": "*/10 * * * *" },
 
     { "path": "/api/social/sections/seed/waivers", "schedule": "0 14 * * 1,2" },
