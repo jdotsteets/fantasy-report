@@ -1,7 +1,10 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 4 * * *" },
-    { "path": "/api/social/sections/seed/waivers",  "schedule": "0 14 * * 1,2" },
+    { "path": "/api/social/agent-auto", "schedule": "*/30 12-4 * * *" },
+    { "path": "/api/social/worker", "schedule": "*/10 * * * *" },
+
+    { "path": "/api/social/sections/seed/waivers", "schedule": "0 14 * * 1,2" },
     { "path": "/api/social/sections/seed/rankings", "schedule": "0 17 * * 3" },
     { "path": "/api/social/sections/seed/start-sit", "schedule": "0 14 * * 6" },
     { "path": "/api/social/sections/seed/start-sit", "schedule": "0 14 * * 0" },

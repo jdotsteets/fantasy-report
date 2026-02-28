@@ -1,6 +1,7 @@
 // app/api/social/schedule-threads/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { POST as publish } from "@/app/api/social/publish-thread/[section]/route";
+import { isCronAuthorized } from "@/lib/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,15 +9,6 @@ export const dynamic = "force-dynamic";
 /* ───────────────────────── helpers ───────────────────────── */
 
 type Section = "waiver-wire" | "start-sit";
-
-/** Optional auth (same pattern as your worker). If CRON_SECRET is unset, route is open. */
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const header = req.headers.get("x-cron-secret");
-  const query = new URL(req.url).searchParams.get("cron_secret");
-  return header === secret || query === secret;
-}
 
 /** Tue -> waiver-wire; Fri/Sat -> start-sit */
 function pickSectionByWeekday(weekday: number): Section | null {
@@ -37,7 +29,7 @@ function weekdayInTz(tz: string): number {
 /* ───────────────────────── route ───────────────────────── */
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

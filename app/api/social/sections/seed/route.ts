@@ -1,6 +1,7 @@
 // app/api/social/sections/seed/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
+import { isCronAuthorized } from "@/lib/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,10 @@ const TEMPLATES: Record<Section, { hook: string; body: string }> = {
 // Schedules the post to go out ~now; worker (*/10 min) picks it up.
 // If you prefer an exact timestamp, pass &delay=minutes in the query.
 export async function POST(req: NextRequest) {
+  if (!isCronAuthorized(req)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const url = new URL(req.url);
   const typeParam = (url.searchParams.get("type") || "").toLowerCase();
   const section = (["waivers", "rankings", "news", "injuries", "start-sit"] as Section[])

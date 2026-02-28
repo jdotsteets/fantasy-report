@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchFreshTopics } from "@/app/src/inputs/topics";
 import { renderDrafts } from "@/app/src/writing/renderDrafts";
 import { dbQuery, dbQueryRows } from "@/lib/db";
+import { isCronAuthorized } from "@/lib/cronAuth";
 import type { Topic } from "@/app/src/types";
 
 export const runtime = "nodejs";
@@ -51,15 +52,6 @@ type RunResult = RunOk | RunErr;
 type Quotas = {
   minAdvice: number;
 };
-
-/* ── Auth helper ── */
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const header = req.headers.get("x-cron-secret");
-  const query = new URL(req.url).searchParams.get("cron_secret");
-  return header === secret || query === secret;
-}
 
 /* ── Time helpers ── */
 function nowInTZ(tz: string): Date {
@@ -303,7 +295,7 @@ export async function GET(req: NextRequest) {
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const url = new URL(req.url);
@@ -321,7 +313,7 @@ export async function POST(req: NextRequest) {
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

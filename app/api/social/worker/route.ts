@@ -6,6 +6,7 @@ import { getFreshXBearer } from "@/app/src/social/xAuth";
 import { generateBriefForArticle } from "@/lib/agent/generateBrief";
 import { getBriefByArticleId } from "@/lib/briefs";
 import { composeThreadLead } from "@/app/src/social/compose"; // ✅ unified compose
+import { isCronAuthorized } from "@/lib/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,13 +23,6 @@ type DueRow = {
 
 type Result = { processed: number; postedIds: number[]; skipped: number; dry?: boolean };
 
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const header = req.headers.get("x-cron-secret");
-  const query = new URL(req.url).searchParams.get("cron_secret");
-  return header === secret || query === secret;
-}
 
 function baseUrl(): string {
   const b = process.env.NEXT_PUBLIC_BASE_URL ?? "https://www.thefantasyreport.com";
@@ -246,7 +240,7 @@ export async function GET(req: NextRequest) {
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -259,7 +253,7 @@ export async function POST(req: NextRequest) {
   if (process.env.DISABLE_POSTERS === "1") {
     return NextResponse.json({ ok: false, error: "Posting disabled" }, { status: 503 });
   }
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const mode: Mode = req.nextUrl.searchParams.get("dry") === "1" ? "dry" : "live";
