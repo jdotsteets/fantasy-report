@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-type AdminKey = "sources" | "excluded" | "block-url" | "social" | "briefs" | "hero" | "ops" | "test-brief";
+type AdminKey = "sources" | "excluded" | "block-url" | "social" | "briefs" | "hero" | "ops" | "execution" | "test-brief";
 
 export function AdminNav({ active }: { active?: AdminKey }) {
   const pathname = usePathname();
@@ -15,6 +15,7 @@ export function AdminNav({ active }: { active?: AdminKey }) {
     { href: "/admin/briefs", key: "briefs", label: "Briefs" },
     { href: "/admin/hero", key: "hero", label: "Hero" },
     { href: "/admin/ops", key: "ops", label: "Ops" },
+    { href: "/admin/execution", key: "execution", label: "Execution" },
     { href: "/admin/test-brief", key: "test-brief", label: "Test Brief" },
   ];
 
