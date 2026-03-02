@@ -1,0 +1,32 @@
+/* Tailwind v4 (loads all layers) */
+@import "tailwindcss";
+
+:root { color-scheme: light; }
+
+
+/* (Optional) belt‑and‑suspenders */
+html, body { background: #fff; }
+
+/* Optional readability tweaks */
+@layer base {
+  a { @apply text-black no-underline; }
+  a:hover { @apply text-green-900 no-underline; }
+
+  body { @apply bg-zinc-950 text-zinc-100 antialiased; }
+  a {
+    @apply text-red-400 hover:text-black no-underline font-bold;
+  }
+  a:hover { @apply text-green-900 no-underline}
+  
+  h2 {
+    @apply text-xl font-semibold tracking-tight;
+  }
+  h3 {
+    @apply text-lg font-semibold;
+  }
+
+}
+
+/* hide horizontal scrollbar where we horizontally scroll the toolbar (mobile) */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

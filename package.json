@@ -1,0 +1,61 @@
+{
+  "name": "fantasy-report",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_OPTIONS=--dns-result-order=ipv4first next dev",
+    "build": "next build",
+    "start": "NODE_OPTIONS=--dns-result-order=ipv4first next start",
+    "lint": "next lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
+    "build:ci": "next build",
+    "load:sleeper": "tsx --env-file=.env.local scripts/load-sleeper-players.ts"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "@supabase/supabase-js": "^2.56.0",
+    "@tailwindcss/postcss": "^4.1.12",
+    "@vercel/analytics": "^1.5.0",
+    "autoprefixer": "^10.4.21",
+    "baseline-browser-mapping": "^2.10.0",
+    "caniuse-lite": "^1.0.30001774",
+    "cheerio": "^1.1.2",
+    "fast-xml-parser": "^5.2.5",
+    "he": "^1.2.0",
+    "iconv-lite": "^0.7.0",
+    "jsdom": "^27.0.0",
+    "lucide-react": "^0.541.0",
+    "luxon": "^3.7.2",
+    "next": "15.4.10",
+    "pg": "^8.16.3",
+    "postcss": "^8.5.6",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "rss-parser": "^3.13.0",
+    "slugify": "^1.6.6",
+    "tailwindcss": "^4.1.12",
+    "twitter-api-sdk": "^1.2.1",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/he": "^1.2.3",
+    "@types/jsdom": "^21.1.7",
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^20.19.11",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.6",
+    "playwright": "^1.55.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

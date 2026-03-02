@@ -1,0 +1,21 @@
+name: Ingest daily backup
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # every day at 06:00 UTC (1am EST / midnight CST)
+  workflow_dispatch: {}     # allow manual run
+
+jobs:
+  run-ingest-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call ingest endpoint (daily)
+        run: |
+          curl -sS -H "Authorization: Bearer $CRON_SECRET" "$SITE_URL/api/ingest"
+      - name: Debug with ?debug=1 (non-blocking)
+        if: ${{ always() }}
+        run: |
+          curl -sS -H "Authorization: Bearer $CRON_SECRET" "$SITE_URL/api/ingest?debug=1" || true
+    env:
+      SITE_URL: ${{ secrets.SITE_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}

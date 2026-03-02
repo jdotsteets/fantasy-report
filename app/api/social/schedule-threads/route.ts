@@ -1,0 +1,71 @@
+// app/api/social/schedule-threads/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { POST as publish } from "@/app/api/social/publish-thread/[section]/route";
+import { isCronAuthorized } from "@/lib/cronAuth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/* ───────────────────────── helpers ───────────────────────── */
+
+type Section = "waiver-wire" | "start-sit";
+
+/** Tue -> waiver-wire; Fri/Sat -> start-sit */
+function pickSectionByWeekday(weekday: number): Section | null {
+  // 0 Sun, 1 Mon, 2 Tue, 3 Wed, 4 Thu, 5 Fri, 6 Sat
+  if (weekday === 2) return "waiver-wire";
+  if (weekday === 5 || weekday === 6) return "start-sit";
+  return null;
+}
+
+/** Get weekday (0–6) in an IANA time zone, default America/Chicago. */
+function weekdayInTz(tz: string): number {
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" });
+  const short = fmt.format(new Date()); // e.g., "Tue"
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[short] ?? new Date().getUTCDay();
+}
+
+/* ───────────────────────── route ───────────────────────── */
+
+export async function GET(req: NextRequest) {
+  if (!isCronAuthorized(req)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const url = new URL(req.url);
+
+  // Allow overriding section directly: ?section=waiver-wire|start-sit
+  const forced = url.searchParams.get("section") as Section | null;
+  const tz = url.searchParams.get("tz") || "America/Chicago";
+  const weekday = weekdayInTz(tz);
+
+  const section: Section | null = forced ?? pickSectionByWeekday(weekday);
+
+  if (!section) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "No scheduled thread for today.",
+      weekday,
+      tz,
+    });
+  }
+
+  // Build a POST to the publisher and forward useful params
+  // You can call: /api/social/schedule-threads?limit=5&days=21&perProviderCap=3&week=6&dry=1
+  const forwardParams = new URLSearchParams();
+  for (const key of ["limit", "days", "perProviderCap", "week", "dry"] as const) {
+    const v = url.searchParams.get(key);
+    if (v != null) forwardParams.set(key, v);
+  }
+
+  const base = new URL(req.url);
+  base.pathname = `/api/social/publish-thread/${section}`;
+  base.search = forwardParams.toString();
+
+  const publishReq = new NextRequest(base.toString(), { method: "POST", headers: req.headers });
+
+  // Delegate to the publisher route
+  return publish(publishReq, { params: Promise.resolve({ section }) });
+}

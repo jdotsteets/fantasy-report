@@ -1,0 +1,247 @@
+// lib/sectionQuery.ts
+import type { QueryResult } from "pg";
+import { dbQueryRows } from "@/lib/db";
+
+export const ORDERED_SECTIONS = [
+  "start-sit",
+  "waiver-wire",
+  "injury",
+  "dfs",
+  "rankings",
+  "advice",
+  "news",
+] as const;
+
+export type SectionKey = (typeof ORDERED_SECTIONS)[number];
+
+export type SectionRow = {
+  id: number;
+  title: string;
+  url: string;
+  canonical_url: string | null;
+  domain: string | null;
+  image_url: string | null;
+  published_at: string | null;
+  discovered_at: string | null;
+  source: string | null;
+  topics: string[] | null;
+  week: number | null;
+  is_player_page?: boolean | null;
+  primary_topic: string | null;
+  secondary_topic: string | null;
+  // (optional) expose these later if you want:
+  // is_static?: boolean | null;
+  // static_type?: string | null;
+};
+
+export type FetchSectionOpts = {
+  key: SectionKey | "";
+  limit?: number;
+  offset?: number;
+  days?: number;
+  week?: number | null;
+  provider?: string;
+  sourceId?: number;
+  perProviderCap?: number | null;
+  sport?: string;
+  maxAgeHours?: number;
+
+  /** NEW: control inclusion of static rows */
+  staticMode?: "exclude" | "only" | "any"; // default: 'exclude'
+  /** NEW: optionally scope by static_type (e.g. 'Projections') */
+  staticType?: string | null;
+};
+
+function newsPredicateSQL(): string {
+  return `(
+    a.primary_topic IS NULL
+    OR a.primary_topic = 'news'
+    OR a.primary_topic NOT IN ('rankings','start-sit','waiver-wire','dfs','injury','advice')
+  )`;
+}
+
+export async function fetchSectionItems(opts: FetchSectionOpts): Promise<SectionRow[]> {
+  const limit  = Math.max(1, Math.min(opts.limit ?? 12, 100));
+  const offset = Math.max(0, opts.offset ?? 0);
+  const days   = Math.max(1, Math.min(opts.days ?? 45, 365));
+  const week   = typeof opts.week === "number" ? Math.max(0, Math.min(opts.week, 30)) : null;
+
+  const providerRaw = (opts.provider ?? "").trim();
+  const provider = providerRaw.length ? providerRaw : "";
+  const sourceId = opts.sourceId;
+  const sport    = (opts.sport ?? "nfl").toLowerCase().trim();
+
+  const key = opts.key || "news";
+  const isNews = key === "news";
+  const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 72, 24 * 14));
+
+  const staticMode: "exclude" | "only" | "any" = opts.staticMode ?? "exclude";
+  const staticType = (opts.staticType ?? "").trim() || null;
+
+  const hasProviderFilter = Boolean(provider) || typeof sourceId === "number";
+
+  // Treat `null` as an explicit "disable cap"
+  const perProviderCap: number | null =
+    hasProviderFilter
+      ? null
+      : (opts.perProviderCap === null
+          ? null
+          : (opts.perProviderCap === undefined
+              ? 3
+              : Math.max(1, Math.min(opts.perProviderCap, 10))));
+
+  const params: Array<string | number> = [];
+  let p = 0;
+  const push = (v: string | number) => { params.push(v); return ++p; };
+
+  const where: string[] = [];
+  where.push(`LOWER(a.sport) = $${push(sport)}`);
+  where.push(`a.published_at >= NOW() - ($${push(days)} || ' days')::interval`);
+  where.push(`COALESCE(a.is_player_page, false) = false`);
+  where.push(`NOT EXISTS (SELECT 1 FROM blocked_urls b WHERE b.url = a.canonical_url)`);
+
+  if (staticMode === "exclude") where.push(`a.is_static IS DISTINCT FROM true`);
+  else if (staticMode === "only") where.push(`a.is_static IS TRUE`);
+  if (staticType) where.push(`a.static_type = $${push(staticType)}`);
+
+  if (typeof sourceId === "number") where.push(`a.source_id = $${push(sourceId)}`);
+  if (provider) where.push(`s.provider ILIKE $${push(provider)}`);
+
+  if (isNews) {
+    where.push(newsPredicateSQL());
+    where.push(`a.published_at >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval`);
+  } else {
+    const idx = push(key);
+    where.push(`(
+      a.primary_topic = $${idx}
+      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[$${idx}]::text[])
+    )`);
+  }
+
+  if (week !== null && (key === "waiver-wire" || key === "start-sit")) {
+    where.push(`a.week = $${push(week)}`);
+  }
+
+  const baseSelect = `
+SELECT
+  a.id,
+  a.title,
+  a.url,
+  a.canonical_url,
+  a.domain,
+  a.image_url,
+  a.published_at,
+  a.discovered_at,
+  a.topics,
+  a.week,
+  a.primary_topic,
+  a.sport,
+  a.is_player_page,
+  a.is_static,
+  a.static_type,
+  a.source_id,
+  s.name     AS source,
+  s.provider AS provider,
+  LOWER(COALESCE(NULLIF(s.provider,''), s.name)) AS provider_key,
+  a.published_at AS pub_ts
+    FROM articles a
+    JOIN sources  s ON s.id = a.source_id
+    WHERE ${where.join(" AND ")}
+  `;
+
+  const sql = perProviderCap && perProviderCap > 0
+    ? `
+      WITH base AS (
+        ${baseSelect}
+      ),
+      ranked AS (
+        SELECT
+          b.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY b.provider_key
+            ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC
+          ) AS rnk_all,
+          DATE_TRUNC('day', b.pub_ts) AS pub_day,
+          ROW_NUMBER() OVER (
+            PARTITION BY b.provider_key, DATE_TRUNC('day', b.pub_ts)
+            ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC
+          ) AS rnk_day,
+          DENSE_RANK() OVER (
+            PARTITION BY DATE_TRUNC('day', b.pub_ts)
+            ORDER BY b.provider_key
+          ) - 1 AS pidx_day
+        FROM base b
+      ),
+      capped AS (
+        SELECT *
+        FROM ranked
+        WHERE rnk_all <= $${push(perProviderCap)}
+      )
+      SELECT
+        id, title, url, canonical_url, domain, image_url,
+        published_at, discovered_at, source, topics, week
+      FROM capped
+      ORDER BY
+        pub_day DESC,
+        rnk_day ASC,
+        pidx_day ASC,
+        pub_ts DESC NULLS LAST,
+        id DESC
+      LIMIT $${push(limit)} OFFSET $${push(offset)};
+    `
+    : `
+      WITH base AS (
+        ${baseSelect}
+      )
+      SELECT
+        id, title, url, canonical_url, domain, image_url,
+        published_at, discovered_at, source, topics, week
+      FROM base
+      ORDER BY published_at DESC NULLS LAST, id DESC
+      LIMIT $${push(limit)} OFFSET $${push(offset)};
+    `;
+
+  const rows = await dbQueryRows<SectionRow>(sql, params);
+
+  /* ───────────────────────── Post-query filter ───────────────────────── */
+  const badTitlePattern = /\b(radio|broadcast|coverage|station)\b/i;
+  const waiverTitleOk = (t: string) =>
+    /\b(waiver|wire|adds?|pickups?|stashes?)\b/i.test(t);
+  const startSitTitleOk = (t: string) =>
+    /(start\/sit|start-?sit|who (to|should i) start|lineup decisions|sit\/start)/i.test(t);
+
+  let filtered = rows.filter(r => {
+    const t = (r.title ?? "").toLowerCase();
+    if (badTitlePattern.test(t)) return false;
+
+    const topicsHasKey = Array.isArray(r.topics) && r.topics.includes(key);
+
+    if (key === "waiver-wire") {
+      if (!(topicsHasKey || waiverTitleOk(t))) return false;
+    } else if (key === "start-sit") {
+      if (!(topicsHasKey || startSitTitleOk(t))) return false;
+    }
+    return true;
+  });
+
+  // ✅ Backfill uncapped (safe now: perProviderCap:null truly disables)
+  if (perProviderCap && filtered.length < limit) {
+    const uncapped = await fetchSectionItems({
+      ...opts,
+      perProviderCap: null,
+      offset: 0,
+      limit, // keep it bounded
+    });
+
+    const seen = new Set(filtered.map(r => (r.canonical_url || r.url || String(r.id)).toLowerCase()));
+    for (const r of uncapped) {
+      const k = (r.canonical_url || r.url || String(r.id)).toLowerCase();
+      if (seen.has(k)) continue;
+      filtered.push(r);
+      seen.add(k);
+      if (filtered.length >= limit) break;
+    }
+  }
+
+  return filtered;
+}

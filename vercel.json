@@ -1,0 +1,16 @@
+{
+  "crons": [
+    { "path": "/api/refresh", "schedule": "*/20 * * * *" },
+    { "path": "/api/social/agent-auto", "schedule": "*/30 * * * *" },
+    { "path": "/api/social/worker", "schedule": "*/10 * * * *" },
+
+    { "path": "/api/social/sections/seed/waivers", "schedule": "0 14 * * 1,2" },
+    { "path": "/api/social/sections/seed/rankings", "schedule": "0 17 * * 3" },
+    { "path": "/api/social/sections/seed/start-sit", "schedule": "0 14 * * 6" },
+    { "path": "/api/social/sections/seed/start-sit", "schedule": "0 14 * * 0" },
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 2" },
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 5" },
+    { "path": "/api/social/schedule-threads", "schedule": "0 15 * * 6" }
+  ],
+  "build": { "env": { "NODE_VERSION": "20" } }
+}
