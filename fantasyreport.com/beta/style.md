@@ -1,0 +1,2 @@
+# Beta Site Styles
+\n## Branding Elements\n- **Color Palette:**\n  - Primary Color: #003366 (Navy Blue)\n  - Secondary Color: #FFD700 (Gold)\n  - Background: #F6F6F6 (Light Gray)\n\n## Typography\n- Headings: Montserrat (Bold, 24px)\n- Body: Open Sans (Regular, 16px)\n- Links: Open Sans (Bold, 16px)\n\n## Layout Design\n- Sticky Header: To keep navigation easily accessible.\n- Clear Sections: Dedicated areas for Draft, Mock Drafts, and User Contributions.\n- Interactive Elements: Scrolling effects for showcasing various articles and updates.
