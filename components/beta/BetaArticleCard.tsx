@@ -8,12 +8,9 @@ import { getSafeImageUrl, FALLBACK, isLikelyFavicon, isLikelyAuthorHeadshot } fr
 import { normalizeTitle } from "@/lib/strings";
 import BetaTopicPills from "@/components/beta/BetaTopicPills";
 
-function displayWhyMatters(article: Article): string {
+function displayWhyMatters(article: Article): string | null {
   if (article.summary && article.summary.trim().length > 0) return article.summary.trim();
-  if (article.primary_topic) {
-    return `Why it matters: ${article.primary_topic.replace(/-/g, " ")} insight that can impact roster decisions.`;
-  }
-  return "Why it matters: timely fantasy football analysis with direct links to the source.";
+  return null;
 }
 
 function getTopics(article: Article): string[] {
@@ -69,6 +66,7 @@ export default function BetaArticleCard({
   const headlineOnly = mode === "hero";
   const showImage = mode === "all" ? true : mode === "first" ? index === 0 : false;
   const displayImage = image && showImage ? image : null;
+  const why = displayWhyMatters(article);
 
   return (
     <article
@@ -128,7 +126,7 @@ export default function BetaArticleCard({
           </h3>
         </Link>
         {!headlineOnly ? (
-          <p className="text-sm text-zinc-600">{displayWhyMatters(article)}</p>
+          {why ? <p className="text-sm text-zinc-600">{why}</p> : null}
         ) : null}
       </div>
 

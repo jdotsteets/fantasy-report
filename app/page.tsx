@@ -182,7 +182,7 @@ export default async function Page({
 
   return (
     <main className="min-h-screen bg-zinc-50 pb-12">
-      <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl px-2 pt-6 sm:px-4 lg:px-8">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
             <p className="text-xs font-semibold uppercase tracking-[0.4em] text-emerald-700">
