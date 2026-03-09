@@ -1,0 +1,5 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4" y="4" width="120" height="120" rx="20" fill="white" stroke="#0A0A0A" stroke-width="6"/>
+  <rect x="16" y="16" width="96" height="96" rx="16" fill="#0A0A0A"/>
+  <text x="64" y="75" text-anchor="middle" font-family="Inter, system-ui, -apple-system, Segoe UI, Arial" font-size="36" font-weight="700" fill="white" letter-spacing="1.5">TFR</text>
+</svg>

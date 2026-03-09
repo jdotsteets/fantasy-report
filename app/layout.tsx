@@ -61,12 +61,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
 
         <header className="sticky top-0 z-30 border-b border-zinc-200 bg-black/95 backdrop-blur">
-          <div className="relative mx-auto max-w-[100%] px-3 sm:px-4 lg:px-6 py-2">
+          <div className="relative mx-auto w-full max-w-7xl px-3 sm:px-4 lg:px-6 py-2">
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-black" />
             <div className="relative z-10 flex items-center justify-between gap-2">
               <Link href="/" className="flex items-center gap-2 sm:gap-3">
                 <Image
-                  src="/logo.png"
+                  src="/logo.svg"
                   alt="The Fantasy Report"
                   width={40}
                   height={40}
@@ -88,7 +88,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         <TopToolbar />
 
-        <main id="main" className="mx-auto max-w-[100%] px-0 sm:px-4 lg:px-8 pt-2 pb-4">
+        <main id="main" className="mx-auto w-full max-w-7xl px-3 sm:px-4 lg:px-8 pt-3 pb-6">
           {children}
         </main>
 

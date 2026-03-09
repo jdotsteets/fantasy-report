@@ -70,7 +70,7 @@ function ToolbarInner() {
     <div className="sticky top-[var(--header-h,56px)] z-40">
       <div className={`transition-transform duration-300 will-change-transform ${hidden ? "-translate-y-full opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}>
         <nav className="border-b border-zinc-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-          <ul className="mx-auto max-w-3xl flex items-center justify-between gap-1 px-2 py-1 overflow-x-auto no-scrollbar">
+          <ul className="mx-auto max-w-6xl flex items-center justify-between gap-1 px-2 py-1 overflow-x-auto no-scrollbar">
             {items.map((item) => {
               const { slug, label, icon: Icon } = item;
               const isActive = item.route ? onPlayers : activeSection === slug;

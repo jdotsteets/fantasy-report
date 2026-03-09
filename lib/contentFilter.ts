@@ -120,10 +120,10 @@ const FANTASY_FOOTBALL = /\bfantasy[- ]football\b/i;
 
 // Obvious non-NFL league markers (path or title)
 const NON_NFL_PATH_DENY: RegExp[] = [
-  /(^|\/)(mlb|nba|nhl|ncaaf|ncaab|college|ncaa|mls|soccer|fifa|epl|ufc|mma|golf|nascar)(?:\/|[-_]|$)/i,
+  /(^|\/)(mlb|nba|nhl|ncaaf|ncaab|college|ncaa|cfb|college-football|mls|soccer|fifa|epl|ufc|mma|golf|nascar|xfl|usfl|ufl|cfl)(?:\/|[-_]|$)/i,
 ];
 
-const NON_NFL_TEXT_DENY = /\b(mlb|baseball|nba|basketball|nhl|hockey|mls|soccer|premier[- ]league|epl|fifa|ufc|mma|golf|nascar|ncaaf|college football|ncaab|college basketball)\b/i;
+const NON_NFL_TEXT_DENY = /\b(mlb|baseball|nba|basketball|nhl|hockey|mls|soccer|premier[- ]league|epl|fifa|ufc|mma|golf|nascar|ncaaf|cfb|college football|ncaab|college basketball|xfl|usfl|ufl|cfl)\b/i;
 
 
 // Generic junk / non-article paths (feeds, sitemaps, tags, categories, pagers, etc.)
@@ -342,7 +342,11 @@ export function allowItem(item: FeedLike, url: string): boolean {
   // Block non-HTML asset URLs by extension
   if (NON_HTML_EXT.test(path)) return false;
 
-  if (looksLikePlayerPageUrl(url)) return true;
+  if (looksLikePlayerPageUrl(url)) {
+    const hint = `${path} ${item.title ?? ""} ${item.description ?? ""}`;
+    if (NFL_WORD.test(hint) || FANTASY_FOOTBALL.test(hint)) return true;
+    return false;
+  }
 
   // Positive boosts (post-blocks)
   if (NFL_WORD.test(path) || FANTASY_FOOTBALL.test(path)) return true;

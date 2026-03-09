@@ -11,31 +11,22 @@ export default function Section({
   return (
     <section
       className={[
-        "border border-zinc-200 bg-white",
-        "rounded-t-lg sm:rounded-t-2xl", // rounded TOP corners
-        "overflow-hidden",               // <-- KEY: clip header to the curve
-        "shadow-none sm:shadow-sm",
+        "border border-zinc-200/80 bg-white",
+        "rounded-2xl",
         "overflow-hidden",
+        "shadow-[0_10px_28px_rgba(0,0,0,0.06)]",
         className,
       ].join(" ")}
     >
-      <header
-        className="
-          relative
-          bg-black text-white
-          border-b border-zinc-200
-          rounded-t-lg sm:rounded-t-2xl   /* mirror top radius (optional but nice) */
-          overflow-hidden
-        "
-      >
-        {/* HEADER HEIGHT: tweak py values below */}
-        <h2 className="relative px-3 sm:px-4 py-2.5 sm:py-3 text-base sm:text-lg font-semibold">
-          {title}
-        </h2>
+      <header className="bg-gradient-to-r from-zinc-950 to-zinc-900 text-white">
+        <div className="px-3 sm:px-4 py-3">
+          <h2 className="text-[13px] sm:text-[14px] font-semibold uppercase tracking-[0.18em]">
+            {title}
+          </h2>
+        </div>
       </header>
 
-      {/* Body padding; keeps favicons/text off the edges */}
-      <div className="pl-2 pr-2 py-2 sm:px-2 sm:py-3">
+      <div className="p-3 sm:p-4">
         {children}
       </div>
     </section>

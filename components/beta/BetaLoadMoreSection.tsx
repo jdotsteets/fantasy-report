@@ -1,12 +1,10 @@
-// components/LoadMoreSection.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Section from "@/components/Section";
-import ArticleList from "@/components/ArticleList";
+import BetaSection from "@/components/beta/BetaSection";
+import BetaFeed from "@/components/beta/BetaFeed";
 import type { Article } from "@/types/sources";
 
-// API/route key (what your /api/section expects)
 type SectionKey =
   | "rankings"
   | "start-sit"
@@ -15,20 +13,6 @@ type SectionKey =
   | "injury"
   | "advice"
   | "news";
-
-// UI key (what ArticleList expects for its filter.section)
-type UISectionKey =
-  | "waivers"
-  | "rankings"
-  | "start-sit"
-  | "injury"
-  | "dfs"
-  | "news"
-  | "advice";
-
-function toUIKey(k: SectionKey): UISectionKey {
-  return k === "waiver-wire" ? "waivers" : k;
-}
 
 type Props = {
   title: string;
@@ -40,9 +24,10 @@ type Props = {
   week?: number | null;
   sourceId?: number;
   provider?: string;
+  subtitle?: string;
 };
 
-export default function LoadMoreSection({
+export default function BetaLoadMoreSection({
   title,
   sectionKey,
   initialItems,
@@ -52,6 +37,7 @@ export default function LoadMoreSection({
   week = null,
   sourceId,
   provider,
+  subtitle,
 }: Props) {
   const [items, setItems] = useState<Article[]>(initialItems);
   const [loading, setLoading] = useState(false);
@@ -60,7 +46,6 @@ export default function LoadMoreSection({
   const [expanded, setExpanded] = useState(false);
   const offsetRef = useRef<number>(initialItems.length);
 
-  // 🔁 Reset when inputs change
   useEffect(() => {
     setItems(initialItems);
     offsetRef.current = initialItems.length;
@@ -119,16 +104,11 @@ export default function LoadMoreSection({
   }
 
   return (
-    <Section title={title}>
-      {/* ✅ pass the mapped section so ArticleList applies relevance/backfill */}
-      <ArticleList
-        items={items}
-        limit={displayLimit}
-        filter={{ section: toUIKey(sectionKey) }}
-      />
+    <BetaSection title={title} subtitle={subtitle}>
+      <BetaFeed articles={items} limit={displayLimit} />
 
       {canExpand ? (
-        <div className="mt-3 px-2 sm:px-3">
+        <div className="mt-4">
           {error ? (
             <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
               {error}
@@ -161,6 +141,6 @@ export default function LoadMoreSection({
           ) : null}
         </div>
       ) : null}
-    </Section>
+    </BetaSection>
   );
 }

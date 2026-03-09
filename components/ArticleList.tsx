@@ -25,6 +25,7 @@ type Props = {
   title?: string;
   className?: string;
   filter?: Filter;
+  limit?: number;
 };
 
 const SECTION_TO_TOPIC: Record<SectionKey, string> = {
@@ -108,11 +109,11 @@ function selectForSection(articles: Article[], section: SectionKey | undefined):
 
 /** Typography */
 const HEADLINE_TEXT_CLS =
-  "mt-0 text-[12px] sm:text-[13px] leading-snug tracking-tight text-black hover:text-green-900";
+  "text-[13px] sm:text-[14px] leading-snug tracking-tight text-zinc-950 hover:text-emerald-700";
 const SUBHEADLINE_TEXT_CLS =
-  "mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] sm:text-[11px] leading-tight text-zinc-700";
+  "mt-1 flex flex-wrap items-center gap-x-2 text-[10px] sm:text-[11px] leading-tight text-zinc-500";
 
-export default function ArticleList({ items, title, className, filter }: Props) {
+export default function ArticleList({ items, title, className, filter, limit }: Props) {
   const [mode, setMode] = useState<ImagesMode>("all");
 
   useEffect(() => {
@@ -144,13 +145,17 @@ export default function ArticleList({ items, title, className, filter }: Props) 
       });
     }
 
+    if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+      out = out.slice(0, limit);
+    }
+
     return out;
-  }, [items, filter?.section, filter?.source]);
+  }, [items, filter?.section, filter?.source, limit]);
 
   const isEmpty = filtered.length === 0;
 
   return (
-    <section className={["rounded-xl bg-white", className].filter(Boolean).join(" ")}>
+    <section className={["rounded-2xl", className].filter(Boolean).join(" ")}>
       {title ? (
         <header className="px-3 py-2 sm:px-5 sm:py-2">
           <h2 className="text-base font-semibold sm:text-lg">{title}</h2>
@@ -160,7 +165,7 @@ export default function ArticleList({ items, title, className, filter }: Props) 
       {isEmpty ? (
         <div className="px-3 py-6 sm:px-5 text-sm text-zinc-500">No items to show.</div>
       ) : (
-        <ul className="divide-y divide-zinc-300">
+        <ul className="space-y-2">
           {filtered.map((r, idx) => {
             const href = r.canonical_url ?? r.url;
             const displayTitle = normalizeTitle(r.title || "");
@@ -180,12 +185,17 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
             // Favicon from domain
             const favicon = r.domain ? `https://icons.duckduckgo.com/ip3/${r.domain}.ico` : null;
+            const headlineOnly = mode === "hero";
+
+            const cardClass = headlineOnly
+              ? "border-b border-zinc-200/70 py-2 first:pt-0 last:border-b-0"
+              : "rounded-xl border border-zinc-200/70 bg-white px-3 py-3 transition hover:border-zinc-300 hover:shadow-sm";
 
             return (
-              <li key={r.id} className="px-1 py-3 sm:px-2 sm:py-2">
+              <li key={r.id} className={cardClass}>
                 {/* Optional preview image */}
                 {displaySrc ? (
-                  <div className="relative mb-1 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:mb-1.5 sm:aspect-[16/9]">
+                  <div className="relative mb-2 aspect-[16/8] w-full overflow-hidden rounded-lg bg-zinc-100 sm:aspect-[16/9]">
                     <Image
                       src={displaySrc}
                       alt=""
@@ -202,30 +212,38 @@ export default function ArticleList({ items, title, className, filter }: Props) 
 
                 {/* Two-column row: favicon | (title + meta) */}
                 <Link href={href} target="_blank" rel="noreferrer" className="block no-underline">
-                  <div className="flex items-center gap-2">
-                    {favicon ? (
-                      <Image
-                        src={favicon}
-                        alt=""
-                        width={18}
-                        height={18}
-                        unoptimized
-                        className="h-[18px] w-[18px] shrink-0 -translate-y-0.5"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <span className="h-[18px] w-[18px] shrink-0 rounded bg-zinc-200 -translate-y-0.5" />
-                    )}
+                  <div className={headlineOnly ? "flex items-start gap-2" : "flex items-start gap-2"}>
+                    {!headlineOnly ? (
+                      favicon ? (
+                        <Image
+                          src={favicon}
+                          alt=""
+                          width={18}
+                          height={18}
+                          unoptimized
+                          className="mt-0.5 h-[18px] w-[18px] shrink-0"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <span className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded bg-zinc-200" />
+                      )
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <h3 className={HEADLINE_TEXT_CLS} title={displayTitle}>
                         {displayTitle}
                       </h3>
-                      <div className={SUBHEADLINE_TEXT_CLS}>
-                        <span>{fmtDate(r.published_at)}</span>
-                        <span>• {r.source}</span>
-                      </div>
+                      {!headlineOnly ? (
+                        <div className={SUBHEADLINE_TEXT_CLS}>
+                          <span>{fmtDate(r.published_at)}</span>
+                          <span>• {r.source}</span>
+                        </div>
+                      ) : (
+                        <div className={SUBHEADLINE_TEXT_CLS}>
+                          <span>{r.source}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Link>
