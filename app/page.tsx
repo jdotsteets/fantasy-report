@@ -51,7 +51,6 @@ const mapRow = (a: DbRow): Article => {
     secondary_topic: str("secondary_topic"),
     topics: strArr("topics"),
     week: num("week"),
-    summary: str("summary"),
   };
 };
 
