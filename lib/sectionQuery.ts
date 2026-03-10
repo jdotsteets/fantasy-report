@@ -26,6 +26,9 @@ export type SectionRow = {
   source: string | null;
   topics: string[] | null;
   week: number | null;
+  summary: string | null;
+  fantasy_impact_label: string | null;
+  fantasy_impact_confidence: number | null;
   is_player_page?: boolean | null;
   primary_topic: string | null;
   secondary_topic: string | null;
@@ -134,6 +137,9 @@ SELECT
   a.discovered_at,
   a.topics,
   a.week,
+  a.summary,
+  a.fantasy_impact_label,
+  a.fantasy_impact_confidence,
   a.primary_topic,
   a.sport,
   a.is_player_page,
@@ -179,7 +185,7 @@ SELECT
       )
       SELECT
         id, title, url, canonical_url, domain, image_url,
-        published_at, discovered_at, source, topics, week
+        published_at, discovered_at, source, topics, week, summary, fantasy_impact_label, fantasy_impact_confidence
       FROM capped
       ORDER BY
         pub_day DESC,
@@ -195,7 +201,7 @@ SELECT
       )
       SELECT
         id, title, url, canonical_url, domain, image_url,
-        published_at, discovered_at, source, topics, week
+        published_at, discovered_at, source, topics, week, summary, fantasy_impact_label, fantasy_impact_confidence
       FROM base
       ORDER BY published_at DESC NULLS LAST, id DESC
       LIMIT $${push(limit)} OFFSET $${push(offset)};

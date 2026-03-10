@@ -93,6 +93,8 @@ export type Article = {
   primary_topic?: string | null;
   is_player_page?: boolean | null;
   secondary_topic?: string | null;
+  fantasy_impact_label?: string | null;
+  fantasy_impact_confidence?: number | null;
   is_static?: boolean | null;
   static_type?: string | null;
 

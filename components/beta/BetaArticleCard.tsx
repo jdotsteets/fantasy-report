@@ -68,6 +68,25 @@ export default function BetaArticleCard({
   const displayImage = image && showImage ? image : null;
   const why = displayWhyMatters(article);
 
+  const impactLabelRaw = article.fantasy_impact_label ?? null;
+  const impactConfidence = article.fantasy_impact_confidence ?? null;
+  const impactLabel =
+    impactLabelRaw === "major_impact" ||
+    impactLabelRaw === "value_up" ||
+    impactLabelRaw === "risk" ||
+    impactLabelRaw === "monitor"
+      ? impactLabelRaw
+      : null;
+
+  const impactUi: Record<string, { label: string; emoji: string; tone: string }> = {
+    major_impact: { label: "Major Impact", emoji: "🔥", tone: "text-rose-600 border-rose-200 bg-rose-50" },
+    value_up: { label: "Value Up", emoji: "📈", tone: "text-emerald-600 border-emerald-200 bg-emerald-50" },
+    risk: { label: "Risk", emoji: "⚠️", tone: "text-amber-700 border-amber-200 bg-amber-50" },
+    monitor: { label: "Monitor", emoji: "👀", tone: "text-zinc-600 border-zinc-200 bg-zinc-50" },
+  };
+
+  const showImpactBadge = !!impactLabel && typeof impactConfidence === "number" && impactConfidence >= 0.7;
+
   return (
     <article
       className={
@@ -126,7 +145,19 @@ export default function BetaArticleCard({
           </h3>
         </Link>
         {!headlineOnly ? (
-          {why ? <p className="text-sm text-zinc-600">{why}</p> : null}
+          why ? (
+            <div className="mt-1 space-y-1">
+              {showImpactBadge ? (
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${impactUi[impactLabel].tone}`}
+                >
+                  <span>{impactUi[impactLabel].emoji}</span>
+                  <span>{impactUi[impactLabel].label}</span>
+                </span>
+              ) : null}
+              <p className="text-sm text-zinc-500 line-clamp-2">{why}</p>
+            </div>
+          ) : null
         ) : null}
       </div>
 

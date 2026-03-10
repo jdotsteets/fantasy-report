@@ -1,6 +1,7 @@
 // lib/ingestRunner.ts
 import { allowItem } from "@/lib/contentFilter";
 import { upsertArticle } from "@/lib/ingest";
+import { ensureCardSummaryForUrl } from "@/lib/agent/cardSummary";
 import { fetchItemsForSource } from "./sources";
 import type { FeedItem as SourceFeedItem, ProbeMethod } from "./sources/types";
 import {
@@ -436,6 +437,9 @@ export async function* runIngestOnce(
             jobId: jobId ?? null,
           });
         }
+
+        // Fire-and-forget card summary generation
+        void ensureCardSummaryForUrl(link, { description: item.description ?? null }).catch(() => undefined);
 
         yield {
           level: "info",

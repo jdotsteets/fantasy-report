@@ -52,11 +52,9 @@ export default function BetaHero({ article }: { article: Article }) {
                 {title}
               </h1>
             </Link>
-            <p className="text-sm text-zinc-200">
-              {article.summary && article.summary.trim().length > 0
-                ? article.summary
-                : "Premium curation of the most important fantasy football updates, with direct paths to the source."}
-            </p>
+            {article.summary && article.summary.trim().length > 0 ? (
+              <p className="text-sm text-zinc-200">{article.summary}</p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3 text-xs text-zinc-300">
             {favicon ? (

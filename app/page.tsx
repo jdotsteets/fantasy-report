@@ -31,8 +31,16 @@ export const metadata: Metadata = {
 const mapRow = (a: DbRow): Article => {
   const str = (k: keyof DbRow): string | null =>
     k in a && typeof a[k] === "string" ? (a[k] as string) : null;
-  const num = (k: keyof DbRow): number | null =>
-    k in a && typeof a[k] === "number" ? (a[k] as number) : null;
+  const num = (k: keyof DbRow): number | null => {
+    if (!(k in a)) return null;
+    const v = a[k];
+    if (typeof v === "number") return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  };
   const strArr = (k: keyof DbRow): string[] | null => {
     const v = k in a ? (a[k] as unknown) : null;
     return Array.isArray(v) ? v.filter((t): t is string => typeof t === "string") : null;
@@ -51,6 +59,9 @@ const mapRow = (a: DbRow): Article => {
     secondary_topic: str("secondary_topic"),
     topics: strArr("topics"),
     week: num("week"),
+    summary: str("summary"),
+    fantasy_impact_label: str("fantasy_impact_label"),
+    fantasy_impact_confidence: num("fantasy_impact_confidence"),
   };
 };
 
@@ -92,6 +103,11 @@ function uniqueArticles(...lists: Article[][]): Article[] {
     }
   }
   return out;
+}
+
+function removeHero(items: Article[], heroId?: number | null): Article[] {
+  if (!heroId) return items;
+  return items.filter((a) => a.id !== heroId);
 }
 
 const SECTION_KEYS = [
@@ -167,8 +183,26 @@ export default async function Page({
   const injuries = data.items.injuries.map(mapRow);
 
   const hero = latest.find(hasRealImage) ?? latest[0] ?? rankings[0] ?? startSit[0];
-  const feed = uniqueArticles(latest, rankings, advice, startSit).slice(0, 14);
-  const trendingPool = uniqueArticles(latest, rankings, advice, startSit, waivers, dfs, injuries);
+  const heroId = hero?.id ?? null;
+
+  const latestNoHero = removeHero(latest, heroId);
+  const rankingsNoHero = removeHero(rankings, heroId);
+  const startSitNoHero = removeHero(startSit, heroId);
+  const adviceNoHero = removeHero(advice, heroId);
+  const dfsNoHero = removeHero(dfs, heroId);
+  const waiversNoHero = removeHero(waivers, heroId);
+  const injuriesNoHero = removeHero(injuries, heroId);
+
+  const feed = uniqueArticles(latestNoHero, rankingsNoHero, adviceNoHero, startSitNoHero).slice(0, 14);
+  const trendingPool = uniqueArticles(
+    latestNoHero,
+    rankingsNoHero,
+    adviceNoHero,
+    startSitNoHero,
+    waiversNoHero,
+    dfsNoHero,
+    injuriesNoHero
+  );
 
   const seasonMode = getSeasonMode(new Date());
   const freeAgencyItems = latest.filter((a) => {
@@ -219,7 +253,7 @@ export default async function Page({
               title="Latest news"
               subtitle="Breaking updates across the fantasy landscape"
               sectionKey="news"
-              initialItems={latest}
+              initialItems={latestNoHero}
               pageSize={12}
               initialDisplay={4}
             />
@@ -232,7 +266,7 @@ export default async function Page({
               title="Rankings & tiers"
               subtitle="Top recent rankings and rest-of-season insight"
               sectionKey="rankings"
-              initialItems={rankings}
+              initialItems={rankingsNoHero}
               pageSize={10}
               initialDisplay={4}
             />
@@ -241,7 +275,7 @@ export default async function Page({
               title="Start/Sit & Advice"
               subtitle="Lineup answers, sleepers, and strategy"
               sectionKey="start-sit"
-              initialItems={uniqueArticles(startSit, advice)}
+              initialItems={uniqueArticles(startSitNoHero, adviceNoHero)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -254,7 +288,7 @@ export default async function Page({
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
               sectionKey="news"
-              initialItems={freeAgencyItems}
+              initialItems={removeHero(freeAgencyItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -263,8 +297,7 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={draftItems}
-              pageSize={10}
+              initialItems={removeHero(draftItems, heroId)}              pageSize={10}
               initialDisplay={4}
             />
           ) : (
@@ -272,7 +305,7 @@ export default async function Page({
               title={`Waiver wire · Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
-              initialItems={waivers}
+              initialItems={waiversNoHero}
               pageSize={10}
               initialDisplay={4}
               week={week}
@@ -283,7 +316,7 @@ export default async function Page({
             title="DFS"
             subtitle="Slate breakdowns and optimizer tools"
             sectionKey="dfs"
-            initialItems={dfs}
+            initialItems={dfsNoHero}
             pageSize={10}
             initialDisplay={4}
           />
@@ -292,7 +325,7 @@ export default async function Page({
             title="Injuries"
             subtitle="Status reports and return timelines"
             sectionKey="injury"
-            initialItems={injuries}
+            initialItems={injuriesNoHero}
             pageSize={10}
             initialDisplay={4}
           />
