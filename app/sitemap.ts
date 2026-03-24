@@ -44,6 +44,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   // 2) Article URLs (recent slice)
+  // Skip database query during build time
+  if (!process.env.DATABASE_URL && !process.env.DATABASE_URL_POOLER) {
+    return staticEntries;
+  }
+
   const { rows } = await dbQuery<Row>(`
     SELECT id, canonical_url, url, published_at, discovered_at
     FROM articles
