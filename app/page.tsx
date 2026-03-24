@@ -238,14 +238,14 @@ export default async function Page({
   let totalFilteredCount = 0;
 
   if (selectedTeam) {
-    filteredFeed = filterArticlesByTeam(feed, selectedTeam.id);
-    filteredLatest = filterArticlesByTeam(latest, selectedTeam.id);
-    filteredRankings = filterArticlesByTeam(rankings, selectedTeam.id);
-    filteredStartSit = filterArticlesByTeam(startSit, selectedTeam.id);
-    filteredAdvice = filterArticlesByTeam(advice, selectedTeam.id);
-    filteredDfs = filterArticlesByTeam(dfs, selectedTeam.id);
-    filteredWaivers = filterArticlesByTeam(waivers, selectedTeam.id);
-    filteredInjuries = filterArticlesByTeam(injuries, selectedTeam.id);
+    filteredFeed = filterArticlesByTeam(feed, selectedTeam.id) as Article[];
+    filteredLatest = filterArticlesByTeam(latest, selectedTeam.id) as Article[];
+    filteredRankings = filterArticlesByTeam(rankings, selectedTeam.id) as Article[];
+    filteredStartSit = filterArticlesByTeam(startSit, selectedTeam.id) as Article[];
+    filteredAdvice = filterArticlesByTeam(advice, selectedTeam.id) as Article[];
+    filteredDfs = filterArticlesByTeam(dfs, selectedTeam.id) as Article[];
+    filteredWaivers = filterArticlesByTeam(waivers, selectedTeam.id) as Article[];
+    filteredInjuries = filterArticlesByTeam(injuries, selectedTeam.id) as Article[];
     
     totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
                         filteredStartSit.length + filteredAdvice.length + filteredDfs.length + 
