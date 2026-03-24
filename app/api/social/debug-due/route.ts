@@ -1,6 +1,8 @@
 // app/api/social/debug-due/route.ts
 import { NextResponse } from "next/server";
 import { dbQueryRows } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
 export async function GET() {
   const rows = await dbQueryRows(
     `select d.id, d.platform, d.status, d.scheduled_for
