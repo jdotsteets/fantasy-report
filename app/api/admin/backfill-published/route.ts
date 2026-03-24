@@ -16,7 +16,6 @@ function preferUrl(canonical: string | null, url: string | null): string | null 
   return null;
 }
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const revalidate = 0;
 

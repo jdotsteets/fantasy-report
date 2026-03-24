@@ -7,7 +7,6 @@ import type { CommitPayload, ProbeMethod } from "@/lib/sources/types";
 // Force dynamic rendering - no static optimization
 export const dynamic = 'force-dynamic';
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** Kick off an ingest run (best-effort) */

@@ -5,7 +5,6 @@ import { dbQuery } from "@/lib/db";
 // Force dynamic rendering - no static optimization
 export const dynamic = 'force-dynamic';
 
-export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);

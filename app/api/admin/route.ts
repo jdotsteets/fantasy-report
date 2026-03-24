@@ -8,7 +8,6 @@ import { logIngestError } from "@/lib/ingestLogs";
 export const dynamic = 'force-dynamic';
 
 export const runtime = "nodejs";         // ensure Node runtime (not edge)
-export const dynamic = "force-dynamic";  // NEVER prerender this route
 export const revalidate = 0;             // disable caching for the route
 
 

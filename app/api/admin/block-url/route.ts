@@ -71,7 +71,6 @@ function chooseCanonical(rawCanonical: string | null | undefined, pageUrl: strin
 // ───────────────────────── route config ─────────────────────────
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 // CORS preflight

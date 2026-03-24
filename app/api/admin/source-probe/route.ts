@@ -10,7 +10,6 @@ import type {
 // Force dynamic rendering - no static optimization
 export const dynamic = 'force-dynamic';
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** Small extension for method-scoped preview without changing your shared types */
