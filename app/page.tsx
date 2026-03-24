@@ -305,6 +305,9 @@ export default async function Page({
 
           {hero ? <BetaHero article={hero} /> : null}
         </div>
+          {selectedTeam && (
+            <FilterBanner team={selectedTeam} matchCount={totalFilteredCount} />
+          )}
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
           <section className="space-y-6">
@@ -313,14 +316,14 @@ export default async function Page({
               subtitle="The highest-value links right now"
               action={<span className="text-xs uppercase tracking-wide">Updated live</span>}
             >
-              <BetaFeed articles={feed.slice(0, 6)} />
+              <BetaFeed articles={selectedTeam ? filterArticlesByTeam(feed, selectedTeam.id).slice(0, 6) : feed.slice(0, 6)} />
             </BetaSection>
 
             <BetaLoadMoreSection
               title="Latest news"
               subtitle="Breaking updates across the fantasy landscape"
               sectionKey="news"
-              initialItems={latestNoHero}
+              initialItems={selectedTeam ? filterArticlesByTeam(latestNoHero, selectedTeam.id) : latestNoHero}
               pageSize={12}
               initialDisplay={2}
             />
@@ -333,7 +336,7 @@ export default async function Page({
               title="Rankings & tiers"
               subtitle="Top recent rankings and rest-of-season insight"
               sectionKey="rankings"
-              initialItems={rankingsNoHero}
+              initialItems={selectedTeam ? filterArticlesByTeam(rankingsNoHero, selectedTeam.id) : rankingsNoHero}
               pageSize={10}
               initialDisplay={4}
             />
@@ -342,7 +345,7 @@ export default async function Page({
               title="Start/Sit & Advice"
               subtitle="Lineup answers, sleepers, and strategy"
               sectionKey="start-sit"
-              initialItems={uniqueArticles(startSitNoHero, adviceNoHero)}
+              initialItems={selectedTeam ? filterArticlesByTeam(uniqueArticles(startSitNoHero, adviceNoHero), selectedTeam.id) : uniqueArticles(startSitNoHero, adviceNoHero)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -351,7 +354,7 @@ export default async function Page({
               title="More news"
               subtitle="Quick-hit headlines from around the league"
               sectionKey="news"
-              initialItems={latestNoHero.slice(2, 10)}
+              initialItems={selectedTeam ? filterArticlesByTeam(latestNoHero.slice(2, 10), selectedTeam.id) : latestNoHero.slice(2, 10)}
               pageSize={10}
               initialDisplay={8}
               variant="headlines"
@@ -365,7 +368,7 @@ export default async function Page({
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
               sectionKey="news"
-              initialItems={removeHero(freeAgencyItems, heroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(freeAgencyItems, heroId), selectedTeam.id) : removeHero(freeAgencyItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -374,7 +377,7 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={removeHero(draftItems, heroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(draftItems, heroId), selectedTeam.id) : removeHero(draftItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -383,7 +386,7 @@ export default async function Page({
               title={`Waiver wire · Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
-              initialItems={waiversNoHero}
+              initialItems={selectedTeam ? filterArticlesByTeam(waiversNoHero, selectedTeam.id) : waiversNoHero}
               pageSize={10}
               initialDisplay={4}
               week={week}
@@ -394,7 +397,7 @@ export default async function Page({
             title="DFS"
             subtitle="Slate breakdowns and optimizer tools"
             sectionKey="dfs"
-            initialItems={dfsNoHero}
+            initialItems={selectedTeam ? filterArticlesByTeam(dfsNoHero, selectedTeam.id) : dfsNoHero}
             pageSize={10}
             initialDisplay={4}
           />
@@ -403,7 +406,7 @@ export default async function Page({
             title="Injuries"
             subtitle="Status reports and return timelines"
             sectionKey="injury"
-            initialItems={injuriesNoHero}
+            initialItems={selectedTeam ? filterArticlesByTeam(injuriesNoHero, selectedTeam.id) : injuriesNoHero}
             pageSize={10}
             initialDisplay={4}
           />
