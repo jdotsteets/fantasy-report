@@ -38,7 +38,8 @@ export default function BetaLoadMoreSection({
   sourceId,
   provider,
   subtitle,
-}: Props) {
+  variant = "feed",
+}: Props & { variant?: "feed" | "headlines" }) {
   const [items, setItems] = useState<Article[]>(initialItems);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
@@ -81,9 +82,11 @@ export default function BetaLoadMoreSection({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: { items: Article[] } = await res.json();
 
-      const seen = new Set(items.map((x) => x.id));
-      const fresh = data.items.filter((x) => !seen.has(x.id));
-      setItems((cur) => [...cur, ...fresh]);
+      setItems((cur) => {
+        const seen = new Set(cur.map((x) => x.id));
+        const fresh = data.items.filter((x) => !seen.has(x.id));
+        return [...cur, ...fresh];
+      });
 
       offsetRef.current += data.items.length;
       if (data.items.length < pageSize) setDone(true);
@@ -95,7 +98,7 @@ export default function BetaLoadMoreSection({
     }
   }
 
-  const displayLimit = expanded ? undefined : initialDisplay;
+  const visibleItems = expanded ? items : items.slice(0, initialDisplay);
   const canExpand = items.length > initialDisplay || !done;
 
   async function handleExpand() {
@@ -105,7 +108,43 @@ export default function BetaLoadMoreSection({
 
   return (
     <BetaSection title={title} subtitle={subtitle}>
-      <BetaFeed articles={items} limit={displayLimit} />
+      {variant === "headlines" ? (
+        <div className="space-y-2">
+          {visibleItems.map((article, idx) => (
+            <a
+              key={article.id}
+              href={article.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block rounded-xl border border-zinc-200 bg-white px-3 py-3 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 text-[11px] font-semibold text-zinc-400">
+                  {String(idx + 1).padStart(2, "0")}
+                </span>
+
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 text-sm font-semibold leading-5 text-zinc-900">
+                    {article.title}
+                  </div>
+
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                    <span className="truncate">{article.source}</span>
+                    {article.published_at ? (
+                      <>
+                        <span>•</span>
+                        <span>{new Date(article.published_at).toLocaleDateString()}</span>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <BetaFeed articles={items} limit={expanded ? undefined : initialDisplay} />
+      )}
 
       {canExpand ? (
         <div className="mt-4">

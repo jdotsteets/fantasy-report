@@ -75,9 +75,11 @@ function getYMDInZone(d: Date, tz: string): { y: number; m: number; d: number } 
   const [y, m, day] = s.split("-").map((n) => Number(n));
   return { y, m, d: day };
 }
+
 function dayCountUTC({ y, m, d }: { y: number; m: number; d: number }): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
+
 function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
   const [sy, sm, sd] = week1MondayYMD.split("-").map(Number);
   if (!sy || !sm || !sd) return 1;
@@ -139,6 +141,7 @@ function getSeasonMode(now: Date): SeasonMode {
 
 const FREE_AGENCY_RX =
   /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured)\b/i;
+
 const DRAFT_RX =
   /\b(mock\s+draft|prospect|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl)\b/i;
 
@@ -209,6 +212,7 @@ export default async function Page({
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
   });
+
   const draftItems = latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return DRAFT_RX.test(hay);
@@ -216,7 +220,7 @@ export default async function Page({
 
   return (
     <main className="min-h-screen bg-zinc-50 pb-12">
-      <div className="mx-auto max-w-6xl px-2 pt-6 sm:px-4 lg:px-8">
+      <div className="mx-auto max-w-[88rem] px-2 pt-6 sm:px-4 lg:px-8">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
             <p className="text-xs font-semibold uppercase tracking-[0.4em] text-emerald-700">
@@ -239,14 +243,14 @@ export default async function Page({
           {hero ? <BetaHero article={hero} /> : null}
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="mt-8 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
           <section className="space-y-6">
             <BetaSection
               title="Curated feed"
               subtitle="The highest-value links right now"
               action={<span className="text-xs uppercase tracking-wide">Updated live</span>}
             >
-              <BetaFeed articles={feed} />
+              <BetaFeed articles={feed.slice(0, 6)} />
             </BetaSection>
 
             <BetaLoadMoreSection
@@ -255,7 +259,7 @@ export default async function Page({
               sectionKey="news"
               initialItems={latestNoHero}
               pageSize={12}
-              initialDisplay={4}
+              initialDisplay={2}
             />
           </section>
 
@@ -279,6 +283,16 @@ export default async function Page({
               pageSize={10}
               initialDisplay={4}
             />
+
+            <BetaLoadMoreSection
+              title="More news"
+              subtitle="Quick-hit headlines from around the league"
+              sectionKey="news"
+              initialItems={latestNoHero.slice(2, 10)}
+              pageSize={10}
+              initialDisplay={8}
+              variant="headlines"
+            />
           </aside>
         </div>
 
@@ -297,7 +311,8 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={removeHero(draftItems, heroId)}              pageSize={10}
+              initialItems={removeHero(draftItems, heroId)}
+              pageSize={10}
               initialDisplay={4}
             />
           ) : (
