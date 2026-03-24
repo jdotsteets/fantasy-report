@@ -5,6 +5,8 @@ import BetaSection from "@/components/beta/BetaSection";
 import BetaFeed from "@/components/beta/BetaFeed";
 import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
+import FilterBanner from "@/components/beta/FilterBanner";
+import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
 
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
@@ -149,6 +151,34 @@ function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
   if (!v) return null;
   const key = v.toLowerCase().trim();
+  
+  // Apply team filter if selected
+  let filteredFeed = feed;
+  let filteredLatest = latest;
+  let filteredRankings = rankings;
+  let filteredStartSit = startSit;
+  let filteredAdvice = advice;
+  let filteredDfs = dfs;
+  let filteredWaivers = waivers;
+  let filteredInjuries = injuries;
+  let totalFilteredCount = 0;
+
+  if (selectedTeam) {
+    filteredFeed = filterArticlesByTeam(feed, selectedTeam.id);
+    filteredLatest = filterArticlesByTeam(latest, selectedTeam.id);
+    filteredRankings = filterArticlesByTeam(rankings, selectedTeam.id);
+    filteredStartSit = filterArticlesByTeam(startSit, selectedTeam.id);
+    filteredAdvice = filterArticlesByTeam(advice, selectedTeam.id);
+    filteredDfs = filterArticlesByTeam(dfs, selectedTeam.id);
+    filteredWaivers = filterArticlesByTeam(waivers, selectedTeam.id);
+    filteredInjuries = filterArticlesByTeam(injuries, selectedTeam.id);
+    
+    totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
+                        filteredStartSit.length + filteredAdvice.length + filteredDfs.length + 
+                        filteredWaivers.length + filteredInjuries.length;
+  }
+
+
   return (SECTION_KEYS as readonly string[]).includes(key) ? (key as SectionKey) : null;
 }
 
@@ -158,6 +188,10 @@ export default async function Page({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
+
+  // Team filtering
+  const teamId = typeof sp.team === "string" ? sp.team : null;
+  const selectedTeam = teamId ? getTeamById(teamId) : null;
   const selectedSection = toSectionKey(sp.section);
   const week = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
 
@@ -217,6 +251,35 @@ export default async function Page({
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return DRAFT_RX.test(hay);
   });
+
+  
+  // Apply team filter if selected
+  let filteredFeed = feed;
+  let filteredLatest = latest;
+  let filteredRankings = rankings;
+  let filteredStartSit = startSit;
+  let filteredAdvice = advice;
+  let filteredDfs = dfs;
+  let filteredWaivers = waivers;
+  let filteredInjuries = injuries;
+  let totalFilteredCount = 0;
+
+  if (selectedTeam) {
+    filteredFeed = filterArticlesByTeam(feed, selectedTeam.id);
+    filteredLatest = filterArticlesByTeam(latest, selectedTeam.id);
+    filteredRankings = filterArticlesByTeam(rankings, selectedTeam.id);
+    filteredStartSit = filterArticlesByTeam(startSit, selectedTeam.id);
+    filteredAdvice = filterArticlesByTeam(advice, selectedTeam.id);
+    filteredDfs = filterArticlesByTeam(dfs, selectedTeam.id);
+    filteredWaivers = filterArticlesByTeam(waivers, selectedTeam.id);
+    filteredInjuries = filterArticlesByTeam(injuries, selectedTeam.id);
+    
+    totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
+                        filteredStartSit.length + filteredAdvice.length + filteredDfs.length + 
+                        filteredWaivers.length + filteredInjuries.length;
+  }
+
+
 
   return (
     <main className="min-h-screen bg-zinc-50 pb-12">

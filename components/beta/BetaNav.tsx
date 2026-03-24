@@ -1,3 +1,5 @@
+import TeamSelector from "@/components/beta/TeamSelector";
+
 const LINKS = [
   { label: "News", href: "/beta?section=news" },
   { label: "Rankings", href: "/beta?section=rankings" },
@@ -11,6 +13,7 @@ const LINKS = [
 export default function BetaNav() {
   return (
     <nav className="flex flex-wrap items-center gap-2">
+      <TeamSelector />
       {LINKS.map((link) => (
         <a
           key={link.href}
