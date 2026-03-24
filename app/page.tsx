@@ -151,15 +151,9 @@ function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
   if (!v) return null;
   const key = v.toLowerCase().trim();
-  
-  // Apply team filter if selected
-                        filteredStartSit.length + filteredAdvice.length + filteredDfs.length + 
-                        filteredWaivers.length + filteredInjuries.length;
-  }
-
-
   return (SECTION_KEYS as readonly string[]).includes(key) ? (key as SectionKey) : null;
 }
+
 
 export default async function Page({
   searchParams,
