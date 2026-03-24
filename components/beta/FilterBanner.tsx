@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Team } from "@/lib/teams";
@@ -6,9 +6,10 @@ import type { Team } from "@/lib/teams";
 interface FilterBannerProps {
   team: Team;
   matchCount: number;
+  timeWindow?: string;
 }
 
-export default function FilterBanner({ team, matchCount }: FilterBannerProps) {
+export default function FilterBanner({ team, matchCount, timeWindow = "48 hours" }: FilterBannerProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -32,9 +33,14 @@ export default function FilterBanner({ team, matchCount }: FilterBannerProps) {
           </div>
           <p className="text-sm text-emerald-700">
             {matchCount > 0 ? (
-              `${matchCount} article${matchCount !== 1 ? "s" : ""} in last 48 hours`
+              <>
+                {matchCount} article{matchCount !== 1 ? "s" : ""} in last {timeWindow}
+              </>
             ) : (
-              <span>No recent articles found. <span className="font-medium">Showing general NFL news below.</span></span>
+              <>
+                No articles found in last {timeWindow}.{" "}
+                <span className="font-medium">Showing general NFL news below.</span>
+              </>
             )}
           </p>
         </div>
