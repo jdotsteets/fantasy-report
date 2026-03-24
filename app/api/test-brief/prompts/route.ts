@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { SYSTEM_WRITER, SYSTEM_CRITIC } from "@/lib/agent/prompts";
 
+export const dynamic = "force-dynamic";
+
 export const runtime = "nodejs";
 
 export async function GET() {

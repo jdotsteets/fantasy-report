@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbQueryRows, dbQueryRow } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export const runtime = "nodejs";
 
 export async function GET() {

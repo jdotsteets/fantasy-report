@@ -3,6 +3,8 @@ import { SYSTEM_WRITER, SYSTEM_CRITIC } from "@/lib/agent/prompts";
 import { dbQueryRow } from "@/lib/db";
 import { runWriterAndCriticForArticle } from "@/lib/agent/llm";
 
+export const dynamic = "force-dynamic";
+
 export const runtime = "nodejs";
 
 function extractId(req: NextRequest): number | null {

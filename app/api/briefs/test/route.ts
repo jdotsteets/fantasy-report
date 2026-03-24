@@ -3,6 +3,8 @@ import { generateBriefForArticle } from "@/lib/agent/generateBrief";
 import { dbQueryRows } from "@/lib/db";
 import { callLLMWriter, callLLMCritic } from "@/lib/agent/llm";
 
+export const dynamic = "force-dynamic";
+
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {

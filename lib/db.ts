@@ -13,7 +13,9 @@ declare global { var __pgPool__: Pool | undefined }
 
 // Prefer DATABASE_URL; fall back to DATABASE_URL_POOLER for legacy envs
 const rawUrl = process.env.DATABASE_URL ?? process.env.DATABASE_URL_POOLER;
-if (!rawUrl) throw new Error("Missing DATABASE_URL / DATABASE_URL_POOLER");
+// Commented out to allow Next.js build to import modules without DATABASE_URL
+// The pool will fail at query time if DATABASE_URL is actually missing
+// if (!rawUrl) throw new Error("Missing DATABASE_URL / DATABASE_URL_POOLER");
 
 // Prefer explicit PGPOOL_MAX, then legacy PG_MAX. Keep default conservative for serverless.
 const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? process.env.PG_MAX ?? "3", 10);
@@ -45,7 +47,9 @@ function stripSslmode(u: string): string {
   }
 }
 
-const url = stripSslmode(rawUrl);
+// Use a placeholder if DATABASE_URL is missing (e.g., during Next.js build)
+// The actual query will fail at runtime if DATABASE_URL is needed
+const url = rawUrl ? stripSslmode(rawUrl) : "postgresql://placeholder";
 
 export const pool: Pool =
   globalThis.__pgPool__ ??
