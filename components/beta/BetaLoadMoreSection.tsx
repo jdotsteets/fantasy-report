@@ -44,15 +44,16 @@ export default function BetaLoadMoreSection({
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewState, setViewState] = useState<"collapsed" | "expanded" | "loaded">("collapsed");
+  const [expanded, setExpanded] = useState(false);
   const offsetRef = useRef<number>(initialItems.length);
 
   useEffect(() => {
     setItems(initialItems);
     offsetRef.current = initialItems.length;
-    setDone(initialItems.length < pageSize);
+    const shouldEnd = initialItems.length < pageSize && initialItems.length <= initialDisplay;
+    setDone(shouldEnd);
     setError(null);
-    setViewState("collapsed");
+    setExpanded(false);
   }, [initialItems, pageSize, initialDisplay, sectionKey, days, week, sourceId, provider]);
 
   const btnLabel = useMemo(() => `More ${title.replace(/ &.*/i, "")}`, [title]);
@@ -89,7 +90,6 @@ export default function BetaLoadMoreSection({
 
       offsetRef.current += data.items.length;
       if (data.items.length < pageSize) setDone(true);
-      setViewState("loaded");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load more";
       setError(msg);
@@ -98,38 +98,13 @@ export default function BetaLoadMoreSection({
     }
   }
 
-  // Handle local expansion (show all initial items without API call)
-  function handleExpand() {
-    setViewState("expanded");
-    
-    // Optional: Track expansion analytics
-    if (typeof window !== "undefined" && (window as any).gtag) {
-      (window as any).gtag("event", "section_expand", {
-        section: sectionKey,
-        initial_count: initialItems.length,
-      });
-    }
+  const visibleItems = expanded ? items : items.slice(0, initialDisplay);
+  const canExpand = items.length > initialDisplay || !done;
+
+  async function handleExpand() {
+    setExpanded(true);
+    await loadMore();
   }
-
-  // Handle collapse back to initial limit
-  function handleCollapse() {
-    setViewState("collapsed");
-  }
-
-  // Determine visible items based on view state
-  const visibleItems = viewState === "collapsed" ? items.slice(0, initialDisplay) : items;
-
-  // Count of hidden initial items
-  const hiddenInitialCount = Math.max(0, initialItems.length - initialDisplay);
-  
-  // Show expand button if there are hidden items
-  const showExpandButton = viewState === "collapsed" && hiddenInitialCount > 0;
-  
-  // Show load more button if expanded and not done
-  const showLoadMoreButton = viewState === "expanded" && !done;
-  
-  // Show collapse button if expanded or loaded
-  const showCollapseButton = (viewState === "expanded" || viewState === "loaded") && items.length > initialDisplay;
 
   return (
     <BetaSection title={title} subtitle={subtitle}>
@@ -157,7 +132,7 @@ export default function BetaLoadMoreSection({
                     <span className="truncate">{article.source}</span>
                     {article.published_at ? (
                       <>
-                        <span>·</span>
+                        <span>â€¢</span>
                         <span>{new Date(article.published_at).toLocaleDateString()}</span>
                       </>
                     ) : null}
@@ -168,58 +143,43 @@ export default function BetaLoadMoreSection({
           ))}
         </div>
       ) : (
-        <BetaFeed articles={visibleItems} />
+        <BetaFeed articles={items} limit={expanded ? undefined : initialDisplay} />
       )}
 
-      <div className="mt-4 space-y-2">
-        {error && (
-          <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </div>
-        )}
+      {canExpand ? (
+        <div className="mt-4">
+          {error ? (
+            <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
 
-        {/* Show X more button (expands initial items locally) */}
-        {showExpandButton && (
-          <button
-            onClick={handleExpand}
-            className="w-full rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50"
-          >
-            Show {hiddenInitialCount} more
-          </button>
-        )}
-
-        {/* Load more from API */}
-        {showLoadMoreButton && (
-          <button
-            onClick={loadMore}
-            className="w-full rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 disabled:opacity-60"
-            disabled={loading}
-          >
-            {loading ? "Loading…" : "More Articles"}
-          </button>
-        )}
-
-        {/* Continue loading after API load */}
-        {viewState === "loaded" && !done && (
-          <button
-            onClick={loadMore}
-            className="w-full rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 disabled:opacity-60"
-            disabled={loading}
-          >
-            {loading ? "Loading…" : btnLabel}
-          </button>
-        )}
-
-        {/* Show less button */}
-        {showCollapseButton && (
-          <button
-            onClick={handleCollapse}
-            className="w-full rounded-full border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
-          >
-            Show Less
-          </button>
-        )}
-      </div>
+          {!expanded ? (
+            <button
+              onClick={handleExpand}
+              className="w-full rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Loadingâ€¦" : "More Articles"}
+            </button>
+          ) : !done ? (
+            <button
+              onClick={loadMore}
+              className="w-full rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Loadingâ€¦" : btnLabel}
+            </button>
+          ) : items.length > initialDisplay ? (
+            <button
+              onClick={() => setExpanded(false)}
+              className="w-full rounded-full border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+            >
+              Show Less
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </BetaSection>
   );
 }
