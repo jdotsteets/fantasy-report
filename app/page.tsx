@@ -298,10 +298,11 @@ export default async function Page({
               pageSize={12}
               initialDisplay={2}
             />
+
+            <LatestTransactions teamId={selectedTeam?.id} />
           </section>
 
 
-            <LatestTransactions teamId={selectedTeam?.id} />
           <aside className="space-y-6">
             <BetaTrending articles={trendingPool} />
 
