@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import BetaSection from "@/components/beta/BetaSection";
 
 interface Transaction {
@@ -30,26 +30,41 @@ const TYPE_COLORS: Record<string, string> = {
   Other: "bg-zinc-100 text-zinc-800 border-zinc-200",
 };
 
+const INITIAL_DISPLAY = 5;
+
 export default function LatestTransactions({ teamId }: { teamId?: string }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    const url = teamId 
-      ? `/api/transactions?team=${teamId}&limit=10`
-      : `/api/transactions?limit=10`;
-      
+    const url = teamId
+      ? "/api/transactions?team=" + teamId + "&limit=25"
+      : "/api/transactions?limit=25";
+
+    setLoading(true);
+    setExpanded(false);
+
     fetch(url)
-      .then(r => r.json())
-      .then(data => setTransactions(data.transactions || []))
+      .then((r) => r.json())
+      .then((data) => setTransactions(data.transactions || []))
       .catch(() => setTransactions([]))
       .finally(() => setLoading(false));
   }, [teamId]);
 
+  const visibleTransactions = expanded
+    ? transactions
+    : transactions.slice(0, INITIAL_DISPLAY);
+
+  const showToggle = transactions.length > INITIAL_DISPLAY;
+  const remaining = transactions.length - INITIAL_DISPLAY;
+
   if (loading) {
     return (
       <BetaSection title="Latest Transactions" subtitle="Recent roster moves">
-        <div className="text-sm text-zinc-500 py-4">Loading transactions...</div>
+        <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-sm text-zinc-500">
+          Loading transactions...
+        </div>
       </BetaSection>
     );
   }
@@ -57,8 +72,8 @@ export default function LatestTransactions({ teamId }: { teamId?: string }) {
   if (transactions.length === 0) {
     return (
       <BetaSection title="Latest Transactions" subtitle="Recent roster moves">
-        <div className="text-sm text-zinc-600 py-4">
-          {teamId 
+        <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-sm text-zinc-600">
+          {teamId
             ? "No recent transactions found for this team."
             : "No recent transactions available."}
         </div>
@@ -69,64 +84,54 @@ export default function LatestTransactions({ teamId }: { teamId?: string }) {
   return (
     <BetaSection title="Latest Transactions" subtitle="Recent roster moves">
       <div className="space-y-2">
-        {transactions.map(t => (
-          <div 
-            key={t.id} 
-            className="flex items-center gap-3 px-3 py-2 rounded-lg border border-zinc-200 bg-white hover:border-zinc-300 transition"
+        {visibleTransactions.map((t) => (
+          <div
+            key={t.id}
+            className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 transition hover:border-zinc-300"
           >
-            {/* Date */}
-            <div className="flex-shrink-0 w-16 text-xs text-zinc-500">
-              {new Date(t.date).toLocaleDateString("en-US", { 
-                month: "short", 
-                day: "numeric" 
+            <div className="w-16 text-xs text-zinc-500">
+              {new Date(t.date).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
               })}
             </div>
 
-            {/* Team */}
-            <div className="flex-shrink-0 w-12 text-xs font-semibold text-zinc-700">
+            <div className="w-12 text-xs font-semibold text-zinc-700">
               {t.teamKey || "NFL"}
             </div>
 
-            {/* Player & Position */}
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-900 truncate">
-                  {t.player}
-                </span>
-                {t.position && (
-                  <span className="text-xs text-zinc-500 flex-shrink-0">
-                    {t.position}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Type Badge */}
-            <div className="flex-shrink-0">
-              <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${TYPE_COLORS[t.type] || TYPE_COLORS.Other}`}>
-                {t.type}
+              <span className="text-sm font-semibold text-zinc-900 truncate">
+                {t.player}
               </span>
             </div>
 
-            {/* Source Link */}
-            {t.sourceUrl && (
-              <a
-                href={t.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-shrink-0 text-zinc-400 hover:text-zinc-600 transition"
-                title="View source"
+            <div>
+              <span
+                className={
+                  "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold " +
+                  (TYPE_COLORS[t.type] || TYPE_COLORS.Other)
+                }
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                  <polyline points="15 3 21 3 21 9"></polyline>
-                  <line x1="10" y1="14" x2="21" y2="3"></line>
-                </svg>
-              </a>
-            )}
+                {t.type}
+              </span>
+            </div>
           </div>
         ))}
       </div>
+
+      {showToggle && (
+        <div className="mt-4 border-t border-zinc-100 pt-4">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-sm font-medium text-zinc-700 hover:text-zinc-900"
+          >
+            {expanded
+              ? "Show less"
+              : "More transactions (" + remaining + " more)"}
+          </button>
+        </div>
+      )}
     </BetaSection>
   );
 }
