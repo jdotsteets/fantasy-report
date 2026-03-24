@@ -227,14 +227,14 @@ export default async function Page({
 
   
   // Apply team filter if selected
-  let filteredFeed = feed;
-  let filteredLatest = latest;
-  let filteredRankings = rankings;
-  let filteredStartSit = startSit;
-  let filteredAdvice = advice;
-  let filteredDfs = dfs;
-  let filteredWaivers = waivers;
-  let filteredInjuries = injuries;
+  let filteredFeed: Article[] = feed;
+  let filteredLatest: Article[] = latest;
+  let filteredRankings: Article[] = rankings;
+  let filteredStartSit: Article[] = startSit;
+  let filteredAdvice: Article[] = advice;
+  let filteredDfs: Article[] = dfs;
+  let filteredWaivers: Article[] = waivers;
+  let filteredInjuries: Article[] = injuries;
   let totalFilteredCount = 0;
 
   if (selectedTeam) {
