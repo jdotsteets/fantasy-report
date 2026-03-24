@@ -228,24 +228,24 @@ export default async function Page({
   
   // Apply team filter if selected
   let filteredFeed: Article[] = feed;
-  let filteredLatest: Article[] = latest;
-  let filteredRankings: Article[] = rankings;
-  let filteredStartSit: Article[] = startSit;
-  let filteredAdvice: Article[] = advice;
-  let filteredDfs: Article[] = dfs;
-  let filteredWaivers: Article[] = waivers;
-  let filteredInjuries: Article[] = injuries;
+  let filteredLatest: Article[] = latestNoHero;
+  let filteredRankings: Article[] = rankingsNoHero;
+  let filteredStartSit: Article[] = startSitNoHero;
+  let filteredAdvice: Article[] = adviceNoHero;
+  let filteredDfs: Article[] = dfsNoHero;
+  let filteredWaivers: Article[] = waiversNoHero;
+  let filteredInjuries: Article[] = injuriesNoHero;
   let totalFilteredCount = 0;
 
   if (selectedTeam) {
     filteredFeed = filterArticlesByTeam(feed, selectedTeam.id) as Article[];
-    filteredLatest = filterArticlesByTeam(latest, selectedTeam.id) as Article[];
-    filteredRankings = filterArticlesByTeam(rankings, selectedTeam.id) as Article[];
-    filteredStartSit = filterArticlesByTeam(startSit, selectedTeam.id) as Article[];
-    filteredAdvice = filterArticlesByTeam(advice, selectedTeam.id) as Article[];
-    filteredDfs = filterArticlesByTeam(dfs, selectedTeam.id) as Article[];
-    filteredWaivers = filterArticlesByTeam(waivers, selectedTeam.id) as Article[];
-    filteredInjuries = filterArticlesByTeam(injuries, selectedTeam.id) as Article[];
+    filteredLatest = filterArticlesByTeam(latestNoHero, selectedTeam.id) as Article[];
+    filteredRankings = filterArticlesByTeam(rankingsNoHero, selectedTeam.id) as Article[];
+    filteredStartSit = filterArticlesByTeam(startSitNoHero, selectedTeam.id) as Article[];
+    filteredAdvice = filterArticlesByTeam(adviceNoHero, selectedTeam.id) as Article[];
+    filteredDfs = filterArticlesByTeam(dfsNoHero, selectedTeam.id) as Article[];
+    filteredWaivers = filterArticlesByTeam(waiversNoHero, selectedTeam.id) as Article[];
+    filteredInjuries = filterArticlesByTeam(injuriesNoHero, selectedTeam.id) as Article[];
     
     totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
                         filteredStartSit.length + filteredAdvice.length + filteredDfs.length + 
@@ -286,14 +286,14 @@ export default async function Page({
               subtitle="The highest-value links right now"
               action={<span className="text-xs uppercase tracking-wide">Updated live</span>}
             >
-              <BetaFeed articles={feed.slice(0, 6)} />
+              <BetaFeed articles={filteredFeed.slice(0, 6)} />
             </BetaSection>
 
             <BetaLoadMoreSection
               title="Latest news"
               subtitle="Breaking updates across the fantasy landscape"
               sectionKey="news"
-              initialItems={latestNoHero}
+              initialItems={filteredLatest}
               pageSize={12}
               initialDisplay={2}
             />
@@ -306,7 +306,7 @@ export default async function Page({
               title="Rankings & tiers"
               subtitle="Top recent rankings and rest-of-season insight"
               sectionKey="rankings"
-              initialItems={rankingsNoHero}
+              initialItems={filteredRankings}
               pageSize={10}
               initialDisplay={4}
             />
@@ -315,7 +315,7 @@ export default async function Page({
               title="Start/Sit & Advice"
               subtitle="Lineup answers, sleepers, and strategy"
               sectionKey="start-sit"
-              initialItems={uniqueArticles(startSitNoHero, adviceNoHero)}
+              initialItems={uniqueArticles(filteredStartSit, filteredAdvice)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -324,7 +324,7 @@ export default async function Page({
               title="More news"
               subtitle="Quick-hit headlines from around the league"
               sectionKey="news"
-              initialItems={latestNoHero.slice(2, 10)}
+              initialItems={filteredLatest.slice(2, 10)}
               pageSize={10}
               initialDisplay={8}
               variant="headlines"
@@ -338,7 +338,7 @@ export default async function Page({
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
               sectionKey="news"
-              initialItems={removeHero(freeAgencyItems, heroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(freeAgencyItems, heroId), selectedTeam.id) as Article[] : removeHero(freeAgencyItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -347,7 +347,7 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={removeHero(draftItems, heroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(draftItems, heroId), selectedTeam.id) as Article[] : removeHero(draftItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -356,7 +356,7 @@ export default async function Page({
               title={`Waiver wire · Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
-              initialItems={waiversNoHero}
+              initialItems={filteredWaivers}
               pageSize={10}
               initialDisplay={4}
               week={week}
@@ -367,7 +367,7 @@ export default async function Page({
             title="DFS"
             subtitle="Slate breakdowns and optimizer tools"
             sectionKey="dfs"
-            initialItems={dfsNoHero}
+            initialItems={filteredDfs}
             pageSize={10}
             initialDisplay={4}
           />
@@ -376,7 +376,7 @@ export default async function Page({
             title="Injuries"
             subtitle="Status reports and return timelines"
             sectionKey="injury"
-            initialItems={injuriesNoHero}
+            initialItems={filteredInjuries}
             pageSize={10}
             initialDisplay={4}
           />
