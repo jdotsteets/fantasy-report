@@ -1,4 +1,4 @@
-// Team filtering utilities for Fantasy Report
+﻿// Team filtering utilities for Fantasy Report
 export interface Team {
   id: string;
   name: string;
@@ -46,7 +46,7 @@ export function getTeamById(id: string): Team | null {
   return NFL_TEAMS.find(t => t.id === id) ?? null;
 }
 
-export function filterArticlesByTeam<T extends { title: string; url?: string; canonical_url?: string; summary?: string | null }>(
+export function filterArticlesByTeam<T extends { title: string; url?: string; canonical_url?: string | null; summary?: string | null }>(
   articles: T[],
   teamId: string
 ): T[] {
