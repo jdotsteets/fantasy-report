@@ -6,7 +6,7 @@ import BetaFeed from "@/components/beta/BetaFeed";
 import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
 import FilterBanner from "@/components/beta/FilterBanner";
-import TransactionsSection from "@/components/beta/TransactionsSection";
+import LatestTransactions from "@/components/beta/LatestTransactions";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
 
 import type { Article } from "@/types/sources";
@@ -301,7 +301,7 @@ export default async function Page({
           </section>
 
 
-            {selectedTeam && <TransactionsSection teamId={selectedTeam.id} />}
+            <LatestTransactions teamId={selectedTeam?.id} />
           <aside className="space-y-6">
             <BetaTrending articles={trendingPool} />
 
