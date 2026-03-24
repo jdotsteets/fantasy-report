@@ -54,9 +54,20 @@ export function filterArticlesByTeam<T extends { title: string; url?: string; ca
   if (!team) return [];
   
   return articles.filter(article => {
-    const searchText = `${article.title} ${article.url ?? ""} ${article.canonical_url ?? ""} ${article.summary ?? ""}`.toLowerCase();
-    return team.aliases.some(alias => searchText.includes(alias.toLowerCase())) ||
-           searchText.includes(team.name.toLowerCase()) ||
-           searchText.includes(team.shortName.toLowerCase());
+    let score = 0;
+    
+    const title = article.title.toLowerCase();
+    const url = (article.url || article.canonical_url || "").toLowerCase();
+    const summary = (article.summary || "").toLowerCase();
+    
+    // Check each team identifier
+    for (const id of [team.name.toLowerCase(), team.shortName.toLowerCase(), ...team.aliases.map(a => a.toLowerCase())]) {
+      if (title.includes(id)) score += 3;
+      if (url.includes(id)) score += 2;
+      if (summary.includes(id)) score += 1;
+    }
+    
+    // Minimum score of 2 required (e.g., title match OR url match OR 2 summary mentions)
+    return score >= 2;
   });
 }
