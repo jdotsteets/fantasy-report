@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
+// Ensure this route only runs at request time, not build time
+export const dynamic = 'force-dynamic';
+
 type Cols = { hasJobId: boolean; hasLevel: boolean; hasEvent: boolean };
 let cachedCols: Cols | null = null;
 
 async function getCols(): Promise<Cols> {
   if (cachedCols) return cachedCols;
+  
+  // Skip database query during build time
+  if (!process.env.DATABASE_URL && !process.env.DATABASE_URL_POOLER) {
+    return { hasJobId: true, hasLevel: true, hasEvent: true };
+  }
+  
   const { rows } = await dbQuery<{ column_name: string }>(
     `select lower(column_name) as column_name
      from information_schema.columns
