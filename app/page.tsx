@@ -280,13 +280,6 @@ export default async function Page({
           {hero ? <BetaHero article={hero} /> : null}
         </div>
 
-          {selectedTeam && (
-            <div className="space-y-6">
-              <FilterBanner team={selectedTeam} matchCount={totalFilteredCount} />
-              <TransactionsSection teamId={selectedTeam.id} />
-            </div>
-          )}
-
         <div className="mt-8 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
           <section className="space-y-6">
             <BetaSection
@@ -307,6 +300,8 @@ export default async function Page({
             />
           </section>
 
+
+            {selectedTeam && <TransactionsSection teamId={selectedTeam.id} />}
           <aside className="space-y-6">
             <BetaTrending articles={trendingPool} />
 
