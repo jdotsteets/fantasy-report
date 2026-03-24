@@ -45,7 +45,10 @@ export function getTeamById(id: string): Team | null {
   return NFL_TEAMS.find(t => t.id === id) ?? null;
 }
 
-export function filterArticlesByTeam(articles: Array<{ title: string; url?: string; canonical_url?: string; summary?: string | null }>, teamId: string): typeof articles {
+export function filterArticlesByTeam<T extends { title: string; url?: string; canonical_url?: string; summary?: string | null }>(
+  articles: T[],
+  teamId: string
+): T[] {
   const team = getTeamById(teamId);
   if (!team) return [];
   
