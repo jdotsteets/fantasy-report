@@ -2,6 +2,9 @@
 import { NextResponse } from "next/server";
 import { extractWaiverMentions } from "@/lib/waivers/extract";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   const u = new URL(req.url);
   const id = parseInt(u.searchParams.get("id") || "0", 10);

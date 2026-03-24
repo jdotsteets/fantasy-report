@@ -5,6 +5,9 @@ import { dbQuery } from "@/lib/db";
 import {  extractWaivers } from "@/lib/site-extractors";
 import { mapPlayers } from "@/lib/site-extractors/mapPlayers";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 // Ensure Node runtime
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

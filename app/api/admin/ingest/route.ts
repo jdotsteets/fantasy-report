@@ -5,6 +5,9 @@ import { runIngestOnce } from "@/lib/ingestRunner";
 import { logIngest } from "@/lib/ingestLogs";
 import type { ProbeMethod } from "@/lib/sources/types";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 type Body = {
   sourceId?: number | string;
   limit?: number | string;

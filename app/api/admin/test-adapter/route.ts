@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 import { ADAPTERS } from "@/lib/sources/adapters";
 import type { SourceAdapter } from "@/lib/sources/types";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 type AdapterConfig = {
   pageCount?: number;
   daysBack?: number;

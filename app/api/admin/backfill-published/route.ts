@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 import { resolvePublished } from "@/lib/dates/resolvePublished";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 
 type Row = { id: number; url: string | null; canonical_url: string | null };
 type Result = { updated: number; skipped: number; failed: number; sample: number[] };

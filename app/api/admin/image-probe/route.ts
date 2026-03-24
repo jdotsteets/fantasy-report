@@ -5,6 +5,9 @@ import { fetchOgImage } from "@/lib/enrich";
 import { findArticleImage } from "@/lib/scrape-image";
 import { getSafeImageUrl, isLikelyFavicon } from "@/lib/images";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

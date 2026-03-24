@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

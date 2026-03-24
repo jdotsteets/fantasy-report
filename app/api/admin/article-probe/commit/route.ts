@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as pg from "pg";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 export const runtime = "nodejs";
 

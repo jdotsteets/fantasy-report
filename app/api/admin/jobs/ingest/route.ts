@@ -1,7 +1,10 @@
 // app/api/admin/jobs/ingest/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createJob, appendEvent, setProgress, finishJobSuccess, failJob } from "@/lib/jobs";
-import { runIngestOnce } from "@/lib/ingestRunner"; // you’ll wire your existing ingest here
+import { runIngestOnce } from "@/lib/ingestRunner";
+
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic'; // you’ll wire your existing ingest here
 
 type Body = {
   sourceId?: number;

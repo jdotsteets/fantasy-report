@@ -2,6 +2,9 @@
 import { NextResponse } from "next/server";
 import { blockUrl, deleteArticleByCanonical, listBlocked } from "@/lib/blocklist";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 // ───────────────────────── helpers ─────────────────────────
 
 // Resolve exactly one redirect hop (no follow)

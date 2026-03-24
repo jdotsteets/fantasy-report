@@ -2,6 +2,9 @@
 import { dbQuery } from "@/lib/db";
 import { z } from "zod";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 /* ────────────────────────── schema ────────────────────────── */
 
 const FETCH_MODE = z.enum(["auto", "rss", "adapter"]);

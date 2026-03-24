@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createJob, appendEvent, setProgress, finishJobSuccess, failJob } from "@/lib/jobs";
 import { ingestAllAllowedSources } from "@/lib/ingest";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

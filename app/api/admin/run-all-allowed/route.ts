@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runAllAllowedSourcesIngestWithJob } from "@/lib/ingest";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 type ReqBody = { perSourceLimit?: number };
 
 export const runtime = "nodejs";

@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   const secret = process.env.CRON_SECRET || process.env.ADMIN_TOKEN || process.env.ADMIN_KEY || "";
   if (secret && (req.headers.get("authorization") ?? "") !== `Bearer ${secret}`) {

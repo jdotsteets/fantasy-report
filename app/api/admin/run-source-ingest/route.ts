@@ -4,6 +4,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runSingleSourceIngestWithJob } from "@/lib/ingest";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 type ReqBody = {
   sourceId: number;
   limit?: number;

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
+// Force dynamic rendering - no static optimization
+export const dynamic = 'force-dynamic';
+
 type Cols = { hasJobId: boolean; hasEvent: boolean };
 let cachedCols: Cols | null = null;
 
