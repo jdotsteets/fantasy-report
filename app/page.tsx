@@ -6,6 +6,7 @@ import BetaFeed from "@/components/beta/BetaFeed";
 import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
 import FilterBanner from "@/components/beta/FilterBanner";
+import TransactionsSection from "@/components/beta/TransactionsSection";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
 
 import type { Article } from "@/types/sources";
@@ -278,6 +279,13 @@ export default async function Page({
 
           {hero ? <BetaHero article={hero} /> : null}
         </div>
+
+          {selectedTeam && (
+            <div className="space-y-6">
+              <FilterBanner team={selectedTeam} matchCount={totalFilteredCount} />
+              <TransactionsSection teamId={selectedTeam.id} />
+            </div>
+          )}
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
           <section className="space-y-6">
