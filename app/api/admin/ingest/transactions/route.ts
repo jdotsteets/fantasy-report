@@ -38,26 +38,26 @@ async function fetchNFLTransactions() {
 
     const html = await response.text();
     
-    // Simple regex-based parsing (fragile but workable)
-    // NFL.com structure: date, team, player, position, transaction
+    // Pattern matches rows with 6 TDs: teamFrom, teamTo, date, player, position, transaction
+    const rowPattern = /<tr>\s*<td>[\s\S]*?href="\/teams\/([^"]+)"[\s\S]*?<div class="d3-o-club-(?:full|short)name">\s*([^<\n]+)[\s\S]*?<\/td>\s*<td>[\s\S]*?href="\/teams\/([^"]+)"[\s\S]*?<div class="d3-o-club-(?:full|short)name">\s*([^<\n]+)[\s\S]*?<\/td>\s*<td>\s*(\d{2}\/\d{2})\s*<\/td>\s*<td>\s*(?:<a[^>]*>)?([^<]+?)(?:<\/a>)?\s*<\/td>\s*<td>\s*([^<]*?)\s*<\/td>\s*<td>\s*([^<]+?)\s*<\/td>\s*<\/tr>/gi;
+    
     const transactions: any[] = [];
-    
-    // Pattern: look for transaction rows
-    // This is a simplified parser - adjust based on actual HTML structure
-    const rowPattern = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
-    
     let match;
     let count = 0;
+    
     while ((match = rowPattern.exec(html)) && count < 100) {
       try {
-        const [, date, team, player, position, transaction] = match;
+        const [, teamFromSlug, teamFromName, teamToSlug, teamToName, date, player, position, transactionType] = match;
         
         transactions.push({
-          date: date?.trim(),
-          team: team?.trim(),
-          player: player?.trim(),
-          position: position?.trim(),
-          transaction: transaction?.trim(),
+          date: date.trim(),
+          teamFrom: teamFromName.trim(),
+          teamTo: teamToName.trim(),
+          teamFromSlug: teamFromSlug.trim(),
+          teamToSlug: teamToSlug.trim(),
+          player: player.trim(),
+          position: position.trim() || null,
+          transaction: transactionType.trim(),
         });
         count++;
       } catch (e) {
@@ -72,6 +72,18 @@ async function fetchNFLTransactions() {
     return [];
   }
 }
+
+// Map team names to abbreviations
+const TEAM_ABBR: Record<string, string> = {
+  "Cardinals": "ARI", "Falcons": "ATL", "Ravens": "BAL", "Bills": "BUF",
+  "Panthers": "CAR", "Bears": "CHI", "Bengals": "CIN", "Browns": "CLE",
+  "Cowboys": "DAL", "Broncos": "DEN", "Lions": "DET", "Packers": "GB",
+  "Texans": "HOU", "Colts": "IND", "Jaguars": "JAX", "Chiefs": "KC",
+  "Raiders": "LV", "Chargers": "LAC", "Rams": "LAR", "Dolphins": "MIA",
+  "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "Giants": "NYG",
+  "Jets": "NYJ", "Eagles": "PHI", "Steelers": "PIT", "49ers": "SF",
+  "Seahawks": "SEA", "Buccaneers": "TB", "Titans": "TEN", "Commanders": "WSH",
+};
 
 export async function POST(request: Request) {
   try {
@@ -91,16 +103,23 @@ export async function POST(request: Request) {
 
     for (const t of transactions) {
       try {
-        // Parse date
-        const transDate = new Date(t.date);
+        // Parse date (MM/DD format, use current year)
+        const [month, day] = t.date.split('/');
+        const currentYear = new Date().getFullYear();
+        const transDate = new Date(currentYear, parseInt(month) - 1, parseInt(day));
+        
         if (isNaN(transDate.getTime())) {
           throw new Error(`Invalid date: ${t.date}`);
         }
 
-        // Normalize team key (simple mapping)
-        const teamKey = t.team?.substring(0, 3).toUpperCase() || null;
+        // Get team abbreviation (prefer teamTo for Traded, teamFrom for Released/Waived/Signed)
+        const primaryTeam = t.transaction.toLowerCase().includes('traded') ? t.teamTo : t.teamFrom;
+        const teamKey = TEAM_ABBR[primaryTeam] || primaryTeam.substring(0, 3).toUpperCase();
         
         const normalized = normalizeTransactionType(t.transaction);
+        
+        // Create a unique source_id
+        const sourceId = `${teamKey}-${t.player}-${t.date}-${t.transaction}`.replace(/\s+/g, '-');
         
         // Insert with conflict handling
         await dbQuery(
@@ -114,15 +133,15 @@ export async function POST(request: Request) {
           [
             "nfl.com",
             "https://www.nfl.com/transactions/",
-            `${t.team}-${t.player}-${t.date}`,
+            sourceId,
             transDate,
             teamKey,
-            t.team,
+            primaryTeam,
             t.player,
             t.position,
             t.transaction,
             normalized,
-            null,
+            `${t.teamFrom} → ${t.teamTo}`,
           ]
         );
 
