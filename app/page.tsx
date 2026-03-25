@@ -319,7 +319,7 @@ export default async function Page({
                   Your premium hub for fantasy football headlines, rankings, and advice.
                 </h1>
                 <p className="max-w-2xl text-sm text-zinc-600">
-                  We curate the most important fantasy content across the web and send you straight to the source Ã¢â‚¬â€
+                  We curate the most important fantasy content across the web and send you straight to the source ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
                   fast, modern, and built for repeat visits.
                 </p>
               </div>
@@ -411,7 +411,7 @@ export default async function Page({
             />
           ) : (
             <BetaLoadMoreSection
-              title={`Waiver wire Ã‚Â· Week ${week}`}
+              title={`Waiver wire Ãƒâ€šÃ‚Â· Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
               initialItems={uniqueWaivers}
