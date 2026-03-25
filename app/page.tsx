@@ -1,4 +1,4 @@
-﻿// Build cache buster: 2026-03-24 23:57:27
+// Build cache buster: 2026-03-24 23:57:27
 import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
@@ -251,6 +251,55 @@ export default async function Page({
     
     totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
                         filteredStartSit.length + filteredAdvice.length + filteredDfs.length + 
+  // Deduplicate articles across all sections
+  const seenIds = new Set<number>();
+  
+  // Track curated feed articles first
+  filteredFeed.forEach(a => seenIds.add(a.id));
+  if (hero?.id) seenIds.add(hero.id);
+  
+  // Deduplicate each section in order
+  const uniqueLatest = filteredLatest.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
+  
+  const uniqueRankings = filteredRankings.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
+  
+  const uniqueStartSit = filteredStartSit.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
+  
+  const uniqueAdvice = filteredAdvice.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
+  
+  const uniqueDfs = filteredDfs.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
+  
+  const uniqueInjuries = filteredInjuries.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
+  
+  const uniqueWaivers = filteredWaivers.filter(a => {
+    if (seenIds.has(a.id)) return false;
+    seenIds.add(a.id);
+    return true;
+  });
                         filteredWaivers.length + filteredInjuries.length;
   }
 
@@ -295,7 +344,7 @@ export default async function Page({
               title="Latest news"
               subtitle="Breaking updates across the fantasy landscape"
               sectionKey="news"
-              initialItems={filteredLatest}
+              initialItems={uniqueLatest}
               pageSize={12}
               initialDisplay={2}
             />
@@ -315,7 +364,7 @@ export default async function Page({
               title="Rankings & tiers"
               subtitle="Top recent rankings and rest-of-season insight"
               sectionKey="rankings"
-              initialItems={filteredRankings}
+              initialItems={uniqueRankings}
               pageSize={10}
               initialDisplay={4}
             />
@@ -324,7 +373,7 @@ export default async function Page({
               title="Start/Sit & Advice"
               subtitle="Lineup answers, sleepers, and strategy"
               sectionKey="start-sit"
-              initialItems={uniqueArticles(filteredStartSit, filteredAdvice)}
+              initialItems={uniqueArticles(uniqueStartSit, uniqueAdvice)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -365,7 +414,7 @@ export default async function Page({
               title={`Waiver wire Â· Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
-              initialItems={filteredWaivers}
+              initialItems={uniqueWaivers}
               pageSize={10}
               initialDisplay={4}
               week={week}
@@ -376,7 +425,7 @@ export default async function Page({
             title="DFS"
             subtitle="Slate breakdowns and optimizer tools"
             sectionKey="dfs"
-            initialItems={filteredDfs}
+            initialItems={uniqueDfs}
             pageSize={10}
             initialDisplay={4}
           />
@@ -385,7 +434,7 @@ export default async function Page({
             title="Injuries"
             subtitle="Status reports and return timelines"
             sectionKey="injury"
-            initialItems={filteredInjuries}
+            initialItems={uniqueInjuries}
             pageSize={10}
             initialDisplay={4}
           />
@@ -402,4 +451,3 @@ export default async function Page({
     </main>
   );
 }
-
