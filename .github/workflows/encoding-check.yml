@@ -1,0 +1,23 @@
+﻿name: Encoding Check
+
+on: [push, pull_request]
+
+jobs:
+  check-encoding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check for BOM markers
+        run: |
+          if grep -r $'\xEF\xBB\xBF' --include="*.ts" --include="*.tsx" .; then
+            echo "❌ Found UTF-8 BOM markers"
+            exit 1
+          fi
+          echo "✅ No BOM markers found"
+      
+      - name: Check for CRLF
+        run: |
+          if find . -name "*.ts" -o -name "*.tsx" | xargs file | grep CRLF; then
+            echo "⚠️ Found CRLF line endings (may cause issues)"
+          fi
