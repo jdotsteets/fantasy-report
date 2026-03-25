@@ -251,6 +251,8 @@ export default async function Page({
     
     totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
                         filteredStartSit.length + filteredAdvice.length + filteredDfs.length ;
+  }
+
   // Deduplicate articles across all sections
   const seenIds = new Set<number>();
   
@@ -300,8 +302,6 @@ export default async function Page({
     seenIds.add(a.id);
     return true;
   });
-                        filteredWaivers.length + filteredInjuries.length;
-  }
 
 
 
