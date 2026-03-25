@@ -1,4 +1,4 @@
-// Build cache buster: 2026-03-24 23:57:27
+﻿// Build cache buster: 2026-03-24 23:57:27
 import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
@@ -270,7 +270,7 @@ export default async function Page({
                   Your premium hub for fantasy football headlines, rankings, and advice.
                 </h1>
                 <p className="max-w-2xl text-sm text-zinc-600">
-                  We curate the most important fantasy content across the web and send you straight to the source —
+                  We curate the most important fantasy content across the web and send you straight to the source â€”
                   fast, modern, and built for repeat visits.
                 </p>
               </div>
@@ -300,7 +300,11 @@ export default async function Page({
               initialDisplay={2}
             />
 
-            <LatestTransactions teamId={selectedTeam?.id} />
+            <div className="w-full">{/* Ensure Latest Transactions stays in left column */}
+
+              <LatestTransactions teamId={selectedTeam?.id} />
+
+            </div>
           </section>
 
 
@@ -358,7 +362,7 @@ export default async function Page({
             />
           ) : (
             <BetaLoadMoreSection
-              title={`Waiver wire · Week ${week}`}
+              title={`Waiver wire Â· Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
               initialItems={filteredWaivers}
@@ -398,3 +402,4 @@ export default async function Page({
     </main>
   );
 }
+
