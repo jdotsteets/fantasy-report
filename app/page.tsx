@@ -1,3 +1,4 @@
+// Build cache buster: 2026-03-24 23:57:27
 import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
