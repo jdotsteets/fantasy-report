@@ -1,3 +1,4 @@
+// Version: 2026-03-25-19-00-29 - Working parser with team/player extraction
 import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
@@ -141,7 +142,7 @@ export async function POST(request: Request) {
             t.position,
             t.transaction,
             normalized,
-            `${t.teamFrom} → ${t.teamTo}`,
+            `${t.teamFrom} â†’ ${t.teamTo}`,
           ]
         );
 
