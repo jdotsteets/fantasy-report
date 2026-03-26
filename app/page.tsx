@@ -33,6 +33,19 @@ export const metadata: Metadata = {
   },
 };
 
+
+function cleanTitle(title: string): string {
+  if (!title) return '';
+  return title
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#8217;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
 const mapRow = (a: DbRow): Article => {
   const str = (k: keyof DbRow): string | null =>
     k in a && typeof a[k] === "string" ? (a[k] as string) : null;
@@ -53,7 +66,7 @@ const mapRow = (a: DbRow): Article => {
 
   return {
     id: a.id,
-    title: a.title,
+    title: cleanTitle(a.title || ""),
     url: a.url,
     canonical_url: a.canonical_url,
     domain: a.domain,
@@ -257,16 +270,18 @@ export default async function Page({
   // Deduplicate articles across all sections
   const seenIds = new Set<number>();
   
-  // Track curated feed articles first
-  filteredFeed.forEach(a => seenIds.add(a.id));
+  // Only track hero
   if (hero?.id) seenIds.add(hero.id);
   
   // Deduplicate each section in order
-  const uniqueLatest = filteredLatest.filter(a => {
+  const uniqueLatest = filteredLatest.slice(0, 20).filter(a => {
     if (seenIds.has(a.id)) return false;
     seenIds.add(a.id);
     return true;
   });
+  
+  // Track feed for other sections
+  filteredFeed.forEach(a => seenIds.add(a.id));
   
   const uniqueRankings = filteredRankings.filter(a => {
     if (seenIds.has(a.id)) return false;

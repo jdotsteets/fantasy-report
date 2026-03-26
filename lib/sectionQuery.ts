@@ -165,16 +165,31 @@ SELECT
           b.*,
           ROW_NUMBER() OVER (
             PARTITION BY b.provider_key
-            ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC
+          
+    AND title NOT ILIKE '%NBA%'
+    AND title NOT ILIKE '%MLB%'
+    AND title NOT ILIKE '%NHL%'
+    AND canonical_url NOT LIKE '%/nba/%'
+  ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC
           ) AS rnk_all,
           DATE_TRUNC('day', b.pub_ts) AS pub_day,
           ROW_NUMBER() OVER (
             PARTITION BY b.provider_key, DATE_TRUNC('day', b.pub_ts)
-            ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC
+          
+    AND title NOT ILIKE '%NBA%'
+    AND title NOT ILIKE '%MLB%'
+    AND title NOT ILIKE '%NHL%'
+    AND canonical_url NOT LIKE '%/nba/%'
+  ORDER BY b.pub_ts DESC NULLS LAST, b.id DESC
           ) AS rnk_day,
           DENSE_RANK() OVER (
             PARTITION BY DATE_TRUNC('day', b.pub_ts)
-            ORDER BY b.provider_key
+          
+    AND title NOT ILIKE '%NBA%'
+    AND title NOT ILIKE '%MLB%'
+    AND title NOT ILIKE '%NHL%'
+    AND canonical_url NOT LIKE '%/nba/%'
+  ORDER BY b.provider_key
           ) - 1 AS pidx_day
         FROM base b
       ),
@@ -187,7 +202,12 @@ SELECT
         id, title, url, canonical_url, domain, image_url,
         published_at, discovered_at, source, topics, week, summary, fantasy_impact_label, fantasy_impact_confidence
       FROM capped
-      ORDER BY
+    
+    AND title NOT ILIKE '%NBA%'
+    AND title NOT ILIKE '%MLB%'
+    AND title NOT ILIKE '%NHL%'
+    AND canonical_url NOT LIKE '%/nba/%'
+  ORDER BY
         pub_day DESC,
         rnk_day ASC,
         pidx_day ASC,
@@ -203,7 +223,12 @@ SELECT
         id, title, url, canonical_url, domain, image_url,
         published_at, discovered_at, source, topics, week, summary, fantasy_impact_label, fantasy_impact_confidence
       FROM base
-      ORDER BY published_at DESC NULLS LAST, id DESC
+    
+    AND title NOT ILIKE '%NBA%'
+    AND title NOT ILIKE '%MLB%'
+    AND title NOT ILIKE '%NHL%'
+    AND canonical_url NOT LIKE '%/nba/%'
+  ORDER BY published_at DESC NULLS LAST, id DESC
       LIMIT $${push(limit)} OFFSET $${push(offset)};
     `;
 
