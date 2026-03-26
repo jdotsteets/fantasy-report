@@ -24,11 +24,11 @@ const WAIVER_WEEK1_MONDAY = process.env.NEXT_PUBLIC_WAIVER_WEEK1_MONDAY ?? "2025
 
 export const metadata: Metadata = {
   title: "The Fantasy Report",
-  description: "A premium hub for fantasy football news, rankings, and advice with direct links to the source.",
+  description: "The best NFL news site. Latest updates on fantasy football, player news, rankings, and analysis - organized, fast, no BS.",
   alternates: { canonical: "/" },
   openGraph: {
     title: "The Fantasy Report",
-    description: "A premium hub for fantasy football news, rankings, and advice with direct links to the source.",
+    description: "The best NFL news site. Latest updates on fantasy football, player news, rankings, and analysis - organized, fast, no BS.",
     url: "/",
   },
 };
@@ -332,7 +332,7 @@ export default async function Page({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div className="space-y-2">
                 <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-                  Your premium hub for fantasy football headlines, rankings, and advice.
+                  The best NFL news site. Latest updates, zero BS.
                 </h1>
                 <p className="max-w-2xl text-sm text-zinc-600">
                   We curate the most important fantasy content across the web and send you straight to the source ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
