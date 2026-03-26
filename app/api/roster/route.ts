@@ -1,3 +1,4 @@
+// Force rebuild: 2026-03-25 22:55:27
 import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
