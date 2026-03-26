@@ -110,6 +110,22 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   if (typeof sourceId === "number") where.push(`a.source_id = $${push(sourceId)}`);
   if (provider) where.push(`s.provider ILIKE $${push(provider)}`);
 
+  // Exclude obvious non-NFL sports (basketball, baseball, hockey, soccer)
+  where.push(`(
+    title NOT ILIKE '%NBA%'
+    AND title NOT ILIKE '%baseball%'
+    AND title NOT ILIKE '%MLB%'
+    AND title NOT ILIKE '%NHL%'
+    AND title NOT ILIKE '%hockey%'
+    AND title NOT ILIKE '%soccer%'
+    AND title NOT ILIKE '%Premier League%'
+    AND title NOT ILIKE '%La Liga%'
+    AND canonical_url NOT LIKE '%/nba/%'
+    AND canonical_url NOT LIKE '%/mlb/%'
+    AND canonical_url NOT LIKE '%/nhl/%'
+    AND canonical_url NOT LIKE '%/soccer/%'
+    AND canonical_url NOT LIKE '%/basketball/%'
+  )`);
   if (isNews) {
     where.push(newsPredicateSQL());
     where.push(`a.published_at >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval`);
