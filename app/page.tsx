@@ -8,7 +8,8 @@ import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
 import FilterBanner from "@/components/beta/FilterBanner";
 import LatestTransactions from "@/components/beta/LatestTransactions";
-import { getTeamById, filterArticlesByTeam, getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams";
+import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
+import { getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams-server";
 
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
