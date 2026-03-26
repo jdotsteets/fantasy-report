@@ -1,4 +1,4 @@
-﻿// Team filtering utilities for Fantasy Report
+// Team filtering utilities for Fantasy Report
 export interface Team {
   id: string;
   name: string;
