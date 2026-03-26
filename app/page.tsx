@@ -188,14 +188,14 @@ export default async function Page({
     sport: "nfl",
     days: 60,
     week,
-    limitNews: 18,
-    limitRankings: 16,
-    limitStartSit: 16,
-    limitAdvice: 16,
-    limitDFS: 12,
-    limitWaivers: 16,
-    limitInjuries: 12,
-    limitHero: 12,
+    limitNews: 100,        // Increased from 18
+    limitRankings: 80,     // Increased from 16
+    limitStartSit: 80,     // Increased from 16
+    limitAdvice: 80,       // Increased from 16
+    limitDFS: 60,          // Increased from 12
+    limitWaivers: 80,      // Increased from 16
+    limitInjuries: 60,     // Increased from 12
+    limitHero: 50,         // Increased from 12
     selectedSection:
       selectedSection === "waivers" ? "waiver-wire" : selectedSection === "injury" ? "injury" : selectedSection,
   });
