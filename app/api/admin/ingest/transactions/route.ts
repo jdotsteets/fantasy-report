@@ -1,167 +1,179 @@
-// Version: 2026-03-25-19-00-29 - Working parser with team/player extraction
 import { NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-// Normalized transaction types
-const TRANSACTION_TYPES: Record<string, string> = {
-  signed: "Signed",
-  released: "Released",
-  waived: "Waived",
-  traded: "Traded",
-  claimed: "Claimed",
-  activated: "Activated",
-  "placed on ir": "Placed on IR",
-  "placed on reserve": "Placed on Reserve",
-  elevated: "Elevated",
-  "practice squad": "Practice Squad",
+const TEAM_ABBR: Record<string, string> = {
+  Cardinals: "ARI", Falcons: "ATL", Ravens: "BAL", Bills: "BUF",
+  Panthers: "CAR", Bears: "CHI", Bengals: "CIN", Browns: "CLE",
+  Cowboys: "DAL", Broncos: "DEN", Lions: "DET", Packers: "GB",
+  Texans: "HOU", Colts: "IND", Jaguars: "JAX", Chiefs: "KC",
+  Raiders: "LV", Chargers: "LAC", Rams: "LAR", Dolphins: "MIA",
+  Vikings: "MIN", Patriots: "NE", Saints: "NO", Giants: "NYG",
+  Jets: "NYJ", Eagles: "PHI", Steelers: "PIT", "49ers": "SF",
+  Seahawks: "SEA", Buccaneers: "TB", Titans: "TEN", Commanders: "WSH"
 };
 
-function normalizeTransactionType(raw: string): string {
-  const lower = raw.toLowerCase();
-  for (const [key, value] of Object.entries(TRANSACTION_TYPES)) {
-    if (lower.includes(key)) return value;
-  }
-  return "Other";
+// Get current year and month
+function getCurrentYearMonth() {
+  const now = new Date();
+  return {
+    year: now.getFullYear(),
+    month: now.getMonth() + 1, // 1-12
+  };
 }
 
-// Parse NFL.com transactions HTML
-async function fetchNFLTransactions() {
+// Parse NFL.com transactions HTML for a specific type
+async function fetchNFLTransactions(type: string, year: number, month: number) {
   try {
-    const response = await fetch("https://www.nfl.com/transactions/", {
+    const url = `https://www.nfl.com/transactions/league/${type}/${year}/${month}`;
+    console.log(`Fetching ${type} from ${url}`);
+    
+    const response = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
     });
     
     if (!response.ok) {
-      throw new Error(`NFL.com returned ${response.status}`);
+      console.warn(`NFL.com ${type} returned ${response.status}`);
+      return [];
     }
-
+    
     const html = await response.text();
-    
-    // Pattern matches rows with 6 TDs: teamFrom, teamTo, date, player, position, transaction
-    const rowPattern = /<tr>\s*<td>[\s\S]*?href="\/teams\/([^"]+)"[\s\S]*?<div class="d3-o-club-(?:full|short)name">\s*([^<\n]+)[\s\S]*?<\/td>\s*<td>[\s\S]*?href="\/teams\/([^"]+)"[\s\S]*?<div class="d3-o-club-(?:full|short)name">\s*([^<\n]+)[\s\S]*?<\/td>\s*<td>\s*(\d{2}\/\d{2})\s*<\/td>\s*<td>\s*(?:<a[^>]*>)?([^<]+?)(?:<\/a>)?\s*<\/td>\s*<td>\s*([^<]*?)\s*<\/td>\s*<td>\s*([^<]+?)\s*<\/td>\s*<\/tr>/gi;
-    
     const transactions: any[] = [];
+    
+    // Match 6-column table: teamFrom, teamTo, date, player, position, transactionType
+    const rowPattern = /<tr>\s*<td>[\s\S]*?href="\/teams\/([^"]+)"[\s\S]*?<div class="d3-o-club-(?:full|short)name">\s*([^\n<]+)[\s\S]*?<\/td>\s*<td>[\s\S]*?href="\/teams\/([^"]+)"[\s\S]*?<div class="d3-o-club-(?:full|short)name">\s*([^\n<]+)[\s\S]*?<\/td>\s*<td>\s*(\d{2}\/\d{2})\s*<\/td>\s*<td>\s*(?:<a[^>]*>)?([^<]+?)(?:<\/a>)?\s*<\/td>\s*<td>\s*([^<]*?)\s*<\/td>\s*<td>\s*([^<]+?)\s*<\/td>\s*<\/tr>/gi;
+    
     let match;
     let count = 0;
     
     while ((match = rowPattern.exec(html)) && count < 100) {
-      try {
-        const [, teamFromSlug, teamFromName, teamToSlug, teamToName, date, player, position, transactionType] = match;
-        
-        transactions.push({
-          date: date.trim(),
-          teamFrom: teamFromName.trim(),
-          teamTo: teamToName.trim(),
-          teamFromSlug: teamFromSlug.trim(),
-          teamToSlug: teamToSlug.trim(),
-          player: player.trim(),
-          position: position.trim() || null,
-          transaction: transactionType.trim(),
-        });
-        count++;
-      } catch (e) {
-        // Skip bad row
-        continue;
-      }
+      const [, teamFromSlug, teamFromName, teamToSlug, teamToName, date, player, position, transactionType] = match;
+      
+      transactions.push({
+        teamFrom: teamFromName.trim(),
+        teamFromKey: TEAM_ABBR[teamFromName.trim()] || null,
+        teamTo: teamToName.trim(),
+        teamToKey: TEAM_ABBR[teamToName.trim()] || null,
+        date: date.trim(),
+        player: player.trim(),
+        position: position.trim(),
+        type: transactionType.trim(),
+        sourceType: type, // 'signings', 'trades', 'waivers', 'releases'
+      });
+      
+      count++;
     }
-
+    
+    console.log(`Parsed ${transactions.length} ${type} transactions`);
     return transactions;
   } catch (error) {
-    console.error("Failed to fetch NFL transactions:", error);
+    console.error(`Failed to fetch ${type} transactions:`, error);
     return [];
   }
 }
 
-// Map team names to abbreviations
-const TEAM_ABBR: Record<string, string> = {
-  "Cardinals": "ARI", "Falcons": "ATL", "Ravens": "BAL", "Bills": "BUF",
-  "Panthers": "CAR", "Bears": "CHI", "Bengals": "CIN", "Browns": "CLE",
-  "Cowboys": "DAL", "Broncos": "DEN", "Lions": "DET", "Packers": "GB",
-  "Texans": "HOU", "Colts": "IND", "Jaguars": "JAX", "Chiefs": "KC",
-  "Raiders": "LV", "Chargers": "LAC", "Rams": "LAR", "Dolphins": "MIA",
-  "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "Giants": "NYG",
-  "Jets": "NYJ", "Eagles": "PHI", "Steelers": "PIT", "49ers": "SF",
-  "Seahawks": "SEA", "Buccaneers": "TB", "Titans": "TEN", "Commanders": "WSH",
-};
+// Normalize transaction types
+function normalizeType(type: string, sourceType: string): string {
+  const t = type.toLowerCase();
+  
+  if (t.includes("sign") || sourceType === "signings") return "Signed";
+  if (t.includes("trad") || sourceType === "trades") return "Traded";
+  if (t.includes("waiv") || sourceType === "waivers") return "Waiver";
+  if (t.includes("rele") || sourceType === "releases") return "Released";
+  if (t.includes("term")) return "Terminated";
+  if (t.includes("retir")) return "Retired";
+  if (t.includes("claim")) return "Claimed";
+  
+  return "Other";
+}
 
 export async function POST(request: Request) {
   try {
-    const transactions = await fetchNFLTransactions();
+    const { year, month } = getCurrentYearMonth();
     
-    if (transactions.length === 0) {
-      return NextResponse.json({ 
-        success: false, 
-        message: "No transactions found",
-        ingested: 0 
+    // Fetch all transaction types for current month
+    const types = ["trades", "signings", "waivers", "releases"];
+    const allTransactions: any[] = [];
+    
+    for (const type of types) {
+      const txs = await fetchNFLTransactions(type, year, month);
+      allTransactions.push(...txs);
+    }
+    
+    console.log(`Total transactions fetched: ${allTransactions.length}`);
+    
+    if (allTransactions.length === 0) {
+      return NextResponse.json({
+        success: true,
+        total: 0,
+        ingested: 0,
+        message: "No transactions found for current month",
       });
     }
-
+    
     let ingested = 0;
     let failed = 0;
     const errors: string[] = [];
-
-    for (const t of transactions) {
+    
+    // Get source ID
+    const sourceResult = await dbQuery(
+      `SELECT id FROM sources WHERE url = $1 LIMIT 1`,
+      ["https://www.nfl.com/transactions/"]
+    );
+    const sourceId = sourceResult.rows[0]?.id || null;
+    
+    for (const tx of allTransactions) {
       try {
-        // Parse date (MM/DD format, use current year)
-        const [month, day] = t.date.split('/');
-        const currentYear = new Date().getFullYear();
-        const transDate = new Date(currentYear, parseInt(month) - 1, parseInt(day));
+        // Parse date (MM/DD format - add current year)
+        const [m, d] = tx.date.split("/");
+        const transDate = new Date(year, parseInt(m) - 1, parseInt(d));
         
-        if (isNaN(transDate.getTime())) {
-          throw new Error(`Invalid date: ${t.date}`);
-        }
-
-        // Get team abbreviation (prefer teamTo for Traded, teamFrom for Released/Waived/Signed)
-        const primaryTeam = t.transaction.toLowerCase().includes('traded') ? t.teamTo : t.teamFrom;
-        const teamKey = TEAM_ABBR[primaryTeam] || primaryTeam.substring(0, 3).toUpperCase();
+        const normalized = normalizeType(tx.type, tx.sourceType);
         
-        const normalized = normalizeTransactionType(t.transaction);
-        
-        // Create a unique source_id
-        const sourceId = `${teamKey}-${t.player}-${t.date}-${t.transaction}`.replace(/\s+/g, '-');
-        
-        // Insert with conflict handling
         await dbQuery(
           `INSERT INTO transactions (
-            source, source_url, source_id, transaction_date,
-            team_key, team_name, player_name, position,
-            transaction_type_raw, transaction_type_normalized, details
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          ON CONFLICT (source, source_id, transaction_date, player_name) 
+            source_id, transaction_date, player_name, position,
+            team_key, team_name, team_from, team_to,
+            transaction_type, transaction_type_normalized,
+            details, source_url
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          ON CONFLICT (player_name, transaction_date, transaction_type, source_url)
           DO NOTHING`,
           [
-            "nfl.com",
-            "https://www.nfl.com/transactions/",
             sourceId,
             transDate,
-            teamKey,
-            primaryTeam,
-            t.player,
-            t.position,
-            t.transaction,
+            tx.player,
+            tx.position,
+            tx.teamToKey,
+            tx.teamTo,
+            tx.teamFrom,
+            tx.teamTo,
+            tx.type,
             normalized,
-            `${t.teamFrom} â†’ ${t.teamTo}`,
+            `${tx.teamFrom} → ${tx.teamTo}`,
+            `https://www.nfl.com/transactions/league/${tx.sourceType}/${year}/${month}`,
           ]
         );
-
+        
         ingested++;
       } catch (error) {
         failed++;
-        errors.push(`Failed to ingest ${t.player}: ${error instanceof Error ? error.message : "Unknown error"}`);
+        errors.push(`${tx.player}: ${error instanceof Error ? error.message : "Unknown"}`);
       }
     }
-
+    
     return NextResponse.json({
       success: true,
-      total: transactions.length,
+      total: allTransactions.length,
       ingested,
       failed,
-      errors: errors.slice(0, 10), // Return first 10 errors
+      yearMonth: `${year}/${month}`,
+      types: types.join(", "),
+      errors: errors.slice(0, 10),
     });
   } catch (error) {
-    console.error("Transaction ingestion failed:", error);
+    console.error("Transaction sync failed:", error);
     return NextResponse.json(
       { 
         success: false, 
