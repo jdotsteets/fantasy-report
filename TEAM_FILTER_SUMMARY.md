@@ -1,4 +1,4 @@
-﻿# Team Filtering with Hybrid View - Implementation Summary
+# Team Filtering with Hybrid View - Implementation Summary
 
 ## Status: Core Components Complete, Integration Pending
 

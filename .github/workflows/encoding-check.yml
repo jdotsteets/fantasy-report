@@ -1,4 +1,4 @@
-﻿name: Encoding Check
+name: Encoding Check
 
 on: [push, pull_request]
 

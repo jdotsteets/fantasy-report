@@ -1,48 +1,14 @@
 ﻿#!/usr/bin/env node
 
-import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
 
-// Get list of staged .ts and .tsx files
-const staged = execSync('git diff --cached --name-only --diff-filter=ACM')
-  .toString()
-  .split('\n')
-  .filter(f => f.match(/\.(ts|tsx)$/));
-
-let hasIssue = false;
-
-for (const file of staged) {
-  if (!file) continue;
-  
-  try {
-    const content = readFileSync(file);
-    
-    // Check for BOM
-    if (content[0] === 0xEF && content[1] === 0xBB && content[2] === 0xBF) {
-      console.error(`❌ ${file} has UTF-8 BOM marker`);
-      hasIssue = true;
-    }
-    
-    // Check for suspicious null bytes or control characters in first 1000 bytes
-    const sample = content.slice(0, 1000);
-    for (let i = 0; i < sample.length; i++) {
-      const b = sample[i];
-      // Allow tab, LF, CR
-      if (b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13)) {
-        console.error(`❌ ${file} has suspicious byte ${b} at position ${i}`);
-        hasIssue = true;
-        break;
-      }
-    }
-  } catch (e) {
-    // File doesn't exist yet or can't be read - skip
-  }
-}
-
-if (hasIssue) {
-  console.error('\n⚠️  Encoding issues detected! Files may break webpack build.');
-  console.error('Fix: Use VS Code or `git checkout HEAD -- <file>` to restore clean encoding');
+try {
+  execSync('node scripts/check-bom.mjs', { stdio: 'inherit' });
+  process.exit(0);
+} catch (error) {
+  console.error('\n❌ Pre-commit check failed!');
+  console.error('Files have been fixed. Please re-add them and commit again:');
+  console.error('  git add -u');
+  console.error('  git commit');
   process.exit(1);
 }
-
-process.exit(0);
