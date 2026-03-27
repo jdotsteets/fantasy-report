@@ -3,17 +3,46 @@ import BetaSection from "@/components/beta/BetaSection";
 
 function extractPlayers(articles: Article[]): Map<string, number> {
   const mentions = new Map<string, number>();
-  const twoWord = /\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b/g;
-  const skip = new Set(["Fantasy Football", "NFL", "Week", "New York", "New England", "New Orleans", "Los Angeles", "San Francisco", "Green Bay", "Kansas City", "Las Vegas", "Tampa Bay"]);
   
-  articles.forEach(a => {
-    const matches = (a.title || "").match(twoWord) || [];
-    matches.forEach(name => {
-      if (!skip.has(name) && name.length > 5) {
-        mentions.set(name, (mentions.get(name) || 0) + 1);
-      }
-    });
-  });
+  // Better pattern: First Last, both words capitalized, reasonable length
+  const twoWord = /\b([A-Z][a-z]{1,15}\s+[A-Z][a-z]{1,15})\b/g;
+  
+  // Comprehensive filter of non-player terms
+  const skip = new Set([
+    "Fantasy Football", "Fantasy Baseball", "Fantasy Basketball", "Fantasy Hockey",
+    "NFL", "NBA", "MLB", "NHL", "MLS",
+    "Week", "Year", "Season", "Game", "Super Bowl",
+    "New York", "New England", "New Orleans", "Los Angeles", "San Francisco",
+    "Green Bay", "Kansas City", "Las Vegas", "Tampa Bay",
+    "Free Agency", "Mock Draft", "Dynasty Fantasy", "Draft Big", "Post Free",
+    "Waiver Wire", "Trade Deadline", "Injury Report", "Start Em",
+    "Draft Kings", "Fan Duel", "Yahoo Sports", "Pro Football",
+    "Fantasy Report", "The Athletic", "Roto World"
+  ]);
+  
+  for (const a of articles) {
+    const text = a.title || "";
+    let m: RegExpExecArray | null;
+    
+    while ((m = twoWord.exec(text)) !== null) {
+      const name = m[1];
+      
+      // Skip if in blocklist
+      if (skip.has(name)) continue;
+      
+      // Skip if contains common non-name words
+      if (name.includes("Report") || name.includes("News") || 
+          name.includes("Update") || name.includes("Trade") ||
+          name.includes("Week") || name.includes("Draft")) continue;
+      
+      // Must have reasonable name length (not "Ab Cd" or "Verylongfirstname Verylonglastname")
+      const parts = name.split(" ");
+      if (parts[0].length < 2 || parts[1].length < 2) continue;
+      if (parts[0].length > 12 || parts[1].length > 12) continue;
+      
+      mentions.set(name, (mentions.get(name) || 0) + 1);
+    }
+  }
   
   return mentions;
 }
