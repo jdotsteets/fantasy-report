@@ -10,7 +10,7 @@ type Props = {
 };
 
 export default function EnhancedArticleCard({ article, showImage = true, featured = false }: Props) {
-  const imageUrl = getSafeImageUrl(article);
+  const imageUrl = getSafeImageUrl(article.image_url);
   const hasImage = imageUrl && imageUrl !== FALLBACK;
   
   return (
