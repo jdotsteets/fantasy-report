@@ -11,6 +11,8 @@ import LatestTransactions from "@/components/beta/LatestTransactions";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
 import { getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams-server";
 
+import TimeAgo from "@/components/TimeAgo";
+import CategoryBadge from "@/components/CategoryBadge";
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
 import { getHomeData, type DbRow } from "@/lib/HomeData";

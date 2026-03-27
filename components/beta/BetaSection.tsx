@@ -8,6 +8,7 @@ export default function BetaSection({
 }: {
   title: string;
   subtitle?: string;
+  badge?: React.ReactNode;
   action?: ReactNode;
   children: ReactNode;
 }) {
