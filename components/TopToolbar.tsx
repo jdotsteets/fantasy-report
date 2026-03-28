@@ -6,22 +6,71 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import {
   Newspaper, TrendingUp, Stethoscope, Scale, Coins, Lightbulb, Users, UserPlus,
+  Briefcase, FileText,
   LucideIcon,
 } from "lucide-react";
 import SourceTab from "@/components/SourceTab";
 
 type Item = { slug: string; label: string; icon: LucideIcon; route?: string };
 
-const items: ReadonlyArray<Item> = [
-  { slug: "waivers",   label: "Waivers",   icon: UserPlus },
-  { slug: "rankings",  label: "Rankings",  icon: TrendingUp },
-  { slug: "start-sit", label: "Start/Sit", icon: Scale },
-  { slug: "advice",    label: "Advice",    icon: Lightbulb },
-  { slug: "news",      label: "News",      icon: Newspaper },
-  { slug: "injury",    label: "Injuries",  icon: Stethoscope },
-  { slug: "dfs",       label: "DFS",       icon: Coins },
-  { slug: "players",   label: "Players",   icon: Users, route: "/players" },
-];
+// Determine season mode on client (matches server logic)
+function getClientSeasonMode(): "regular" | "off-season" | "preseason" {
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  const day = now.getDate();
+  
+  // Off-Season: Feb 1 - May 10
+  if ((month === 2) || (month === 3) || (month === 4) || (month === 5 && day <= 10)) {
+    return "off-season";
+  }
+  
+  // Preseason: July 25 - Sept 10
+  if ((month === 7 && day >= 25) || (month === 8) || (month === 9 && day <= 10)) {
+    return "preseason";
+  }
+  
+  return "regular";
+}
+
+function getSeasonalItems(mode: "regular" | "off-season" | "preseason"): ReadonlyArray<Item> {
+  const base: Item[] = [
+    { slug: "rankings",  label: "Rankings",  icon: TrendingUp },
+    { slug: "news",      label: "News",      icon: Newspaper },
+  ];
+  
+  if (mode === "off-season") {
+    return [
+      ...base.slice(0, 1), // Rankings
+      { slug: "free-agency", label: "Free Agency", icon: Briefcase },
+      { slug: "nfl-draft",   label: "NFL Draft",   icon: FileText },
+      { slug: "advice",      label: "Advice",      icon: Lightbulb },
+      { slug: "injury",      label: "Injuries",    icon: Stethoscope },
+      { slug: "dfs",         label: "DFS",         icon: Coins },
+      ...base.slice(1), // News
+    ];
+  }
+  
+  if (mode === "preseason") {
+    return [
+      ...base,
+      { slug: "advice",    label: "Advice",    icon: Lightbulb },
+      { slug: "injury",    label: "Injuries",  icon: Stethoscope },
+      { slug: "dfs",       label: "DFS",       icon: Coins },
+      { slug: "players",   label: "Players",   icon: Users, route: "/players" },
+    ];
+  }
+  
+  // Regular season
+  return [
+    { slug: "waivers",   label: "Waivers",   icon: UserPlus },
+    ...base,
+    { slug: "start-sit", label: "Start/Sit", icon: Scale },
+    { slug: "advice",    label: "Advice",    icon: Lightbulb },
+    { slug: "injury",    label: "Injuries",  icon: Stethoscope },
+    { slug: "dfs",       label: "DFS",       icon: Coins },
+    { slug: "players",   label: "Players",   icon: Users, route: "/players" },
+  ];
+}
 
 export default function TopToolbar() {
   return (
@@ -34,7 +83,13 @@ export default function TopToolbar() {
 function ToolbarInner() {
   const pathname = usePathname() ?? "/";
   const searchParams = useSearchParams();
+  const [seasonMode, setSeasonMode] = useState<"regular" | "off-season" | "preseason">("regular");
 
+  useEffect(() => {
+    setSeasonMode(getClientSeasonMode());
+  }, []);
+
+  const items = getSeasonalItems(seasonMode);
   const activeSection = searchParams.get("section") ?? "";
   const onPlayers = pathname.startsWith("/players");
 
@@ -85,7 +140,7 @@ function ToolbarInner() {
                       isActive ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-100"
                     }`}
                   >
-                    <Icon size={16} aria-hidden="true" /> {/* was 18 */}
+                    <Icon size={16} aria-hidden="true" />
                     <span className="block text-[10px] leading-tight font-normal text-zinc-600 group-aria-[current=page]:text-white sm:text-[11px]">
                       {label}
                     </span>
