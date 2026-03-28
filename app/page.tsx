@@ -1,4 +1,4 @@
-// Build cache buster: 2026-03-24 23:57:27
+// Build cache buster: 03/28/2026, 18:14:39 - FRESH CONTENT FIX
 import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
