@@ -3,6 +3,10 @@
     {
       "path": "/api/admin/ingest/transactions",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/ingest",
+      "schedule": "0 * * * *"
     }
   ]
 }
