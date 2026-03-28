@@ -402,6 +402,7 @@ export default async function Page({
               initialDisplay={4}
             />
 
+            {seasonMode === "regular" || seasonMode === "preseason" ? (
             <BetaLoadMoreSection
               title="Start/Sit & Advice"
               subtitle="Lineup answers, sleepers, and strategy"
@@ -410,6 +411,11 @@ export default async function Page({
               pageSize={10}
               initialDisplay={4}
             />
+            ) : null}
+
+            {seasonMode === "off-season" ? (
+            <BetaDraftSection articles={draftItems.slice(0, 20)} />
+            ) : null}
 
             <BetaLoadMoreSection
               title="More news"
