@@ -1,139 +1,178 @@
-// Force rebuild - 2026-03-28T01:27:47.196Z
 import type { Article } from "@/types/sources";
 import BetaSection from "@/components/beta/BetaSection";
 
-function extractPlayers(articles: Article[]): Map<string, number> {
-  const mentions = new Map<string, number>();
+function isNonNFL(article: Article): boolean {
+  const text = `${article.title || ""} ${article.summary || ""}`.toLowerCase();
+  const topics = article.topics || [];
   
-  // Better pattern: First Last, both words capitalized, reasonable length
+  if (/baseball|mlb|yankees|dodgers/.test(text)) return true;
+  if (/basketball|nba|lakers|warriors|march madness|bracket/.test(text)) return true;
+  if (/hockey|nhl|stanley cup/.test(text)) return true;
+  if (/fantasy baseball|fantasy basketball|fantasy hockey/.test(text)) return true;
+  if (/soccer|mls|premier league/.test(text)) return true;
+  
+  const topicStr = topics.join(" ").toLowerCase();
+  if (/baseball|basketball|hockey|soccer|mlb|nba|nhl|mls/.test(topicStr)) return true;
+  
+  return false;
+}
+
+function detectContext(article: Article): string | null {
+  const text = `${article.title || ""} ${article.summary || ""}`.toLowerCase();
+  
+  if (/injur|questionable|doubtful|out for|ruled out|IR/.test(text)) return "injury update";
+  if (/trade|dealt|acquire|swap|package/.test(text)) return "trade buzz";
+  if (/sign|contract|extension|landing spot/.test(text)) return "signing impact";
+  if (/touches|target share|snap|usage|workload|volume/.test(text)) return "workload concerns";
+  if (/depth chart|starter|backup|rb1|wr1|rotation/.test(text)) return "role battle";
+  if (/breakout|sleeper|emerge|rising|stock up/.test(text)) return "breakout buzz";
+  if (/waiver|add|drop|pickup|under.owned/.test(text)) return "waiver riser";
+  
+  return null;
+}
+
+function extractPlayers(articles: Article[]): Map<string, Article[]> {
+  const playerArticles = new Map<string, Article[]>();
   const twoWord = /\b([A-Z][a-z]{1,15}\s+[A-Z][a-z]{1,15})\b/g;
   
-  // Comprehensive filter of non-player terms
   const skip = new Set([
     "Fantasy Football", "Fantasy Baseball", "Fantasy Basketball", "Fantasy Hockey",
     "NFL", "NBA", "MLB", "NHL", "MLS",
-    "Week", "Year", "Season", "Game", "Super Bowl",
+    "Week", "Year", "Season", "Game", "Super Bowl", "Pro Bowl",
     "New York", "New England", "New Orleans", "Los Angeles", "San Francisco",
     "Green Bay", "Kansas City", "Las Vegas", "Tampa Bay",
-    "Free Agency", "Mock Draft", "Dynasty Fantasy", "Draft Big", "Post Free",
-    "Waiver Wire", "Trade Deadline", "Injury Report", "Start Em",
+    "Free Agency", "Mock Draft", "Dynasty Fantasy", "Draft Big",
+    "Waiver Wire", "Trade Deadline", "Injury Report",
     "Draft Kings", "Fan Duel", "Yahoo Sports", "Pro Football",
-    "Fantasy Report", "The Athletic", "Roto World"
+    "Fantasy Report", "The Athletic", "Roto World", "Fantasy Pros",
+    "March Madness", "Sweet Sixteen", "Elite Eight", "For The",
+    "Ohio State", "Running Backs", "Wide Receivers", "Tight Ends",
+    "Arizona Cardinals", "Rooney Rule", "Carnell Tate"
   ]);
   
-  for (const a of articles) {
-    const text = a.title || "";
+  for (const article of articles) {
+    if (isNonNFL(article)) continue;
+    
+    const text = article.title || "";
     let m: RegExpExecArray | null;
     
     while ((m = twoWord.exec(text)) !== null) {
       const name = m[1];
-      
-      // Skip if in blocklist
       if (skip.has(name)) continue;
       
-      // Skip if contains common non-name words
       if (name.includes("Report") || name.includes("News") || 
           name.includes("Update") || name.includes("Trade") ||
-          name.includes("Week") || name.includes("Draft")) continue;
+          name.includes("Week") || name.includes("Draft") ||
+          name.includes("Mock") || name.includes("Fantasy")) continue;
       
-      // Must have reasonable name length (not "Ab Cd" or "Verylongfirstname Verylonglastname")
       const parts = name.split(" ");
       if (parts[0].length < 2 || parts[1].length < 2) continue;
       if (parts[0].length > 12 || parts[1].length > 12) continue;
       
-      mentions.set(name, (mentions.get(name) || 0) + 1);
+      const existing = playerArticles.get(name);
+      if (existing) {
+        existing.push(article);
+      } else {
+        playerArticles.set(name, [article]);
+      }
     }
   }
   
-  return mentions;
+  return playerArticles;
 }
 
-function collectTopics(articles: Article[]): { label: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const a of articles) {
-    const add = (t: string | null | undefined) => {
-      if (!t) return;
-      counts.set(t, (counts.get(t) ?? 0) + 1);
-    };
-    add(a.primary_topic ?? undefined);
-    add(a.secondary_topic ?? undefined);
-    if (Array.isArray(a.topics)) {
-      a.topics.forEach((t) => typeof t === "string" && add(t));
+type TrendingItem = {
+  player: string;
+  context: string;
+  count: number;
+};
+
+function buildTrendingClusters(articles: Article[]): TrendingItem[] {
+  const playerArticles = extractPlayers(articles);
+  const clusters: TrendingItem[] = [];
+  
+  for (const [playerName, playerArticleList] of playerArticles.entries()) {
+    if (!playerArticleList || playerArticleList.length === 0) continue;
+    
+    const contexts: string[] = [];
+    for (const a of playerArticleList) {
+      const ctx = detectContext(a);
+      if (ctx) contexts.push(ctx);
     }
+    
+    if (contexts.length === 0) continue;
+    
+    const contextCounts = new Map<string, number>();
+    for (const c of contexts) {
+      contextCounts.set(c, (contextCounts.get(c) || 0) + 1);
+    }
+    
+    const sortedContexts = Array.from(contextCounts.entries()).sort((a, b) => b[1] - a[1]);
+    if (sortedContexts.length === 0) continue;
+    
+    const primaryContext = sortedContexts[0][0];
+    
+    clusters.push({
+      player: playerName,
+      context: primaryContext,
+      count: playerArticleList.length
+    });
   }
-  return Array.from(counts.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 6);
-}
-
-function formatLabel(label: string) {
-  switch (label) {
-    case "waiver-wire": return "Waiver Wire";
-    case "start-sit": return "Start/Sit";
-    case "dfs": return "DFS";
-    case "injury": return "Injuries";
-    case "rankings": return "Rankings";
-    case "advice": return "Advice";
-    default: return label.replace(/\b\w/g, (m) => m.toUpperCase());
+  
+  // Sort by count desc (no date sorting to avoid previous errors)
+  clusters.sort((a, b) => b.count - a.count);
+  
+  const strong = clusters.filter(c => c.count >= 2).slice(0, 8);
+  
+  if (strong.length < 6) {
+    const weak = clusters.filter(c => c.count === 1).slice(0, Math.max(0, 6 - strong.length));
+    return [...strong, ...weak];
   }
+  
+  return strong;
 }
 
 export default function BetaTrending({ articles }: { articles: Article[] }) {
-  const topics = collectTopics(articles);
-  const playerMentions = extractPlayers(articles);
-  const trendingPlayers = Array.from(playerMentions.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .filter(([_, count]) => count >= 2);
+  if (!articles || articles.length === 0) {
+    return (
+      <BetaSection
+        title="🔥 Trending Now"
+        subtitle="Hot players and storylines from the last 48 hours"
+      >
+        <p className="text-sm text-zinc-500">No trending players yet.</p>
+      </BetaSection>
+    );
+  }
+
+  const trending = buildTrendingClusters(articles);
 
   return (
     <BetaSection
-      title="Trending topics"
-      subtitle="Most-covered themes across the last 48 hours"
+      title="🔥 Trending Now"
+      subtitle="Hot players and storylines from the last 48 hours"
     >
-      <div className="space-y-4">
-        <div className="grid gap-2">
-          {topics.length === 0 ? (
-            <p className="text-sm text-zinc-500">No trending signals yet.</p>
-          ) : (
-            topics.map((t) => (
-              <div
-                key={t.label}
-                className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2"
-              >
-                <span className="text-sm font-semibold text-zinc-800">
-                  {formatLabel(t.label)}
+      <div className="space-y-2">
+        {trending.length === 0 ? (
+          <p className="text-sm text-zinc-500">No trending players yet.</p>
+        ) : (
+          trending.map((item) => (
+            <div
+              key={`${item.player}-${item.context}-${item.count}`}
+              className="flex cursor-pointer items-center justify-between rounded-lg border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2 transition-all hover:border-orange-400 hover:shadow-md"
+            >
+              <div className="flex-1">
+                <span className="text-sm font-semibold text-zinc-900">
+                  {item.player}
                 </span>
-                <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                  {t.count} articles
+                <span className="ml-2 text-sm text-zinc-600">
+                  {item.context}
                 </span>
               </div>
-            ))
-          )}
-        </div>
-
-        {trendingPlayers.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              🔥 Hot Names
-            </h3>
-            <div className="grid gap-2">
-              {trendingPlayers.map(([player, count]) => (
-                <div
-                  key={player}
-                  className="flex items-center justify-between rounded-lg border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2"
-                >
-                  <span className="text-sm font-semibold text-zinc-900">
-                    {player}
-                  </span>
-                  <span className="text-xs font-bold text-orange-600">
-                    {count}x
-                  </span>
-                </div>
-              ))}
+              <span className="ml-3 text-xs font-medium text-orange-600">
+                {item.count}
+              </span>
             </div>
-          </div>
+          ))
         )}
       </div>
     </BetaSection>
