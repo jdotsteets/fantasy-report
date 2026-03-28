@@ -374,6 +374,13 @@ export function classifyArticle(args: {
   }
 
   topics = toCanon(topics);
+  
+  // Final catch-all: if STILL no topics, default to "news"
+  // (All articles are pre-filtered for NFL sport during ingestion)
+  if (topics.length === 0) {
+    topics = ["news"];
+  }
+  
   const primary = topics[0] ?? null;
   const secondary = topics.find((t) => t !== primary) ?? null;
 
