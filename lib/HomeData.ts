@@ -315,6 +315,8 @@ export async function getHomeData(
     "rankings":    rankings,
     "advice":      advice,
     "news":        news,
+    "nfl-draft":   [], // Handled separately in page.tsx
+    "free-agency": [], // Handled separately in page.tsx
   });
 
   const startSitOut = rankWithinSection(deduped["start-sit"], "start-sit", perProviderCap);
