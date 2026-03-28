@@ -424,7 +424,7 @@ export default async function Page({
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-3">
-          {seasonMode === "free-agency" ? (
+          {seasonMode === "off-season" ? (
             <BetaLoadMoreSection
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
@@ -433,7 +433,7 @@ export default async function Page({
               pageSize={10}
               initialDisplay={4}
             />
-          ) : seasonMode === "draft" ? (
+          ) : seasonMode === "preseason" ? (
             <BetaLoadMoreSection
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
