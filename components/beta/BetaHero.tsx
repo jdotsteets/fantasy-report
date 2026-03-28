@@ -79,9 +79,9 @@ export default function BetaHero({ article }: { article: Article }) {
               href={href}
               target="_blank"
               rel="noreferrer"
-              className="ml-auto shrink-0 rounded-full border border-emerald-400 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition-colors hover:bg-emerald-400 hover:text-black"
+              className="shrink-0 rounded-md border-2 border-emerald-400 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300 sm:px-4 sm:py-2 sm:text-xs transition-colors hover:bg-emerald-400 hover:text-black"
             >
-              Read source</Link>
+              Read</Link>
           </div>
         </div>
       </div>
