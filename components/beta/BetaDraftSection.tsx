@@ -3,6 +3,19 @@
 import type { Article } from "@/types/sources";
 import BetaSection from "@/components/beta/BetaSection";
 import Link from "next/link";
+// Paywall detection - exclude paywalled content
+const PAYWALL_DOMAINS = [
+  'theathletic.com',
+  'espn.com/insider',
+  'si.com/vault',
+  'footballoutsiders.com/premium',
+];
+
+function isPaywalled(article: Article): boolean {
+  const url = (article.canonical_url || article.url || '').toLowerCase();
+  return PAYWALL_DOMAINS.some(domain => url.includes(domain));
+}
+
 
 type DraftCluster = {
   title: string;
@@ -65,7 +78,9 @@ function clusterDraftArticles(articles: Article[]): DraftCluster[] {
 }
 
 export default function BetaDraftSection({ articles }: { articles: Article[] }) {
-  if (!articles || articles.length === 0) {
+  // Filter out paywalled content
+  const freeArticles = articles.filter(a => !isPaywalled(a));
+  if (!freeArticles || freeArticles.length === 0) {
     return (
       <BetaSection
         title="NFL Draft"
@@ -76,17 +91,17 @@ export default function BetaDraftSection({ articles }: { articles: Article[] }) 
     );
   }
 
-  const clusters = clusterDraftArticles(articles);
+  const clusters = clusterDraftArticles(freeArticles);
 
   // If very sparse, show simple list instead
-  if (articles.length < 6) {
+  if (freeArticles.length < 6) {
     return (
       <BetaSection
         title="NFL Draft"
         subtitle="Mocks, rankings, rumors, and landing spot buzz"
       >
         <div className="space-y-2">
-          {articles.slice(0, 8).map(article => (
+          {freeArticles.slice(0, 8).map(article => (
             <Link
               key={article.id}
               href={article.canonical_url || article.url}

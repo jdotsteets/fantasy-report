@@ -1,6 +1,6 @@
 import TeamSelector from "@/components/beta/TeamSelector";
 
-type SeasonMode = "regular" | "free-agency" | "draft";
+type SeasonMode = "regular" | "off-season" | "preseason";
 
 type NavProps = {
   seasonMode?: SeasonMode;
@@ -12,9 +12,11 @@ function getLinks(mode: SeasonMode = "regular") {
     { label: "Rankings", href: "/?section=rankings" },
   ];
 
-  if (mode === "draft") {
+  // Off-Season: Show both Free Agency and NFL Draft
+  if (mode === "off-season") {
     return [
       ...base,
+      { label: "Free Agency", href: "/?section=free-agency" },
       { label: "NFL Draft", href: "/?section=nfl-draft" },
       { label: "Advice", href: "/?section=advice" },
       { label: "DFS", href: "/?section=dfs" },
@@ -22,18 +24,18 @@ function getLinks(mode: SeasonMode = "regular") {
     ];
   }
 
-  if (mode === "free-agency") {
+  // Preseason: Fantasy draft prep focus
+  if (mode === "preseason") {
     return [
       ...base,
-      { label: "Free Agency", href: "/?section=free-agency" },
-      { label: "Start/Sit", href: "/?section=start-sit" },
+      { label: "Draft Prep", href: "/?section=rankings" },
       { label: "Advice", href: "/?section=advice" },
       { label: "DFS", href: "/?section=dfs" },
       { label: "Injuries", href: "/?section=injury" },
     ];
   }
 
-  // Regular season
+  // Regular season: Start/Sit + Waivers
   return [
     ...base,
     { label: "Start/Sit", href: "/?section=start-sit" },

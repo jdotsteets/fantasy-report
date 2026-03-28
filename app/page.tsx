@@ -145,7 +145,7 @@ const SECTION_KEYS = [
 
 type SectionKey = (typeof SECTION_KEYS)[number];
 
-type SeasonMode = "regular" | "free-agency" | "draft";
+type SeasonMode = "regular" | "off-season" | "preseason";
 
 const inRange = (d: Date, start: { month: number; day: number }, end: { month: number; day: number }) => {
   const year = d.getFullYear();
@@ -155,8 +155,13 @@ const inRange = (d: Date, start: { month: number; day: number }, end: { month: n
 };
 
 function getSeasonMode(now: Date): SeasonMode {
-  if (inRange(now, { month: 3, day: 1 }, { month: 4, day: 20 })) return "free-agency";
-  if (inRange(now, { month: 4, day: 21 }, { month: 5, day: 20 })) return "draft";
+  // Off-Season: Feb 1 through end of NFL Draft (late April/early May)
+  if (inRange(now, { month: 2, day: 1 }, { month: 5, day: 10 })) return "off-season";
+  
+  // Preseason: Late July through Week 1 kickoff (early Sept)
+  if (inRange(now, { month: 7, day: 25 }, { month: 9, day: 10 })) return "preseason";
+  
+  // Regular Season: everything else (Sept-Jan + playoffs)
   return "regular";
 }
 
@@ -166,7 +171,7 @@ function getSeasonMode(now: Date): SeasonMode {
 // Example: TEST_SEASON_MODE=draft npm run dev
 function getEffectiveSeasonMode(now: Date): SeasonMode {
   const override = process.env.TEST_SEASON_MODE as SeasonMode | undefined;
-  if (override && ['regular', 'free-agency', 'draft'].includes(override)) {
+  if (override && ['regular', 'off-season', 'preseason'].includes(override)) {
     console.log(`[Season Override] Using TEST_SEASON_MODE=${override}`);
     return override;
   }
