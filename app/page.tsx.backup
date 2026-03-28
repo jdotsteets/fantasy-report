@@ -6,7 +6,6 @@ import BetaSection from "@/components/beta/BetaSection";
 import BetaFeed from "@/components/beta/BetaFeed";
 import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
-import BetaDraftSection from "@/components/beta/BetaDraftSection";
 import FilterBanner from "@/components/beta/FilterBanner";
 import LatestTransactions from "@/components/beta/LatestTransactions";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
@@ -139,8 +138,6 @@ const SECTION_KEYS = [
   "advice",
   "dfs",
   "injury",
-  "nfl-draft",
-  "free-agency",
 ] as const;
 
 type SectionKey = (typeof SECTION_KEYS)[number];
@@ -160,22 +157,11 @@ function getSeasonMode(now: Date): SeasonMode {
   return "regular";
 }
 
-
-
-// Local testing override - set environment variable to test different modes
-// Example: TEST_SEASON_MODE=draft npm run dev
-function getEffectiveSeasonMode(now: Date): SeasonMode {
-  const override = process.env.TEST_SEASON_MODE as SeasonMode | undefined;
-  if (override && ['regular', 'free-agency', 'draft'].includes(override)) {
-    console.log(`[Season Override] Using TEST_SEASON_MODE=${override}`);
-    return override;
-  }
-  return getSeasonMode(now);
-}const FREE_AGENCY_RX =
+const FREE_AGENCY_RX =
   /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured)\b/i;
 
 const DRAFT_RX =
-  /\b(mock\s+draft|nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down)\b/i;
+  /\b(mock\s+draft|prospect|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl)\b/i;
 
 function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
@@ -244,7 +230,7 @@ export default async function Page({
     injuriesNoHero
   );
 
-  const seasonMode = getEffectiveSeasonMode(new Date());
+  const seasonMode = getSeasonMode(new Date());
   const freeAgencyItems = latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
@@ -351,7 +337,7 @@ export default async function Page({
                 <p className="max-w-2xl text-sm text-zinc-600">
                   We curate the most important fantasy content across the web and send you straight to the source.</p>
               </div>
-              <BetaNav seasonMode={seasonMode} />
+              <BetaNav />
             </div>
           </div>
 

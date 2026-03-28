@@ -28,6 +28,8 @@ export type HomeDataOptions = {
   limitDFS?: number;
   limitWaivers?: number;
   limitInjuries?: number;
+  limitDraft?: number;
+  limitFreeAgency?: number;
 
   // hero pool cap
   limitHero?: number;
@@ -73,6 +75,8 @@ const SECTION_TO_TOPIC: Record<SectionKey, string> = {
   "rankings": "rankings",
   "advice": "advice",
   "news": "news",
+  "nfl-draft": "nfl-draft",
+  "free-agency": "free-agency",
 };
 
 /** newest-first date compare */
@@ -154,6 +158,8 @@ function dedupeAcrossSectionsTopicAware(
     "rankings": [],
     "advice": [],
     "news": [],
+    "nfl-draft": [],
+    "free-agency": [],
   };
 
   for (const key of ORDERED_SECTIONS) {

@@ -10,6 +10,8 @@ export const ORDERED_SECTIONS = [
   "rankings",
   "advice",
   "news",
+  "nfl-draft",
+  "free-agency",
 ] as const;
 
 export type SectionKey = (typeof ORDERED_SECTIONS)[number];

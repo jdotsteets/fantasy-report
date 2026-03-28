@@ -1,20 +1,56 @@
 import TeamSelector from "@/components/beta/TeamSelector";
 
-const LINKS = [
-  { label: "News", href: "/beta?section=news" },
-  { label: "Rankings", href: "/beta?section=rankings" },
-  { label: "Start/Sit", href: "/beta?section=start-sit" },
-  { label: "Waiver Wire", href: "/beta?section=waivers" },
-  { label: "Advice", href: "/beta?section=advice" },
-  { label: "DFS", href: "/beta?section=dfs" },
-  { label: "Injuries", href: "/beta?section=injury" },
-];
+type SeasonMode = "regular" | "free-agency" | "draft";
 
-export default function BetaNav() {
+type NavProps = {
+  seasonMode?: SeasonMode;
+};
+
+function getLinks(mode: SeasonMode = "regular") {
+  const base = [
+    { label: "News", href: "/?section=news" },
+    { label: "Rankings", href: "/?section=rankings" },
+  ];
+
+  if (mode === "draft") {
+    return [
+      ...base,
+      { label: "NFL Draft", href: "/?section=nfl-draft" },
+      { label: "Advice", href: "/?section=advice" },
+      { label: "DFS", href: "/?section=dfs" },
+      { label: "Injuries", href: "/?section=injury" },
+    ];
+  }
+
+  if (mode === "free-agency") {
+    return [
+      ...base,
+      { label: "Free Agency", href: "/?section=free-agency" },
+      { label: "Start/Sit", href: "/?section=start-sit" },
+      { label: "Advice", href: "/?section=advice" },
+      { label: "DFS", href: "/?section=dfs" },
+      { label: "Injuries", href: "/?section=injury" },
+    ];
+  }
+
+  // Regular season
+  return [
+    ...base,
+    { label: "Start/Sit", href: "/?section=start-sit" },
+    { label: "Waiver Wire", href: "/?section=waivers" },
+    { label: "Advice", href: "/?section=advice" },
+    { label: "DFS", href: "/?section=dfs" },
+    { label: "Injuries", href: "/?section=injury" },
+  ];
+}
+
+export default function BetaNav({ seasonMode = "regular" }: NavProps) {
+  const links = getLinks(seasonMode);
+
   return (
     <nav className="flex flex-wrap items-center gap-2">
       <TeamSelector />
-      {LINKS.map((link) => (
+      {links.map((link) => (
         <a
           key={link.href}
           href={link.href}
