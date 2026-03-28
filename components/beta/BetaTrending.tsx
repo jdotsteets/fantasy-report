@@ -1,3 +1,5 @@
+"use client";
+
 import type { Article } from "@/types/sources";
 import BetaSection from "@/components/beta/BetaSection";
 
