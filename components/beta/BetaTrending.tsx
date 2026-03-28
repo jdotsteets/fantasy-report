@@ -156,9 +156,18 @@ export default function BetaTrending({ articles }: { articles: Article[] }) {
           <p className="text-sm text-zinc-500">No trending players yet.</p>
         ) : (
           trending.map((item) => (
-            <div
+            <button
               key={`${item.player}-${item.context}-${item.count}`}
-              className="flex cursor-pointer items-center justify-between rounded-lg border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2 transition-all hover:border-orange-400 hover:shadow-md"
+              onClick={() => {
+                // Filter articles by this player name
+                const searchBox = document.querySelector('input[type="search"]') as HTMLInputElement;
+                if (searchBox) {
+                  searchBox.value = item.player;
+                  searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+                  searchBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }}
+              className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2 text-left transition-all hover:border-orange-400 hover:shadow-md"
             >
               <div className="flex-1">
                 <span className="text-sm font-semibold text-zinc-900">
@@ -171,7 +180,7 @@ export default function BetaTrending({ articles }: { articles: Article[] }) {
               <span className="ml-3 text-xs font-medium text-orange-600">
                 {item.count}
               </span>
-            </div>
+            </button>
           ))
         )}
       </div>
