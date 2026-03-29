@@ -161,12 +161,14 @@ export default function BetaTrending({ articles }: { articles: Article[] }) {
             <button
               key={`${item.player}-${item.context}-${item.count}`}
               onClick={() => {
-                // Filter articles by this player name
+                // Scroll to top and show articles about this player
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                // Set player name in search box for visual feedback
                 const searchBox = document.querySelector('input[type="search"]') as HTMLInputElement;
                 if (searchBox) {
                   searchBox.value = item.player;
                   searchBox.dispatchEvent(new Event('input', { bubbles: true }));
-                  searchBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  searchBox.focus();
                 }
               }}
               className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2 text-left transition-all hover:border-orange-400 hover:shadow-md"
