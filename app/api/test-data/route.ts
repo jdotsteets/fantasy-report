@@ -7,10 +7,12 @@ export const revalidate = 0;
 export async function GET() {
   const data = await getHomeData({});
   
+  const latestNews = data.items.latest || [];
+  
   return NextResponse.json({
     timestamp: new Date().toISOString(),
-    latestNewsCount: data.latestNews.length,
-    latestNews: data.latestNews.slice(0, 10).map(a => ({
+    latestNewsCount: latestNews.length,
+    latestNews: latestNews.slice(0, 10).map(a => ({
       id: a.id,
       title: a.title,
       published_at: a.published_at,
