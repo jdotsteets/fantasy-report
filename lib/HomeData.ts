@@ -1,7 +1,7 @@
 // lib/HomeData.ts
 import {
   fetchSectionItems,
-  ORDERED_SECTIONS, // ["start-sit","waiver-wire","injury","dfs","rankings","advice","news"]
+  ORDERED_SECTIONS,
   type SectionKey,
   type SectionRow,
 } from "@/lib/sectionQuery";
@@ -16,11 +16,7 @@ export type HomeDataOptions = {
   sport?: string;
   sourceId?: number;
   provider?: string;
-
-  /** NEW: if provided, fetch only this section (big perf win) */
   selectedSection?: SectionKey | null;
-
-  // per-section limit overrides
   limitNews?: number;
   limitRankings?: number;
   limitStartSit?: number;
@@ -30,11 +26,7 @@ export type HomeDataOptions = {
   limitInjuries?: number;
   limitDraft?: number;
   limitFreeAgency?: number;
-
-  // hero pool cap
   limitHero?: number;
-
-  /** NEW: optionally skip hero pool work */
   includeHeroCandidates?: boolean;
 };
 
@@ -45,119 +37,136 @@ function clamp(n: number, min: number, max: number): number {
 function uniqById(rows: SectionRow[]): SectionRow[] {
   const seen = new Set<number>();
   const out: SectionRow[] = [];
+
   for (const r of rows) {
     if (!seen.has(r.id)) {
       seen.add(r.id);
       out.push(r);
     }
   }
+
   return out;
 }
 
-/** stable key used to identify duplicates across sections */
 function keyOf(r: SectionRow): string {
   return (r.canonical_url || r.url || String(r.id)).toLowerCase();
 }
 
-/** normalize a provider key for balancing/capping (fallback to source name) */
 function providerKey(r: SectionRow): string {
-  // SectionRow doesn’t expose provider_key; use lowercased source name as a stable proxy
   return (r.source ?? "unknown").toLowerCase();
 }
-
-/* ───────────────────────── Section/topic helpers ───────────────────────── */
 
 const SECTION_TO_TOPIC: Record<SectionKey, string> = {
   "start-sit": "start-sit",
   "waiver-wire": "waiver-wire",
-  "injury": "injury",
-  "dfs": "dfs",
-  "rankings": "rankings",
-  "advice": "advice",
-  "news": "news",
+  injury: "injury",
+  dfs: "dfs",
+  rankings: "rankings",
+  advice: "advice",
+  news: "news",
   "nfl-draft": "nfl-draft",
   "free-agency": "free-agency",
 };
 
-/** newest-first date compare */
 function byRecencyDesc(a: SectionRow, b: SectionRow): number {
-  const ad = a.published_at ? Date.parse(a.published_at) : 0;
-  const bd = b.published_at ? Date.parse(b.published_at) : 0;
+  const ad =
+    a.published_at ? Date.parse(a.published_at) :
+    a.discovered_at ? Date.parse(a.discovered_at) :
+    0;
+
+  const bd =
+    b.published_at ? Date.parse(b.published_at) :
+    b.discovered_at ? Date.parse(b.discovered_at) :
+    0;
+
   return bd - ad;
 }
 
-/**
- * Rank a single section:
- *  1. all primary_topic matches (recency desc)
- *  1b. avoid back-to-back same provider across the first `firstWindow`
- *  1c. enforce per-provider cap across the entire list
- *  2. backfill with secondary/topic matches (recency desc)
- */
 function rankWithinSection(
   rows: SectionRow[],
   section: SectionKey,
   perProviderCap: number,
-  firstWindow: number = 10
+  firstWindow: number = 10,
 ): SectionRow[] {
   const topic = SECTION_TO_TOPIC[section];
 
-  const primaries = rows.filter(r => r.primary_topic === topic).sort(byRecencyDesc);
-  const secondaries = rows
-    .filter(r => r.primary_topic !== topic && Array.isArray(r.topics) && r.topics.includes(topic))
+  const primaries = rows
+    .filter((r) => r.primary_topic === topic)
     .sort(byRecencyDesc);
 
-  // Interleave primaries to avoid back-to-back same provider in the first window
+  const secondaries = rows
+    .filter(
+      (r) =>
+        r.primary_topic !== topic &&
+        Array.isArray(r.topics) &&
+        r.topics.includes(topic),
+    )
+    .sort(byRecencyDesc);
+
+  const uncategorized = rows
+    .filter(
+      (r) =>
+        r.primary_topic !== topic &&
+        (!Array.isArray(r.topics) || !r.topics.includes(topic)),
+    )
+    .sort(byRecencyDesc);
+
   const firstBlock: SectionRow[] = [];
   const overflowPrimaries: SectionRow[] = [];
 
   for (const r of primaries) {
     const last = firstBlock[firstBlock.length - 1];
-    if (firstBlock.length < firstWindow && (!last || providerKey(last) !== providerKey(r))) {
+    if (
+      firstBlock.length < firstWindow &&
+      (!last || providerKey(last) !== providerKey(r))
+    ) {
       firstBlock.push(r);
     } else {
       overflowPrimaries.push(r);
     }
   }
 
-  // Combine: balanced primaries (first window) + remaining primaries + secondaries as backfill
-  const combined: SectionRow[] = firstBlock.concat(overflowPrimaries, secondaries);
+  const combined: SectionRow[] = [
+    ...firstBlock,
+    ...overflowPrimaries,
+    ...secondaries,
+    ...uncategorized,
+  ];
 
-  // Enforce per-provider cap if provided (>0)
   if (perProviderCap > 0) {
     const counts = new Map<string, number>();
     const capped: SectionRow[] = [];
+
     for (const r of combined) {
       const pk = providerKey(r);
       const n = counts.get(pk) ?? 0;
+
       if (n < perProviderCap) {
         capped.push(r);
         counts.set(pk, n + 1);
       }
     }
+
     return capped;
   }
 
   return combined;
 }
 
-/**
- * Topic-aware cross-section de-dupe.
- * Earlier sections only “own” a URL if its primary_topic actually matches that section’s topic.
- * We still suppress exact-duplicate URLs already owned by a previous section.
- */
 function dedupeAcrossSectionsTopicAware(
-  sections: Record<SectionKey, SectionRow[]>
+  sections: Record<SectionKey, SectionRow[]>,
 ): Record<SectionKey, SectionRow[]> {
-  const seenOwned = new Set<string>(); // URLs owned by a true-primary earlier section
-  const seenAny = new Set<string>();   // any URL emitted (prevents literal duplicates within the same section)
+  const seenOwned = new Set<string>();
+  const seenAny = new Set<string>();
+
   const out: Record<SectionKey, SectionRow[]> = {
     "start-sit": [],
     "waiver-wire": [],
-    "injury": [],
-    "dfs": [],
-    "rankings": [],
-    "advice": [],
-    "news": [],
+    injury: [],
+    dfs: [],
+    rankings: [],
+    advice: [],
+    news: [],
     "nfl-draft": [],
     "free-agency": [],
   };
@@ -169,28 +178,43 @@ function dedupeAcrossSectionsTopicAware(
     for (const row of sections[key] || []) {
       const k = keyOf(row);
 
-      // If an earlier section truly owned this URL (primary match), suppress it here.
       if (seenOwned.has(k)) continue;
-
-      // Prevent exact duplicates within the same section pass
       if (seenAny.has(`${key}:${k}`)) continue;
-      seenAny.add(`${key}:${k}`);
 
-      // Emit it
+      seenAny.add(`${key}:${k}`);
       next.push(row);
 
-      // If this section is the row's primary, mark as owned → later sections will suppress it
       if (row.primary_topic === topic) {
         seenOwned.add(k);
       }
     }
+
     out[key] = next;
   }
 
   return out;
 }
 
-/* ───────────────────────── Main API ───────────────────────── */
+function toDebugRow(row: SectionRow) {
+  return {
+    id: row.id,
+    title: row.title,
+    source: row.source,
+    primary_topic: row.primary_topic ?? null,
+    topics: row.topics ?? null,
+    published_at: row.published_at ?? null,
+    discovered_at: row.discovered_at ?? null,
+    canonical_url: row.canonical_url ?? null,
+  };
+}
+
+function logSectionSnapshot(label: string, rows: SectionRow[], max: number = 5): void {
+  console.log(`[HomeData] ${label} count=${rows.length}`);
+  console.log(
+    `[HomeData] ${label} sample=`,
+    rows.slice(0, max).map(toDebugRow),
+  );
+}
 
 export async function getHomeData(
   opts: HomeDataOptions = {},
@@ -202,14 +226,13 @@ export async function getHomeData(
     advice: SectionRow[];
     dfs: SectionRow[];
     waivers: SectionRow[];
-    injury: SectionRow[];      // back-compat
-    injuries: SectionRow[];    // required by page.tsx
+    injury: SectionRow[];
+    injuries: SectionRow[];
     heroCandidates: SectionRow[];
   };
 }> {
   const baseLimit = clamp(opts.limitPerSection ?? 12, 1, 50);
 
-  // NOTE: this is a *global per-section* cap used in ranking phase.
   const perProviderCap = clamp(
     opts.perProviderCap ?? Math.max(1, Math.floor(baseLimit / 3)),
     1,
@@ -219,23 +242,24 @@ export async function getHomeData(
   const days = clamp(opts.days ?? 45, 1, 365);
   const week = typeof opts.week === "number" ? clamp(opts.week, 0, 30) : null;
 
-  const sport    = (opts.sport ?? "").toLowerCase().trim() || undefined;
-  const provider = (opts.provider ?? "").toLowerCase().replace(/^www\./, "").trim() || undefined;
-  const sourceId = typeof opts.sourceId === "number" ? opts.sourceId : undefined;
+  const sport = (opts.sport ?? "").toLowerCase().trim() || undefined;
+  const provider =
+    (opts.provider ?? "").toLowerCase().replace(/^www\./, "").trim() || undefined;
+  const sourceId =
+    typeof opts.sourceId === "number" ? opts.sourceId : undefined;
 
   const limits = {
-    news:     clamp(opts.limitNews ?? baseLimit, 1, 150),
+    news: clamp(opts.limitNews ?? baseLimit, 1, 150),
     rankings: clamp(opts.limitRankings ?? baseLimit, 1, 150),
     startSit: clamp(opts.limitStartSit ?? baseLimit, 1, 150),
-    advice:   clamp(opts.limitAdvice ?? baseLimit, 1, 150),
-    dfs:      clamp(opts.limitDFS ?? baseLimit, 1, 150),
-    waivers:  clamp(opts.limitWaivers ?? baseLimit, 1, 150),
+    advice: clamp(opts.limitAdvice ?? baseLimit, 1, 150),
+    dfs: clamp(opts.limitDFS ?? baseLimit, 1, 150),
+    waivers: clamp(opts.limitWaivers ?? baseLimit, 1, 150),
     injuries: clamp(opts.limitInjuries ?? baseLimit, 1, 150),
   };
 
   const includeHeroCandidates = opts.includeHeroCandidates ?? true;
 
-  // default: exclude static items everywhere
   const shared = {
     days,
     perProviderCap,
@@ -245,20 +269,30 @@ export async function getHomeData(
     staticMode: "exclude" as const,
   };
 
-  // ───────────────────────── BIG WIN: single-section mode ─────────────────────────
+  console.log("[HomeData] getHomeData opts=", {
+    days,
+    week,
+    sport,
+    sourceId: sourceId ?? null,
+    provider: provider ?? null,
+    perProviderCap,
+    selectedSection: opts.selectedSection ?? null,
+    limits,
+    includeHeroCandidates,
+  });
+
   const selected = opts.selectedSection ?? null;
+
   if (selected) {
-    // Map UI keys -> DB section keys
     const dbKey: SectionKey =
       selected === "waiver-wire" ? "waiver-wire" :
-      selected === "start-sit"   ? "start-sit"   :
-      selected === "rankings"    ? "rankings"    :
-      selected === "dfs"         ? "dfs"         :
-      selected === "advice"      ? "advice"      :
-      selected === "injury"      ? "injury"      :
+      selected === "start-sit" ? "start-sit" :
+      selected === "rankings" ? "rankings" :
+      selected === "dfs" ? "dfs" :
+      selected === "advice" ? "advice" :
+      selected === "injury" ? "injury" :
       "news";
 
-    // Pull only the requested section.
     const single = await fetchSectionItems({
       key: dbKey,
       limit:
@@ -273,61 +307,112 @@ export async function getHomeData(
       ...shared,
     });
 
+    logSectionSnapshot(`raw:${dbKey}`, single);
+
     const ranked = rankWithinSection(single, dbKey, perProviderCap);
 
-    // Optional: small hero pool derived from the same section (cheap)
-    const heroLimit = clamp(opts.limitHero ?? 24, 1, 100);
-    const heroCandidates = includeHeroCandidates ? uniqById(ranked).slice(0, heroLimit) : [];
+    logSectionSnapshot(`ranked:${dbKey}`, ranked);
 
-    // Return the same shape, but only populate the chosen section.
+    const heroLimit = clamp(opts.limitHero ?? 24, 1, 100);
+    const heroCandidates = includeHeroCandidates
+      ? uniqById(ranked).slice(0, heroLimit)
+      : [];
+
+    logSectionSnapshot("heroCandidates:selected-mode", heroCandidates);
+
     const empty: SectionRow[] = [];
+
     return {
       items: {
-        latest:   dbKey === "news"       ? ranked : empty,
-        rankings: dbKey === "rankings"   ? ranked : empty,
-        startSit: dbKey === "start-sit"  ? ranked : empty,
-        advice:   dbKey === "advice"     ? ranked : empty,
-        dfs:      dbKey === "dfs"        ? ranked : empty,
-        waivers:  dbKey === "waiver-wire"? ranked : empty,
-        injury:   dbKey === "injury"     ? ranked : empty,
-        injuries: dbKey === "injury"     ? ranked : empty,
+        latest: dbKey === "news" ? ranked : empty,
+        rankings: dbKey === "rankings" ? ranked : empty,
+        startSit: dbKey === "start-sit" ? ranked : empty,
+        advice: dbKey === "advice" ? ranked : empty,
+        dfs: dbKey === "dfs" ? ranked : empty,
+        waivers: dbKey === "waiver-wire" ? ranked : empty,
+        injury: dbKey === "injury" ? ranked : empty,
+        injuries: dbKey === "injury" ? ranked : empty,
         heroCandidates,
       },
     };
   }
 
-  // ───────────────────────── Full homepage mode (all sections) ─────────────────────────
   const [news, rankings, startSit, advice, dfs, waivers, injury] = await Promise.all([
-    fetchSectionItems({ key: "news",        limit: limits.news,      ...shared }),
-    fetchSectionItems({ key: "rankings",    limit: limits.rankings,  ...shared }),
-    fetchSectionItems({ key: "start-sit",   limit: limits.startSit,  ...shared }),
-    fetchSectionItems({ key: "advice",      limit: limits.advice,    ...shared }),
-    fetchSectionItems({ key: "dfs",         limit: limits.dfs,       ...shared }),
+    fetchSectionItems({ key: "news", limit: limits.news, ...shared }),
+    fetchSectionItems({ key: "rankings", limit: limits.rankings, ...shared }),
+    fetchSectionItems({ key: "start-sit", limit: limits.startSit, ...shared }),
+    fetchSectionItems({ key: "advice", limit: limits.advice, ...shared }),
+    fetchSectionItems({ key: "dfs", limit: limits.dfs, ...shared }),
     fetchSectionItems({ key: "waiver-wire", limit: limits.waivers, week, ...shared }),
-    fetchSectionItems({ key: "injury",      limit: limits.injuries,  ...shared }),
+    fetchSectionItems({ key: "injury", limit: limits.injuries, ...shared }),
   ]);
 
+  logSectionSnapshot("raw:news", news);
+  logSectionSnapshot("raw:rankings", rankings);
+  logSectionSnapshot("raw:start-sit", startSit);
+  logSectionSnapshot("raw:advice", advice);
+  logSectionSnapshot("raw:dfs", dfs);
+  logSectionSnapshot("raw:waiver-wire", waivers);
+  logSectionSnapshot("raw:injury", injury);
+
   const deduped = dedupeAcrossSectionsTopicAware({
-    "start-sit":   startSit,
+    "start-sit": startSit,
     "waiver-wire": waivers,
-    "injury":      injury,
-    "dfs":         dfs,
-    "rankings":    rankings,
-    "advice":      advice,
-    "news":        news,
-    "nfl-draft":   [], // Handled separately in page.tsx
-    "free-agency": [], // Handled separately in page.tsx
+    injury,
+    dfs,
+    rankings,
+    advice,
+    news,
+    "nfl-draft": [],
+    "free-agency": [],
   });
 
-  const startSitOut = rankWithinSection(deduped["start-sit"], "start-sit", perProviderCap);
-  const waiversOut  = rankWithinSection(deduped["waiver-wire"], "waiver-wire", perProviderCap);
-  const injuryOut   = rankWithinSection(deduped["injury"], "injury", perProviderCap);
-  const dfsOut      = rankWithinSection(deduped["dfs"], "dfs", perProviderCap);
-  const rankingsOut = rankWithinSection(deduped["rankings"], "rankings", perProviderCap);
-  const adviceOut   = rankWithinSection(deduped["advice"], "advice", perProviderCap);
-  const newsOut     = rankWithinSection(deduped["news"], "news", perProviderCap);
+  const startSitOut = rankWithinSection(
+    deduped["start-sit"],
+    "start-sit",
+    perProviderCap,
+  );
+  const waiversOut = rankWithinSection(
+    deduped["waiver-wire"],
+    "waiver-wire",
+    perProviderCap,
+  );
+  const injuryOut = rankWithinSection(
+    deduped.injury,
+    "injury",
+    perProviderCap,
+  );
+  const dfsOut = rankWithinSection(
+    deduped.dfs,
+    "dfs",
+    perProviderCap,
+  );
+  const rankingsOut = rankWithinSection(
+    deduped.rankings,
+    "rankings",
+    perProviderCap,
+  );
+  const adviceOut = rankWithinSection(
+    deduped.advice,
+    "advice",
+    perProviderCap,
+  );
+  const newsOut = rankWithinSection(
+    deduped.news,
+    "news",
+    perProviderCap,
+  );
+
+  logSectionSnapshot("final:news", newsOut);
+  logSectionSnapshot("final:rankings", rankingsOut);
+  logSectionSnapshot("final:start-sit", startSitOut);
+  logSectionSnapshot("final:advice", adviceOut);
+  logSectionSnapshot("final:dfs", dfsOut);
+  logSectionSnapshot("final:waiver-wire", waiversOut);
+  logSectionSnapshot("final:injury", injuryOut);
 
   const heroLimit = clamp(opts.limitHero ?? 24, 1, 100);
+
   const heroCandidates = includeHeroCandidates
     ? uniqById([
         ...newsOut,
@@ -339,6 +424,8 @@ export async function getHomeData(
         ...injuryOut,
       ]).slice(0, heroLimit)
     : [];
+
+  logSectionSnapshot("heroCandidates:full-mode", heroCandidates);
 
   return {
     items: {
@@ -354,8 +441,6 @@ export async function getHomeData(
     },
   };
 }
-
-/* ───────────────────────── Optional single-section helper ───────────────────────── */
 
 export async function getSectionItems(
   key: SectionKey,
