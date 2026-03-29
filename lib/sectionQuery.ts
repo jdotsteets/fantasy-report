@@ -149,7 +149,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   }
 
   if (week !== null && (key === "waiver-wire" || key === "start-sit")) {
-    where.push(`a.week = ${push(week)}`);
+    where.push(`a.week = $${push(week)}`);
   }
 
   const baseSelect = `
@@ -317,4 +317,5 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
 
   return filtered;
 }
+
 
