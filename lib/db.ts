@@ -17,8 +17,10 @@ const rawUrl = process.env.DATABASE_URL ?? process.env.DATABASE_URL_POOLER;
 // The pool will fail at query time if DATABASE_URL is actually missing
 // if (!rawUrl) throw new Error("Missing DATABASE_URL / DATABASE_URL_POOLER");
 
-// Prefer explicit PGPOOL_MAX, then legacy PG_MAX. Keep default conservative for serverless.
-const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? process.env.PG_MAX ?? "3", 10);
+// Prefer explicit PGPOOL_MAX, then legacy PG_MAX.
+// Default: 10 connections to handle parallel homepage queries (7 concurrent sections + buffer)
+// Note: Homepage uses Promise.all for 7 sections, needs pool size >= 7
+const MAX = Number.parseInt(process.env.PGPOOL_MAX ?? process.env.PG_MAX ?? "10", 10);
 const IDLE = Number.parseInt(process.env.PG_IDLE_TIMEOUT_MS ?? "30000", 10); // 30s
 const ACQUIRE = Number.parseInt(process.env.PG_ACQUIRE_TIMEOUT_MS ?? "8000", 10); // 8s
 
