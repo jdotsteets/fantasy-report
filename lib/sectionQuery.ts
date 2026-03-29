@@ -123,21 +123,21 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   }
 
   if (staticType) {
-    where.push(`a.static_type = ${push(staticType)}`);
+    where.push(`a.static_type = $${push(staticType)}`);
   }
 
   if (typeof sourceId === "number") {
-    where.push(`a.source_id = ${push(sourceId)}`);
+    where.push(`a.source_id = $${push(sourceId)}`);
   }
 
   if (provider) {
-    where.push(`s.provider ILIKE ${push(provider)}`);
+    where.push(`s.provider ILIKE $${push(provider)}`);
   }
 
   if (isNews) {
     where.push(newsPredicateSQL());
     where.push(
-      `COALESCE(a.published_at, a.discovered_at) >= NOW() - (${push(newsMaxAgeHours)} || ' hours')::interval`,
+      `COALESCE(a.published_at, a.discovered_at) >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval`,
     );
   } else {
     const idx = push(key);
@@ -317,3 +317,4 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
 
   return filtered;
 }
+
