@@ -1,4 +1,4 @@
-// lib/sectionQuery.ts
+﻿// lib/sectionQuery.ts
 import { dbQueryRows } from "@/lib/db";
 
 export const ORDERED_SECTIONS = [
@@ -142,9 +142,9 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   } else {
     const idx = push(key);
     where.push(`(
-      a.primary_topic = ${idx}
-      OR a.secondary_topic = ${idx}
-      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[${idx}]::text[])
+      a.primary_topic = $${idx}
+      OR a.secondary_topic = $${idx}
+      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[$${idx}]::text[])
     )`);
   }
 
