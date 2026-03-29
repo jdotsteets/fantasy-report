@@ -10,6 +10,7 @@ import BetaDraftSection from "@/components/beta/BetaDraftSection";
 import FilterBanner from "@/components/beta/FilterBanner";
 import LatestTransactions from "@/components/beta/LatestTransactions";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
+import { buildTrendingClusters, getCurrentSeasonMode } from "@/lib/trending";
 import { getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams-server";
 
 import type { Article } from "@/types/sources";
@@ -239,7 +240,8 @@ export default async function Page({
   const injuriesNoHero = removeHero(injuries, heroId);
 
   const feed = uniqueArticles(latestNoHero, rankingsNoHero, adviceNoHero, startSitNoHero).slice(0, 14);
-  const trendingPool = uniqueArticles(
+  // Build server-side trending clusters
+  const trendingArticles = uniqueArticles(
     latestNoHero,
     rankingsNoHero,
     adviceNoHero,
@@ -247,7 +249,11 @@ export default async function Page({
     waiversNoHero,
     dfsNoHero,
     injuriesNoHero
-  );
+  ).slice(0, 100); // Process top 100 recent articles
+  
+  // Season mode already computed below
+  const effectiveSeasonMode = getCurrentSeasonMode(); // For trending only
+  const trendingClusters = buildTrendingClusters(trendingArticles, effectiveSeasonMode, 8);
 
   const seasonMode = getEffectiveSeasonMode(new Date());
   const freeAgencyItems = latest.filter((a) => {
@@ -391,7 +397,7 @@ export default async function Page({
 
 
           <aside className="space-y-6">
-            <BetaTrending articles={trendingPool} />
+            <BetaTrending clusters={trendingClusters} />
 
             <BetaLoadMoreSection
               title="Rankings & tiers"
