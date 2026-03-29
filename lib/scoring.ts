@@ -58,6 +58,10 @@ const LOW_VALUE_PATTERNS = [
 /**
  * Calculate article quality score (0-100 scale)
  * Higher = better quality/more fantasy-relevant
+ * 
+ * NOTE: This score represents QUALITY only, not recency.
+ * Time decay is applied dynamically in SQL ORDER BY clauses.
+ * Scores remain stable over time (no freshness decay baked in).
  */
 export function calculateArticleScore(input: ScoringInput): number {
   let score = 50; // Base score
@@ -88,37 +92,18 @@ export function calculateArticleScore(input: ScoringInput): number {
     score += Math.min(playerCount * 5, 15);
   }
 
-  // 5. Freshness bonus (decays over time)
-  const now = Date.now();
-  const pubDate = input.published_at ? new Date(input.published_at).getTime() : null;
-  const discDate = input.discovered_at ? new Date(input.discovered_at).getTime() : now;
-  const articleDate = pubDate || discDate;
-  
-  const ageHours = (now - articleDate) / (1000 * 60 * 60);
-  
-  if (ageHours < 2) {
-    score += 10; // Very fresh
-  } else if (ageHours < 6) {
-    score += 7;
-  } else if (ageHours < 12) {
-    score += 5;
-  } else if (ageHours < 24) {
-    score += 3;
-  }
-  // No bonus after 24 hours
-
-  // 6. Low-value penalty (-10 to -20)
+  // 5. Low-value penalty (-10 to -20)
   const hasLowValue = LOW_VALUE_PATTERNS.some(rx => rx.test(titleLower) || rx.test(urlLower));
   if (hasLowValue) {
     score -= 15;
   }
 
-  // 7. Generic news penalty (if no specific topic and no players)
+  // 6. Generic news penalty (if no specific topic and no players)
   if (input.primary_topic === 'news' && playerCount === 0) {
     score -= 5;
   }
 
-  // 8. Depth penalty (very long URLs = likely deep navigation, not main content)
+  // 7. Depth penalty (very long URLs = likely deep navigation, not main content)
   const pathSegments = new URL(input.url).pathname.split('/').filter(Boolean);
   if (pathSegments.length > 6) {
     score -= 5;
