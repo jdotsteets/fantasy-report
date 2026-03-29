@@ -143,8 +143,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
     const idx = push(key);
     where.push(`(
       a.primary_topic = ${idx}
-      OR a.secondary_topic,
-    a.score = ${idx}
+      OR a.secondary_topic = ${idx}
       OR (a.topics IS NOT NULL AND a.topics @> ARRAY[${idx}]::text[])
     )`);
   }
