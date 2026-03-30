@@ -12,7 +12,7 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 declare global { var __pgPool__: Pool | undefined }
 
 // Prefer DATABASE_URL; fall back to DATABASE_URL_POOLER for legacy envs
-const rawUrl = process.env.DATABASE_URL ?? process.env.DATABASE_URL_POOLER;
+const rawUrl = process.env.DATABASE_URL_POOLER ?? process.env.DATABASE_URL;  // Prefer pooler
 // Commented out to allow Next.js build to import modules without DATABASE_URL
 // The pool will fail at query time if DATABASE_URL is actually missing
 // if (!rawUrl) throw new Error("Missing DATABASE_URL / DATABASE_URL_POOLER");
