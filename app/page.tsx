@@ -294,7 +294,7 @@ export default async function Page({
   const trendingClusters = buildTrendingClusters(trendingArticles, effectiveSeasonMode, 8);
   
   const topClusterArticleIds = trendingClusters[0]?.articleIds || [];
-  const topClusterArticles = allArticles.filter(a => topClusterArticleIds.includes(a.id)).filter(hasRealImage);
+  const topClusterArticles = allArticlesFiltered.filter(a => topClusterArticleIds.includes(a.id)).filter(hasRealImage);
   const heroPool = [...topClusterArticles, ...latest.slice(0, 10), ...rankings.slice(0, 5)];
   const scoredHeroPool = scoreAndSortArticles(heroPool, effectiveSeasonMode);
   const hero = scoredHeroPool.find(hasRealImage) ?? latest.find(hasRealImage) ?? latest[0] ?? rankings[0];
