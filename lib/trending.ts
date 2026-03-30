@@ -1,43 +1,43 @@
 ﻿// lib/trending.ts
 // Server-side trending intelligence for fantasy football
-// Clusters related articles by entity + context with smart scoring
+// Clusters related articles by entity + context with smarter filtering and scoring
 
-export type SeasonMode = 'regular' | 'off-season' | 'preseason';
+export type SeasonMode = "regular" | "off-season" | "preseason";
 
 export type TrendContext =
-  | 'injury'
-  | 'workload'
-  | 'depth_chart'
-  | 'starting_role'
-  | 'transaction'
-  | 'trade'
-  | 'signing'
-  | 'waiver'
-  | 'start_sit'
-  | 'breakout'
-  | 'rookie'
-  | 'mock_draft'
-  | 'landing_spot'
-  | 'coach_speak'
-  | 'dfs'
-  | 'ranking'
-  | 'generic_news';
+  | "injury"
+  | "workload"
+  | "depth_chart"
+  | "starting_role"
+  | "transaction"
+  | "trade"
+  | "signing"
+  | "waiver"
+  | "start_sit"
+  | "breakout"
+  | "rookie"
+  | "mock_draft"
+  | "landing_spot"
+  | "coach_speak"
+  | "dfs"
+  | "ranking"
+  | "generic_news";
 
-export type TrendEntityType = 'player' | 'team' | 'topic';
+export type TrendEntityType = "player" | "team" | "topic";
 
 export type TrendCluster = {
-  key: string; // Stable identifier: player:saquon-barkley:workload
+  key: string;
   entityType: TrendEntityType;
-  entityName: string; // Display name: Saquon Barkley
-  entitySlug: string; // URL-safe: saquon-barkley
+  entityName: string;
+  entitySlug: string;
   context: TrendContext;
-  contextLabel: string; // Human readable: workload concern
-  label: string; // Full label: Saquon Barkley workload concern
+  contextLabel: string;
+  label: string;
   articleCount: number;
   sourceCount: number;
   articleIds: number[];
   score: number;
-  freshness: number; // Hours since most recent article
+  freshness: number;
   debug: {
     avgQuality: number;
     seasonBoost: number;
@@ -62,286 +62,543 @@ export type ArticleInput = {
   source?: string | null;
 };
 
-// Context detection patterns
+type EntityCandidate = {
+  type: TrendEntityType;
+  name: string;
+  slug: string;
+  confidence: number;
+};
+
+type ClusterAccumulator = {
+  articles: ArticleInput[];
+  contexts: Map<TrendContext, number>;
+  entityType: TrendEntityType;
+  entityName: string;
+  entitySlug: string;
+};
+
 const CONTEXT_PATTERNS: Record<TrendContext, RegExp[]> = {
   injury: [
-    /\b(injur|IR|questionable|doubtful|out for|ruled out|miss|sidelined|return|recovery|rehab)\b/i,
+    /\b(injur(?:y|ies|ed)?|ir\b|questionable|doubtful|out for|ruled out|miss(?:es|ed|ing)?|sidelined|return(?:ing)?|recovery|rehab|limited participant)\b/i,
   ],
   workload: [
-    /\b(touches|target share|snap|usage|workload|volume|carry|target|involvement)\b/i,
+    /\b(touches?|target share|snap(?:s| count)?|usage|workload|volume|carr(?:y|ies)|targets?|involvement|opportunity share)\b/i,
   ],
   depth_chart: [
-    /\b(depth chart|starter|backup|rb1|rb2|wr1|rotation|pecking order)\b/i,
+    /\b(depth chart|starter|backup|rb1|rb2|wr1|wr2|te1|rotation|pecking order|second string|first team)\b/i,
   ],
   starting_role: [
-    /\b(start|bench|lead back|lead role|three-down|workhorse|bellcow)\b/i,
+    /\b(start(?:er|ing)?|bench(?:ed|ing)?|lead back|lead role|three-down|workhorse|bellcow|named starter)\b/i,
   ],
   transaction: [
-    /\b(transaction|release|cut|claim|sign|add|designate)\b/i,
+    /\b(transaction|release(?:d)?|cut|claim(?:ed)?|waive(?:d|r)?|signed? by|added? to roster|practice squad|activated)\b/i,
   ],
   trade: [
-    /\b(trade|dealt|acquire|swap|package|sent to)\b/i,
+    /\b(trade(?:d)?|dealt|acquire(?:d)?|swap|package|sent to|moved to)\b/i,
   ],
   signing: [
-    /\b(sign|contract|extension|deal|agree|terms|free agent)\b/i,
+    /\b(sign(?:ed|ing)?|contract|extension|deal|agree(?:d)? to terms|free agent|re-sign(?:ed|ing)?)\b/i,
   ],
   waiver: [
-    /\b(waiver|pickup|add|drop|stream|under\.owned|available)\b/i,
+    /\b(waiver|pickup|pick-up|add|drop|stream(?:er)?|stash(?:es|ing)?|available in)\b/i,
   ],
   start_sit: [
-    /\b(start|sit|must\.start|must\.sit|lineup|play|bench)\b/i,
+    /\b(start\/sit|start-?sit|start(?: him)?|sit(?: him)?|must-start|must-sit|lineup|bench|who should i start)\b/i,
   ],
   breakout: [
-    /\b(breakout|sleeper|emerge|rising|stock up|buy low|undervalue)\b/i,
+    /\b(breakout|sleeper|emerge(?:s|d)?|rising|stock up|buy low|undervalued?)\b/i,
   ],
   rookie: [
-    /\b(rookie|first\.year|draft class|rookie outlook)\b/i,
+    /\b(rookie|first-year|draft class|rookie outlook|rookie report)\b/i,
   ],
   mock_draft: [
-    /\b(mock draft|draft board|big board|adp|draft strategy)\b/i,
+    /\b(mock draft|draft board|big board|adp|draft strategy|best ball)\b/i,
   ],
   landing_spot: [
-    /\b(landing spot|fit|scheme|situation|opportunity|join|move to)\b/i,
+    /\b(landing spot|fit|scheme fit|situation|opportunity|join(?:s|ed)?|move to)\b/i,
   ],
   coach_speak: [
-    /\b(coach|said|comment|hint|praise|confident|feature|plan)\b/i,
+    /\b(coach|said|says|comment(?:s)?|hint(?:ed)?|praised?|confident|feature|plan(?:s|ned)? to use)\b/i,
   ],
   dfs: [
     /\b(dfs|draftkings|fanduel|showdown|cash game|gpp|tournament|value play)\b/i,
   ],
   ranking: [
-    /\b(rank|tier|top|bottom|ppr|standard|dynasty|redraft)\b/i,
+    /\b(rank(?:ing|s)?|tier(?:s)?|top \d+|rest of season|ros|ppr|standard|dynasty|redraft)\b/i,
   ],
-  generic_news: [/.*/], // Catch-all
+  generic_news: [/.*/],
 };
 
-// Context labels for display
 const CONTEXT_LABELS: Record<TrendContext, string> = {
-  injury: 'injury update',
-  workload: 'workload concern',
-  depth_chart: 'depth chart shift',
-  starting_role: 'starting role',
-  transaction: 'transaction',
-  trade: 'trade buzz',
-  signing: 'signing impact',
-  waiver: 'waiver target',
-  start_sit: 'start/sit advice',
-  breakout: 'breakout buzz',
-  rookie: 'rookie outlook',
-  mock_draft: 'mock draft buzz',
-  landing_spot: 'landing spot analysis',
-  coach_speak: 'coach comments',
-  dfs: 'DFS play',
-  ranking: 'rankings update',
-  generic_news: 'news',
+  injury: "injury update",
+  workload: "workload concern",
+  depth_chart: "depth chart shift",
+  starting_role: "starting role",
+  transaction: "transaction",
+  trade: "trade buzz",
+  signing: "signing impact",
+  waiver: "waiver target",
+  start_sit: "start/sit advice",
+  breakout: "breakout buzz",
+  rookie: "rookie outlook",
+  mock_draft: "mock draft buzz",
+  landing_spot: "landing spot analysis",
+  coach_speak: "coach comments",
+  dfs: "DFS play",
+  ranking: "rankings update",
+  generic_news: "news",
 };
 
-// Context priority by season
-const SEASON_CONTEXT_PRIORITY: Record<SeasonMode, Partial<Record<TrendContext, number>>> = {
+const SEASON_CONTEXT_PRIORITY: Record<
+  SeasonMode,
+  Partial<Record<TrendContext, number>>
+> = {
   regular: {
-    injury: 1.5,
-    workload: 1.4,
+    injury: 1.55,
+    workload: 1.45,
     depth_chart: 1.4,
-    starting_role: 1.3,
+    starting_role: 1.45,
     waiver: 1.3,
-    start_sit: 1.5,
-    transaction: 1.2,
-    dfs: 1.1,
+    start_sit: 1.45,
+    transaction: 1.25,
+    trade: 1.15,
+    coach_speak: 1.1,
+    dfs: 1.05,
+    ranking: 0.95,
+    generic_news: 0.55,
   },
-  'off-season': {
+  "off-season": {
     signing: 1.5,
     trade: 1.5,
-    mock_draft: 1.4,
+    mock_draft: 1.45,
     landing_spot: 1.4,
     rookie: 1.3,
-    depth_chart: 1.2,
+    depth_chart: 1.15,
+    ranking: 1.0,
+    generic_news: 0.55,
   },
   preseason: {
     starting_role: 1.5,
-    depth_chart: 1.4,
+    depth_chart: 1.45,
     injury: 1.3,
     rookie: 1.3,
     coach_speak: 1.2,
     breakout: 1.2,
+    workload: 1.2,
+    ranking: 0.95,
+    generic_news: 0.55,
   },
 };
 
-// Slugify for stable keys
+const TEAM_NAMES = [
+  "Arizona Cardinals",
+  "Atlanta Falcons",
+  "Baltimore Ravens",
+  "Buffalo Bills",
+  "Carolina Panthers",
+  "Chicago Bears",
+  "Cincinnati Bengals",
+  "Cleveland Browns",
+  "Dallas Cowboys",
+  "Denver Broncos",
+  "Detroit Lions",
+  "Green Bay Packers",
+  "Houston Texans",
+  "Indianapolis Colts",
+  "Jacksonville Jaguars",
+  "Kansas City Chiefs",
+  "Las Vegas Raiders",
+  "Los Angeles Chargers",
+  "Los Angeles Rams",
+  "Miami Dolphins",
+  "Minnesota Vikings",
+  "New England Patriots",
+  "New Orleans Saints",
+  "New York Giants",
+  "New York Jets",
+  "Philadelphia Eagles",
+  "Pittsburgh Steelers",
+  "San Francisco 49ers",
+  "Seattle Seahawks",
+  "Tampa Bay Buccaneers",
+  "Tennessee Titans",
+  "Washington Commanders",
+];
+
+const LOW_SIGNAL_TITLE_PATTERNS: RegExp[] = [
+  /\b(radio|broadcast|coverage|station|podcast|show|listen live)\b/i,
+  /\b(mlb|nba|nhl|ncaa basketball|march madness|fantasy baseball|fantasy basketball|fantasy hockey)\b/i,
+  /\b(ticket(?:s)?|merch|shop|odds|sportsbook|betting picks?)\b/i,
+];
+
+const STOP_PHRASES = new Set<string>([
+  "Fantasy Football",
+  "New York",
+  "New England",
+  "New Orleans",
+  "Los Angeles",
+  "San Francisco",
+  "Green Bay",
+  "Kansas City",
+  "Las Vegas",
+  "Tampa Bay",
+  "Free Agency",
+  "Mock Draft",
+  "Draft Kings",
+  "Fan Duel",
+  "Yahoo Sports",
+  "Pro Football",
+  "Fantasy Report",
+  "The Athletic",
+  "Roto World",
+  "Fantasy Pros",
+  "Running Backs",
+  "Wide Receivers",
+  "Tight Ends",
+  "Rest Of",
+  "Of Season",
+]);
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
-// Extract player names from title
-function extractPlayerNames(title: string, playersArray: readonly string[] | string[] | null | [] | undefined): string[] {
-  const found = new Set<string>();
-  
-  // Use players array if available (handle all array types)
-  if (playersArray && Array.isArray(playersArray) && playersArray.length > 0) {
-    playersArray.forEach(p => found.add(p));
-  }
-  
-  // Also try regex extraction for two-word names
-  const twoWord = /\b([A-Z][a-z]{1,15}\s+[A-Z][a-z]{1,15})\b/g;
-  const skip = new Set([
-    'Fantasy Football', 'New York', 'New England', 'New Orleans',
-    'Los Angeles', 'San Francisco', 'Green Bay', 'Kansas City',
-    'Las Vegas', 'Tampa Bay', 'Free Agency', 'Mock Draft',
-    'Draft Kings', 'Fan Duel', 'Yahoo Sports', 'Pro Football',
-    'Fantasy Report', 'The Athletic', 'Roto World', 'Fantasy Pros',
-    'Running Backs', 'Wide Receivers', 'Tight Ends',
-  ]);
-  
-  let m: RegExpExecArray | null;
-  while ((m = twoWord.exec(title)) !== null) {
-    const name = m[1];
-    if (!skip.has(name) && name.split(' ').every(w => w.length >= 2 && w.length <= 12)) {
-      found.add(name);
+function normalizeTitle(title: string): string {
+  return title.replace(/\s+/g, " ").trim();
+}
+
+function isLowSignalArticle(article: ArticleInput): boolean {
+  const hay = `${article.title} ${article.url} ${article.domain ?? ""}`;
+  return LOW_SIGNAL_TITLE_PATTERNS.some((pattern) => pattern.test(hay));
+}
+
+function titleCaseFromSlug(slug: string): string {
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function extractTeamNames(title: string): string[] {
+  const found: string[] = [];
+  for (const team of TEAM_NAMES) {
+    if (new RegExp(`\\b${team.replace(/\s+/g, "\\s+")}\\b`, "i").test(title)) {
+      found.push(team);
     }
   }
-  
+  return found;
+}
+
+function extractPlayerNames(
+  title: string,
+  playersArray: readonly string[] | string[] | null | [] | undefined,
+): string[] {
+  const found = new Set<string>();
+
+  if (playersArray && Array.isArray(playersArray) && playersArray.length > 0) {
+    for (const player of playersArray) {
+      const cleaned = player.trim();
+      if (cleaned) found.add(cleaned);
+    }
+  }
+
+  const twoWordNamePattern = /\b([A-Z][a-z]{1,15}\s+[A-Z][a-z]{1,15})\b/g;
+  let match: RegExpExecArray | null = twoWordNamePattern.exec(title);
+
+  while (match) {
+    const candidate = match[1].trim();
+    const words = candidate.split(" ");
+    const validLength = words.every((word) => word.length >= 2 && word.length <= 12);
+
+    if (!STOP_PHRASES.has(candidate) && validLength) {
+      found.add(candidate);
+    }
+
+    match = twoWordNamePattern.exec(title);
+  }
+
   return Array.from(found);
 }
 
-// Detect all matching contexts for an article
+function getEntityCandidates(article: ArticleInput): EntityCandidate[] {
+  const title = normalizeTitle(article.title);
+  const players = extractPlayerNames(title, article.players);
+  const teams = extractTeamNames(title);
+
+  const candidates: EntityCandidate[] = [];
+
+  for (const player of players) {
+    candidates.push({
+      type: "player",
+      name: player,
+      slug: slugify(player),
+      confidence: 1.0,
+    });
+  }
+
+  if (players.length === 0) {
+    for (const team of teams) {
+      candidates.push({
+        type: "team",
+        name: team,
+        slug: slugify(team),
+        confidence: 0.72,
+      });
+    }
+  }
+
+  if (players.length === 0 && teams.length === 0) {
+    const topicSource =
+      article.primary_topic ??
+      article.secondary_topic ??
+      (Array.isArray(article.topics) && article.topics.length > 0 ? article.topics[0] : null) ??
+      "news";
+
+    const topicLabel = titleCaseFromSlug(topicSource.replace(/_/g, "-"));
+    candidates.push({
+      type: "topic",
+      name: topicLabel,
+      slug: slugify(topicLabel),
+      confidence: 0.45,
+    });
+  }
+
+  return candidates.slice(0, 3);
+}
+
 function detectContexts(article: ArticleInput): TrendContext[] {
-  const text = `${article.title} ${article.primary_topic || ''} ${article.secondary_topic || ''}`.toLowerCase();
+  const text =
+    `${article.title} ${article.primary_topic ?? ""} ${article.secondary_topic ?? ""} ${
+      Array.isArray(article.topics) ? article.topics.join(" ") : ""
+    }`.toLowerCase();
+
   const contexts: TrendContext[] = [];
-  
-  for (const [context, patterns] of Object.entries(CONTEXT_PATTERNS) as [TrendContext, RegExp[]][]) {
-    if (patterns.some(p => p.test(text))) {
+
+  for (const [context, patterns] of Object.entries(CONTEXT_PATTERNS) as Array<
+    [TrendContext, RegExp[]]
+  >) {
+    if (patterns.some((pattern) => pattern.test(text))) {
       contexts.push(context);
     }
   }
-  
-  // Avoid generic_news if we have specific contexts
-  if (contexts.length > 1 && contexts.includes('generic_news')) {
-    return contexts.filter(c => c !== 'generic_news');
+
+  if (contexts.length > 1 && contexts.includes("generic_news")) {
+    return contexts.filter((context) => context !== "generic_news");
   }
-  
-  return contexts.length > 0 ? contexts : ['generic_news'];
+
+  return contexts.length > 0 ? contexts : ["generic_news"];
 }
 
-// Calculate time decay multiplier
+function choosePrimaryContext(contexts: TrendContext[]): TrendContext[] {
+  const priority: TrendContext[] = [
+    "injury",
+    "starting_role",
+    "workload",
+    "depth_chart",
+    "transaction",
+    "trade",
+    "signing",
+    "waiver",
+    "start_sit",
+    "breakout",
+    "rookie",
+    "mock_draft",
+    "landing_spot",
+    "coach_speak",
+    "dfs",
+    "ranking",
+    "generic_news",
+  ];
+
+  const sorted = [...new Set(contexts)].sort(
+    (a, b) => priority.indexOf(a) - priority.indexOf(b),
+  );
+
+  return sorted.slice(0, 2);
+}
+
 function calculateTimeDecay(hoursOld: number): number {
-  // Exponential decay: fresh articles get full weight, older decay quickly
-  // 0h: 1.0, 6h: 0.71, 12h: 0.50, 24h: 0.25, 48h: 0.125
   return Math.pow(0.5, hoursOld / 12);
 }
 
-// Calculate article freshness in hours
 function getArticleFreshness(article: ArticleInput): number {
   const now = Date.now();
-  const articleDate = article.published_at || article.discovered_at;
-  if (!articleDate) return 999; // Very old
-  
+  const articleDate = article.published_at ?? article.discovered_at;
+  if (!articleDate) return 999;
+
   const ageMs = now - new Date(articleDate).getTime();
   return ageMs / (1000 * 60 * 60);
 }
 
-/**
- * Build trending clusters from recent articles
- * Groups by entity + context, scores by freshness/quality/diversity
- */
+function getArticleQuality(article: ArticleInput): number {
+  const explicit = article.score ?? null;
+  if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
+    return Math.max(1, Math.min(explicit, 100));
+  }
+
+  const contexts = detectContexts(article);
+  const freshness = getArticleFreshness(article);
+
+  let quality = 55;
+
+  if (contexts.includes("injury")) quality += 12;
+  if (contexts.includes("starting_role")) quality += 10;
+  if (contexts.includes("workload")) quality += 8;
+  if (contexts.includes("transaction") || contexts.includes("trade") || contexts.includes("signing")) {
+    quality += 8;
+  }
+  if (contexts.includes("mock_draft") || contexts.includes("ranking")) {
+    quality -= 4;
+  }
+  if (contexts.includes("generic_news")) {
+    quality -= 8;
+  }
+
+  if (freshness <= 3) quality += 8;
+  else if (freshness <= 12) quality += 4;
+  else if (freshness > 36) quality -= 8;
+
+  if (isLowSignalArticle(article)) {
+    quality -= 20;
+  }
+
+  return Math.max(1, Math.min(quality, 100));
+}
+
+function dedupeArticles(rows: ArticleInput[]): ArticleInput[] {
+  const seen = new Set<string>();
+  const out: ArticleInput[] = [];
+
+  for (const row of rows) {
+    const key = `${row.id}:${normalizeTitle(row.title).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+
+  return out;
+}
+
 export function buildTrendingClusters(
   articles: ArticleInput[],
-  seasonMode: SeasonMode = 'regular',
-  maxClusters: number = 8
+  seasonMode: SeasonMode = "regular",
+  maxClusters: number = 8,
 ): TrendCluster[] {
-  // Group articles by entity + context
-  const clusterMap = new Map<string, {
-    articles: ArticleInput[];
-    contexts: Map<TrendContext, number>;
-  }>();
-  
-  for (const article of articles) {
-    // Extract players
-    const players = extractPlayerNames(article.title, article.players);
-    const contexts = detectContexts(article);
-    
-    // Create clusters for each player + context combination
-    for (const player of players) {
+  const clusterMap = new Map<string, ClusterAccumulator>();
+
+  const candidates = dedupeArticles(articles)
+    .filter((article) => !isLowSignalArticle(article))
+    .filter((article) => getArticleFreshness(article) <= 48)
+    .slice(0, 500);
+
+  for (const article of candidates) {
+    const entities = getEntityCandidates(article);
+    const contexts = choosePrimaryContext(detectContexts(article));
+
+    for (const entity of entities) {
       for (const context of contexts) {
-        const key = `player:${slugify(player)}:${context}`;
-        
+        if (entity.type === "topic" && context === "generic_news") {
+          continue;
+        }
+
+        const key = `${entity.type}:${entity.slug}:${context}`;
+
         if (!clusterMap.has(key)) {
           clusterMap.set(key, {
             articles: [],
-            contexts: new Map(),
+            contexts: new Map<TrendContext, number>(),
+            entityType: entity.type,
+            entityName: entity.name,
+            entitySlug: entity.slug,
           });
         }
-        
-        const cluster = clusterMap.get(key)!;
+
+        const cluster = clusterMap.get(key);
+        if (!cluster) continue;
+
         cluster.articles.push(article);
-        cluster.contexts.set(context, (cluster.contexts.get(context) || 0) + 1);
+        cluster.contexts.set(context, (cluster.contexts.get(context) ?? 0) + 1);
       }
     }
   }
-  
-  // Build TrendCluster objects with scoring
+
   const clusters: TrendCluster[] = [];
-  
+
   for (const [key, data] of clusterMap.entries()) {
-    // Skip single-article clusters with low quality
-    if (data.articles.length === 1 && (data.articles[0].score || 0) < 60) {
-      continue;
-    }
-    
-    // Parse key: player:saquon-barkley:workload
-    const [entityType, entitySlug, contextStr] = key.split(':') as [TrendEntityType, string, TrendContext];
-    
-    // Determine primary context (most mentioned)
-    const sortedContexts = Array.from(data.contexts.entries())
-      .sort((a, b) => b[1] - a[1]);
-    const primaryContext = sortedContexts[0][0];
-    
-    // Calculate metrics
-    const articleIds = data.articles.map(a => a.id);
-    const sources = [...new Set(data.articles.map(a => a.source).filter(Boolean))];
+    const uniqueArticles = dedupeArticles(data.articles);
+
+    if (uniqueArticles.length === 0) continue;
+
+    const sortedContexts = Array.from(data.contexts.entries()).sort((a, b) => b[1] - a[1]);
+    const primaryContext = sortedContexts[0]?.[0] ?? "generic_news";
+
+    const articleIds = uniqueArticles.map((article) => article.id);
+    const sources = Array.from(
+      new Set(
+        uniqueArticles
+          .map((article) => article.source)
+          .filter((source): source is string => Boolean(source && source.trim())),
+      ),
+    );
     const sourceCount = sources.length;
-    
-    // Average quality score
-    const avgQuality = data.articles.reduce((sum, a) => sum + (a.score || 50), 0) / data.articles.length;
-    
-    // Freshness (hours since most recent article)
-    const freshnesses = data.articles.map(getArticleFreshness);
-    const freshness = Math.min(...freshnesses);
-    
-    // Time decay
+
+    const avgQuality =
+      uniqueArticles.reduce((sum, article) => sum + getArticleQuality(article), 0) /
+      uniqueArticles.length;
+
+    const freshness = Math.min(...uniqueArticles.map(getArticleFreshness));
     const timeDecay = calculateTimeDecay(freshness);
-    
-    // Season boost
-    const seasonPriority = SEASON_CONTEXT_PRIORITY[seasonMode];
-    const seasonBoost = seasonPriority[primaryContext] || 1.0;
-    
-    // Context priority (base importance)
-    const contextPriority = primaryContext === 'generic_news' ? 0.5 : 1.0;
-    
-    // Final score: quality * diversity * freshness * season * context
-    const score = 
+    const seasonBoost = SEASON_CONTEXT_PRIORITY[seasonMode][primaryContext] ?? 1.0;
+    const contextPriority =
+      primaryContext === "generic_news"
+        ? 0.45
+        : primaryContext === "ranking" || primaryContext === "mock_draft"
+          ? 0.85
+          : 1.0;
+
+    const multiSourceBoost = sourceCount >= 2 ? Math.log2(sourceCount + 1) : 0.7;
+    const articleVolumeBoost = Math.sqrt(uniqueArticles.length);
+
+    const score =
       (avgQuality / 100) *
-      Math.log2(sourceCount + 1) * // Source diversity (log scale)
-      Math.sqrt(data.articles.length) * // Article count (sqrt scale)
+      multiSourceBoost *
+      articleVolumeBoost *
       timeDecay *
       seasonBoost *
       contextPriority;
-    
-    // Entity name (de-slugify)
-    const entityName = entitySlug.split('-').map(w => 
-      w.charAt(0).toUpperCase() + w.slice(1)
-    ).join(' ');
-    
+
+    const isWeakGeneric =
+      primaryContext === "generic_news" &&
+      (uniqueArticles.length < 2 || sourceCount < 2);
+
+    const belowMinimumSignal =
+      uniqueArticles.length < 2 &&
+      avgQuality < 72 &&
+      sourceCount < 2;
+
+    if (isWeakGeneric || belowMinimumSignal) {
+      continue;
+    }
+
+    const entityName = data.entityName;
+    const label =
+      data.entityType === "topic"
+        ? `${CONTEXT_LABELS[primaryContext]}`
+        : `${entityName} ${CONTEXT_LABELS[primaryContext]}`;
+
     clusters.push({
       key,
-      entityType,
+      entityType: data.entityType,
       entityName,
-      entitySlug,
+      entitySlug: data.entitySlug,
       context: primaryContext,
       contextLabel: CONTEXT_LABELS[primaryContext],
-      label: `${entityName} ${CONTEXT_LABELS[primaryContext]}`,
-      articleCount: data.articles.length,
+      label,
+      articleCount: uniqueArticles.length,
       sourceCount,
       articleIds,
       score,
@@ -351,34 +608,32 @@ export function buildTrendingClusters(
         seasonBoost,
         contextPriority,
         timeDecay,
-        sources: sources as string[],
+        sources,
       },
     });
   }
-  
-  // Sort by score desc, take top N
-  clusters.sort((a, b) => b.score - a.score);
-  
+
+  clusters.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.freshness !== b.freshness) return a.freshness - b.freshness;
+    return b.articleCount - a.articleCount;
+  });
+
   return clusters.slice(0, maxClusters);
 }
 
-/**
- * Get current season mode based on date
- */
 export function getCurrentSeasonMode(): SeasonMode {
   const now = new Date();
-  const month = now.getMonth() + 1; // 1-12
+  const month = now.getMonth() + 1;
   const day = now.getDate();
-  
-  // Off-Season: Feb 1 - May 10
-  if ((month === 2) || (month === 3) || (month === 4) || (month === 5 && day <= 10)) {
-    return 'off-season';
+
+  if (month === 2 || month === 3 || month === 4 || (month === 5 && day <= 10)) {
+    return "off-season";
   }
-  
-  // Preseason: July 25 - Sept 10
-  if ((month === 7 && day >= 25) || (month === 8) || (month === 9 && day <= 10)) {
-    return 'preseason';
+
+  if ((month === 7 && day >= 25) || month === 8 || (month === 9 && day <= 10)) {
+    return "preseason";
   }
-  
-  return 'regular';
+
+  return "regular";
 }

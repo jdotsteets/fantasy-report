@@ -11,7 +11,7 @@ import FilterBanner from "@/components/beta/FilterBanner";
 import LatestTransactions from "@/components/beta/LatestTransactions";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
 import { buildTrendingClusters, getCurrentSeasonMode } from "@/lib/trending";
-import { scoreAndSortArticles, balanceFeed } from "@/lib/feedScore";
+import { scoreAndSortArticles, balanceFeed, selectClusterRepresentatives, globalDedupe } from "@/lib/feedScore";
 import { getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams-server";
 
 import type { Article } from "@/types/sources";
@@ -229,22 +229,18 @@ export default async function Page({
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
-  // Select hero: top scored article with image OR first with image
-  const heroPool = [...latest.slice(0, 10), ...rankings.slice(0, 5), ...injuries.slice(0, 5)];
-  const scoredHeroPool = scoreAndSortArticles(heroPool, getCurrentSeasonMode());
-  const hero = scoredHeroPool.find(hasRealImage) ?? 
-               latest.find(hasRealImage) ?? 
-               latest[0] ?? 
-               rankings[0];
-  const heroId = hero?.id ?? null;
+  // Hero will be selected after trending clusters are built
 
-  const latestNoHero = removeHero(latest, heroId);
-  const rankingsNoHero = removeHero(rankings, heroId);
-  const startSitNoHero = removeHero(startSit, heroId);
-  const adviceNoHero = removeHero(advice, heroId);
-  const dfsNoHero = removeHero(dfs, heroId);
-  const waiversNoHero = removeHero(waivers, heroId);
-  const injuriesNoHero = removeHero(injuries, heroId);
+  // Temporary: use first article as hero candidate for removal
+  const tempHeroId = (latest.find(hasRealImage) ?? latest[0])?.id ?? null;
+
+  const latestNoHero = removeHero(latest, tempHeroId);
+  const rankingsNoHero = removeHero(rankings, tempHeroId);
+  const startSitNoHero = removeHero(startSit, tempHeroId);
+  const adviceNoHero = removeHero(advice, tempHeroId);
+  const dfsNoHero = removeHero(dfs, tempHeroId);
+  const waiversNoHero = removeHero(waivers, tempHeroId);
+  const injuriesNoHero = removeHero(injuries, tempHeroId);
 
   // Build intelligent scored feed
     // Get season mode for trending + feed scoring
@@ -261,19 +257,33 @@ export default async function Page({
   );
   
   const scoredArticles = scoreAndSortArticles(allArticles, effectiveSeasonMode);
-  const feed = balanceFeed(scoredArticles, effectiveSeasonMode, 14);
-  // Build server-side trending clusters
+
+  // Build server-side trending clusters FIRST
   const trendingArticles = uniqueArticles(
     latestNoHero,
     rankingsNoHero,
     adviceNoHero,
     startSitNoHero,
-    waiversNoHero,
     dfsNoHero,
-    injuriesNoHero
-  ).slice(0, 100); // Process top 100 recent articles
+    waiversNoHero,
+    injuriesNoHero,
+  ).slice(0, 100);
   
   const trendingClusters = buildTrendingClusters(trendingArticles, effectiveSeasonMode, 8);
+  
+  const topClusterArticleIds = trendingClusters[0]?.articleIds || [];
+  const topClusterArticles = allArticles.filter(a => topClusterArticleIds.includes(a.id)).filter(hasRealImage);
+  const heroPool = [...topClusterArticles, ...latest.slice(0, 10), ...rankings.slice(0, 5)];
+  const scoredHeroPool = scoreAndSortArticles(heroPool, effectiveSeasonMode);
+  const hero = scoredHeroPool.find(hasRealImage) ?? latest.find(hasRealImage) ?? latest[0] ?? rankings[0];
+  const heroId = hero?.id ?? null;
+  const clusterRepresentatives = selectClusterRepresentatives(trendingClusters, scoredArticles);
+  const clusterIds = new Set(clusterRepresentatives.map(a => a.id));
+  const nonClusterArticles = scoredArticles.filter(a => !clusterIds.has(a.id));
+  const feedPool = [...clusterRepresentatives, ...nonClusterArticles];
+  const feed = balanceFeed(feedPool, effectiveSeasonMode, 14);
+  const usedInFeed = new Set<number>(feed.map(a => a.id));
+  usedInFeed.add(heroId || 0);
 
   const seasonMode = getEffectiveSeasonMode(new Date());
   const freeAgencyItems = latest.filter((a) => {
@@ -313,10 +323,8 @@ export default async function Page({
   }
 
   // Deduplicate articles across all sections
-  const seenIds = new Set<number>();
-  
-  // Only track hero
-  if (hero?.id) seenIds.add(hero.id);
+  // Start with articles already used in hero + feed
+  const seenIds = new Set<number>(usedInFeed);
   
   // Deduplicate each section in order
   const uniqueLatest = filteredLatest.slice(0, 20).filter(a => {
@@ -461,7 +469,7 @@ export default async function Page({
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
               sectionKey="news"
-              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(freeAgencyItems, heroId), selectedTeam.id) as Article[] : removeHero(freeAgencyItems, heroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(freeAgencyItems, tempHeroId), selectedTeam.id) as Article[] : removeHero(freeAgencyItems, tempHeroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -470,13 +478,13 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(draftItems, heroId), selectedTeam.id) as Article[] : removeHero(draftItems, heroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(draftItems, tempHeroId), selectedTeam.id) as Article[] : removeHero(draftItems, tempHeroId)}
               pageSize={10}
               initialDisplay={4}
             />
           ) : (
             <BetaLoadMoreSection
-              title={`Waiver wire Ãƒâ€šÃ‚Â· Week ${week}`}
+              title={`Waiver wire · Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
               initialItems={uniqueWaivers}

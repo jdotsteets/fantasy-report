@@ -174,3 +174,79 @@ export function balanceFeed(
   
   return result;
 }
+// Extension to lib/feedScore.ts
+// Cluster-aware feed selection + context descriptions
+
+import type { TrendCluster } from "@/lib/trending";
+
+// Context descriptions for "why it matters"
+const CONTEXT_DESCRIPTIONS: Record<string, string> = {
+  injury: "Injury update — may impact availability and workload",
+  workload: "Usage trend — target share or snap count shift",
+  starting_role: "Role change — could affect fantasy value",
+  depth_chart: "Depth chart shift — playing time implications",
+  waiver: "Waiver wire — pickup opportunity",
+  start_sit: "Start/sit advice — lineup decision help",
+  trade: "Trade news — new team situation",
+  signing: "Signing — landing spot and opportunity",
+  transaction: "Transaction — roster move",
+  breakout: "Breakout candidate — emerging value",
+  coach_speak: "Coach comments — usage hints",
+  dfs: "DFS play — daily fantasy angle",
+  ranking: "Rankings update — rest-of-season outlook",
+  rookie: "Rookie news — year-one expectations",
+  mock_draft: "Mock draft — draft strategy",
+  landing_spot: "Landing spot analysis — team fit",
+  generic_news: "Latest update",
+};
+
+// Get "why it matters" description
+export function getContextDescription(context: string): string {
+  return CONTEXT_DESCRIPTIONS[context] || "Latest update";
+}
+
+// Select best article from each trending cluster
+export function selectClusterRepresentatives(
+  clusters: TrendCluster[],
+  scoredArticles: any[],
+): any[] {
+  const articleMap = new Map<number, any>();
+  scoredArticles.forEach(a => articleMap.set(a.id, a));
+  
+  const selected: any[] = [];
+  const usedIds = new Set<number>();
+  
+  for (const cluster of clusters) {
+    const clusterArticles = cluster.articleIds
+      .map(id => articleMap.get(id))
+      .filter(a => a && !usedIds.has(a.id));
+    
+    if (clusterArticles.length > 0) {
+      const best = clusterArticles.reduce((prev, curr) => {
+        const prevScore = prev.feedScore || 0;
+        const currScore = curr.feedScore || 0;
+        return currScore > prevScore ? curr : prev;
+      });
+      
+      selected.push(best);
+      usedIds.add(best.id);
+    }
+  }
+  
+  return selected;
+}
+
+// Global dedupe: remove articles already used in hero/feed from sections
+export function globalDedupe<T extends { id: number }>(
+  sections: Record<string, T[]>,
+  usedIds: Set<number>,
+): Record<string, T[]> {
+  const deduped: Record<string, T[]> = {};
+  
+  for (const [key, items] of Object.entries(sections)) {
+    deduped[key] = items.filter(item => !usedIds.has(item.id));
+  }
+  
+  return deduped;
+}
+
