@@ -282,6 +282,10 @@ export default async function Page({
   const nonClusterArticles = scoredArticles.filter(a => !clusterIds.has(a.id));
   const feedPool = [...clusterRepresentatives, ...nonClusterArticles];
   const feed = balanceFeed(feedPool, effectiveSeasonMode, 14);
+  
+  // CRITICAL FIX: Remove hero from feed since hero was selected AFTER allArticles were built
+  // The tempHeroId used earlier may differ from the final heroId
+  const feedWithoutHero = feed.filter(a => a.id !== heroId);
   const usedInFeed = new Set<number>(feed.map(a => a.id));
   usedInFeed.add(heroId || 0);
 
@@ -298,7 +302,7 @@ export default async function Page({
 
   
   // Apply team filter if selected
-  let filteredFeed: Article[] = feed;
+  let filteredFeed: Article[] = feedWithoutHero;
   let filteredLatest: Article[] = latestNoHero;
   let filteredRankings: Article[] = rankingsNoHero;
   let filteredStartSit: Article[] = startSitNoHero;
@@ -320,7 +324,7 @@ export default async function Page({
   let totalFilteredCount = 0;
 
   if (selectedTeam) {
-    filteredFeed = filterArticlesByTeam(feed, selectedTeam.id) as Article[];
+    filteredFeed = filterArticlesByTeam(feedWithoutHero, selectedTeam.id) as Article[];
     filteredLatest = filterArticlesByTeam(latestNoHero, selectedTeam.id) as Article[];
     filteredRankings = filterArticlesByTeam(rankingsNoHero, selectedTeam.id) as Article[];
     filteredStartSit = filterArticlesByTeam(startSitNoHero, selectedTeam.id) as Article[];
