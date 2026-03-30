@@ -490,9 +490,11 @@ export function buildTrendingClusters(
 ): TrendCluster[] {
   const clusterMap = new Map<string, ClusterAccumulator>();
 
+  const maxFreshness = seasonMode === 'off-season' ? 96 : 48;  // 4 days offseason, 2 days regular
+  
   const candidates = dedupeArticles(articles)
     .filter((article) => !isLowSignalArticle(article))
-    .filter((article) => getArticleFreshness(article) <= 48)
+    .filter((article) => getArticleFreshness(article) <= maxFreshness)
     .slice(0, 500);
 
   for (const article of candidates) {
@@ -571,14 +573,19 @@ export function buildTrendingClusters(
       seasonBoost *
       contextPriority;
 
+    // Season-aware minimum signal thresholds
+    const minArticles = seasonMode === 'off-season' ? 1 : 2;
+    const minSources = seasonMode === 'off-season' ? 1 : 2;
+    const minQuality = seasonMode === 'off-season' ? 60 : 72;
+
     const isWeakGeneric =
       primaryContext === "generic_news" &&
-      (uniqueArticles.length < 2 || sourceCount < 2);
+      (uniqueArticles.length < minArticles || sourceCount < minSources);
 
     const belowMinimumSignal =
-      uniqueArticles.length < 2 &&
-      avgQuality < 72 &&
-      sourceCount < 2;
+      uniqueArticles.length < minArticles &&
+      avgQuality < minQuality &&
+      sourceCount < minSources;
 
     if (isWeakGeneric || belowMinimumSignal) {
       continue;
@@ -619,7 +626,111 @@ export function buildTrendingClusters(
     return b.articleCount - a.articleCount;
   });
 
-  return clusters.slice(0, maxClusters);
+  let finalClusters = clusters.slice(0, maxClusters);
+  
+  // FALLBACK LAYER 1: If too few clusters, add single high-quality recent stories
+  if (finalClusters.length < 3 && candidates.length > 0) {
+    const existingIds = new Set(finalClusters.flatMap(c => c.articleIds));
+    const remainingArticles = candidates.filter(a => !existingIds.has(a.id));
+    
+    const minQualityFallback = seasonMode === 'off-season' ? 65 : 75;
+    const maxFreshnessFallback = seasonMode === 'off-season' ? 48 : 24;
+    
+    const singleStoryClusters = remainingArticles
+      .filter(a => getArticleQuality(a) >= minQualityFallback)
+      .filter(a => getArticleFreshness(a) <= maxFreshnessFallback)
+      .slice(0, 5)
+      .map(article => createSingleArticleCluster(article, seasonMode));
+    
+    finalClusters = [...finalClusters, ...singleStoryClusters].slice(0, maxClusters);
+  }
+
+  // FALLBACK LAYER 2: If still empty, create generic "Top Story" clusters
+  if (finalClusters.length === 0 && candidates.length > 0) {
+    const topStories = candidates
+      .slice(0, 5)
+      .map(article => createTopStoryCluster(article, seasonMode));
+    
+    finalClusters = topStories;
+  }
+
+  console.log('📈 TRENDING AFTER FALLBACK:', {
+    finalClusterCount: finalClusters.length,
+    clusterLabels: finalClusters.map(c => c.label),
+    clusterTypes: finalClusters.map(c => c.entityType)
+  });
+  
+  return finalClusters;
+}
+
+
+// Helper: Create a single-article cluster
+function createSingleArticleCluster(article: ArticleInput, seasonMode: SeasonMode): TrendCluster {
+  const contexts = detectContexts(article);
+  const primaryContext = choosePrimaryContext(contexts)[0] || 'generic_news';
+  const freshness = getArticleFreshness(article);
+  const quality = getArticleQuality(article);
+  
+  const entities = getEntityCandidates(article);
+  const entity = entities[0] || { type: 'topic', name: 'NFL', slug: 'nfl', confidence: 0.5 };
+  
+  const timeDecay = calculateTimeDecay(freshness);
+  const seasonBoost = SEASON_CONTEXT_PRIORITY[seasonMode][primaryContext] ?? 1.0;
+  const score = (quality / 100) * timeDecay * seasonBoost;
+  
+  return {
+    key: `single:${article.id}:${primaryContext}`,
+    entityType: entity.type,
+    entityName: entity.name,
+    entitySlug: entity.slug,
+    context: primaryContext,
+    contextLabel: CONTEXT_LABELS[primaryContext],
+    label: entity.type === 'topic' 
+      ? `${CONTEXT_LABELS[primaryContext]}`
+      : `${entity.name} ${CONTEXT_LABELS[primaryContext]}`,
+    articleCount: 1,
+    sourceCount: 1,
+    articleIds: [article.id],
+    score,
+    freshness,
+    debug: {
+      avgQuality: quality,
+      seasonBoost,
+      contextPriority: 1.0,
+      timeDecay,
+      sources: [article.source].filter((s): s is string => Boolean(s)),
+    },
+  };
+}
+
+// Helper: Create a generic "Top Story" cluster
+function createTopStoryCluster(article: ArticleInput, seasonMode: SeasonMode): TrendCluster {
+  const freshness = getArticleFreshness(article);
+  const quality = getArticleQuality(article);
+  const timeDecay = calculateTimeDecay(freshness);
+  const score = (quality / 100) * timeDecay * 0.8;  // Lower priority than real clusters
+  
+  return {
+    key: `top-story:${article.id}`,
+    entityType: 'topic',
+    entityName: 'NFL',
+    entitySlug: 'nfl',
+    context: 'generic_news',
+    contextLabel: 'Top Story',
+    label: 'Top Story',
+    articleCount: 1,
+    sourceCount: 1,
+    articleIds: [article.id],
+    score,
+    freshness,
+    debug: {
+      avgQuality: quality,
+      seasonBoost: 1.0,
+      contextPriority: 0.8,
+      timeDecay,
+      sources: [article.source].filter((s): s is string => Boolean(s)),
+    },
+  };
 }
 
 export function getCurrentSeasonMode(): SeasonMode {

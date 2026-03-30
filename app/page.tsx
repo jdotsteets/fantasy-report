@@ -273,6 +273,12 @@ export default async function Page({
     waiversNoHero,
     injuriesNoHero,
   ).slice(0, 100);
+  console.log('📈 TRENDING INPUT:', {
+    latestCount: latestNoHero.length,
+    rankingsCount: rankingsNoHero.length,
+    totalTrendingArticles: trendingArticles.length,
+    sampleTitles: trendingArticles.slice(0, 3).map(a => a.title?.substring(0, 50))
+  });
   
   const trendingClusters = buildTrendingClusters(trendingArticles, effectiveSeasonMode, 8);
   
