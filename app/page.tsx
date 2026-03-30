@@ -269,7 +269,10 @@ export default async function Page({
     dfsNoHero
   );
   
-  const scoredArticles = scoreAndSortArticles(allArticles, effectiveSeasonMode);
+  // Exclude reserved Free Agency items from feed pool
+  const allArticlesFiltered = allArticles.filter(a => !freeAgencyReservedIds.has(a.id));
+  
+  const scoredArticles = scoreAndSortArticles(allArticlesFiltered, effectiveSeasonMode);
 
   // Build server-side trending clusters FIRST
   const trendingArticles = uniqueArticles(
@@ -312,6 +315,16 @@ export default async function Page({
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
   });
+  
+  // Reserve top Free Agency items before feed consumption
+  const freeAgencyReserved = freeAgencyItems
+    .sort((a, b) => {
+      const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
+      const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
+      return bDate - aDate;
+    })
+    .slice(0, 10);
+  const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
   console.log('🔍 FREE AGENCY DEBUG:', {
     latestCount: latest.length,
     freeAgencyCount: freeAgencyItems.length,
@@ -340,7 +353,7 @@ export default async function Page({
   if (heroId) actualUsedInFeed.add(heroId);
 
   // Dedupe free agency and draft items against displayed feed
-  const uniqueFreeAgency = freeAgencyItems.filter(a => !actualUsedInFeed.has(a.id));
+  const uniqueFreeAgency = freeAgencyReserved.filter(a => a.id !== heroId);
   const uniqueDraft = draftItems.filter(a => !actualUsedInFeed.has(a.id));
 
 
