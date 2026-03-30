@@ -312,6 +312,11 @@ export default async function Page({
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
   });
+  console.log('🔍 FREE AGENCY DEBUG:', {
+    latestCount: latest.length,
+    freeAgencyCount: freeAgencyItems.length,
+    sampleTitles: freeAgencyItems.slice(0, 3).map(a => a.title?.substring(0, 50))
+  });
 
   const draftItems = latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
