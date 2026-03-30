@@ -325,6 +325,7 @@ export default async function Page({
     })
     .slice(0, 10);
   const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
+  
   console.log('🔍 FREE AGENCY DEBUG:', {
     latestCount: latest.length,
     freeAgencyCount: freeAgencyItems.length,
