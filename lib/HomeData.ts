@@ -26,6 +26,7 @@ export type HomeDataOptions = {
   limitInjuries?: number;
   limitDraft?: number;
   limitFreeAgency?: number;
+  maxAgeHours?: number;
   limitHero?: number;
   includeHeroCandidates?: boolean;
 };
@@ -338,7 +339,7 @@ export async function getHomeData(
   }
 
   const [news, rankings, startSit, advice, dfs, waivers, injury] = await Promise.all([
-    fetchSectionItems({ key: "news", limit: limits.news, ...shared }),
+    fetchSectionItems({ key: "news", limit: limits.news, maxAgeHours: opts.maxAgeHours, ...shared }),
     fetchSectionItems({ key: "rankings", limit: limits.rankings, ...shared }),
     fetchSectionItems({ key: "start-sit", limit: limits.startSit, ...shared }),
     fetchSectionItems({ key: "advice", limit: limits.advice, ...shared }),

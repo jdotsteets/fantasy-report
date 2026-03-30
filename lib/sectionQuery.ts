@@ -52,6 +52,9 @@ export type FetchSectionOpts = {
 };
 
 function newsPredicateSQL(): string {
+  // Broadened definition: "Latest News" means any recent NFL content
+  // Include general news, plus articles that may have specific topics but are still newsworthy
+  // Only EXCLUDE pure rankings/advice sections (which have their own dedicated sections)
   return `(
     a.primary_topic IS NULL
     OR a.primary_topic = 'news'
@@ -60,10 +63,7 @@ function newsPredicateSQL(): string {
       'start-sit',
       'waiver-wire',
       'dfs',
-      'injury',
-      'advice',
-      'nfl-draft',
-      'free-agency'
+      'advice'
     )
   )`;
 }
@@ -81,7 +81,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
 
   const key = opts.key || "news";
   const isNews = key === "news";
-  const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 72, 24 * 14));
+  const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 168, 24 * 14));  // Default 168h (7 days) for better offseason coverage
 
   const staticMode: "exclude" | "only" | "any" = opts.staticMode ?? "exclude";
   const staticType = (opts.staticType ?? "").trim() || null;

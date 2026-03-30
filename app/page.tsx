@@ -204,19 +204,24 @@ export default async function Page({
   const selectedTeam = teamId ? getTeamById(teamId) : null;
   const selectedSection = toSectionKey(sp.section);
   const week = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
+  
+  // Determine season mode for time windows and limits
+  const seasonMode = getEffectiveSeasonMode(new Date());
+  const isOffseason = seasonMode === 'off-season';
 
   const data = await getHomeData({
     sport: "nfl",
-    days: 60,
+    days: isOffseason ? 90 : 60,              // 90 days offseason, 60 regular
     week,
-    limitNews: 100,        // Increased from 18
-    limitRankings: 80,     // Increased from 16
-    limitStartSit: 80,     // Increased from 16
-    limitAdvice: 80,       // Increased from 16
-    limitDFS: 60,          // Increased from 12
-    limitWaivers: 80,      // Increased from 16
-    limitInjuries: 60,     // Increased from 12
-    limitHero: 50,         // Increased from 12
+    limitNews: isOffseason ? 200 : 150,       // 200 offseason, 150 regular
+    limitRankings: 100,                        // Increased from 80
+    limitStartSit: 80,
+    limitAdvice: 100,                          // Increased from 80
+    limitDFS: 80,                              // Increased from 60
+    limitWaivers: 80,
+    limitInjuries: 80,                         // Increased from 60
+    limitHero: 50,
+    maxAgeHours: isOffseason ? 168 : 72,      // 7 days offseason, 3 days regular         // Increased from 12
     selectedSection:
       selectedSection === "waivers" ? "waiver-wire" : selectedSection === "injury" ? "injury" : selectedSection,
   });
@@ -289,7 +294,6 @@ export default async function Page({
   const usedInFeed = new Set<number>(feed.map(a => a.id));
   usedInFeed.add(heroId || 0);
 
-  const seasonMode = getEffectiveSeasonMode(new Date());
   const freeAgencyItems = latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
