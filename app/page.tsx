@@ -255,6 +255,21 @@ export default async function Page({
   const waiversNoHero = removeHero(waivers, tempHeroId);
   const injuriesNoHero = removeHero(injuries, tempHeroId);
 
+  const freeAgencyItems = latest.filter((a) => {
+    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
+    return FREE_AGENCY_RX.test(hay);
+  });
+  
+  // Reserve top Free Agency items before feed consumption
+  const freeAgencyReserved = freeAgencyItems
+    .sort((a, b) => {
+      const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
+      const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
+      return bDate - aDate;
+    })
+    .slice(0, 10);
+  const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
+
   // Build intelligent scored feed
     // Get season mode for trending + feed scoring
   const effectiveSeasonMode = getCurrentSeasonMode();
@@ -311,20 +326,7 @@ export default async function Page({
   const usedInFeed = new Set<number>(feed.map(a => a.id));
   usedInFeed.add(heroId || 0);
 
-  const freeAgencyItems = latest.filter((a) => {
-    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-    return FREE_AGENCY_RX.test(hay);
-  });
   
-  // Reserve top Free Agency items before feed consumption
-  const freeAgencyReserved = freeAgencyItems
-    .sort((a, b) => {
-      const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
-      const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
-      return bDate - aDate;
-    })
-    .slice(0, 10);
-  const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
   
   console.log('🔍 FREE AGENCY DEBUG:', {
     latestCount: latest.length,
