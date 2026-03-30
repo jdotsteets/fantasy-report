@@ -179,7 +179,7 @@ function getEffectiveSeasonMode(now: Date): SeasonMode {
   }
   return getSeasonMode(now);
 }const FREE_AGENCY_RX =
-  /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured)\b/i;
+  /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured|interest|visit(?:ed|ing)?|meeting|expected\s+to|agree(?:s|d|ment)?|terms|deal|joining|headed\s+to|finalizing)/i;
 
 const DRAFT_RX =
   /\b(mock\s+draft|nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down)\b/i;
@@ -231,6 +231,14 @@ export default async function Page({
   const startSit = data.items.startSit.map(mapRow);
   const advice = data.items.advice.map(mapRow);
   const dfs = data.items.dfs.map(mapRow);
+  
+  // Filter DFS to NFL-only in offseason (prevent NBA/MLB content)
+  const dfsFiltered = isOffseason
+    ? dfs.filter(a => {
+        const hay = `${a.title ?? ""} ${a.url ?? ""}`;
+        return /\b(nfl|football|best\s+ball)\b/i.test(hay) && !/\b(nba|mlb|baseball|basketball)\b/i.test(hay);
+      })
+    : dfs;
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
@@ -243,7 +251,7 @@ export default async function Page({
   const rankingsNoHero = removeHero(rankings, tempHeroId);
   const startSitNoHero = removeHero(startSit, tempHeroId);
   const adviceNoHero = removeHero(advice, tempHeroId);
-  const dfsNoHero = removeHero(dfs, tempHeroId);
+  const dfsNoHero = removeHero(dfsFiltered, tempHeroId);
   const waiversNoHero = removeHero(waivers, tempHeroId);
   const injuriesNoHero = removeHero(injuries, tempHeroId);
 
