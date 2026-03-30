@@ -306,6 +306,17 @@ export default async function Page({
   let filteredDfs: Article[] = dfsNoHero;
   let filteredWaivers: Article[] = waiversNoHero;
   let filteredInjuries: Article[] = injuriesNoHero;
+
+  // RECALCULATE usedInFeed based on displayed feed items (not all 14)
+  const displayedFeed = filteredFeed.slice(0, 6);
+  const actualUsedInFeed = new Set<number>(displayedFeed.map(a => a.id));
+  if (heroId) actualUsedInFeed.add(heroId);
+
+  // Dedupe free agency and draft items against displayed feed
+  const uniqueFreeAgency = freeAgencyItems.filter(a => !actualUsedInFeed.has(a.id));
+  const uniqueDraft = draftItems.filter(a => !actualUsedInFeed.has(a.id));
+
+
   let totalFilteredCount = 0;
 
   if (selectedTeam) {
@@ -324,7 +335,7 @@ export default async function Page({
 
   // Deduplicate articles across all sections
   // Start with articles already used in hero + feed
-  const seenIds = new Set<number>(usedInFeed);
+  const seenIds = new Set<number>(actualUsedInFeed);
   
   // Deduplicate each section in order
   const uniqueLatest = filteredLatest.slice(0, 20).filter(a => {
@@ -334,7 +345,7 @@ export default async function Page({
   });
   
   // Track feed for other sections
-  filteredFeed.forEach(a => seenIds.add(a.id));
+
   
   const uniqueRankings = filteredRankings.filter(a => {
     if (seenIds.has(a.id)) return false;
@@ -451,16 +462,7 @@ export default async function Page({
             <BetaDraftSection articles={draftItems.slice(0, 20)} />
             ) : null}
 
-            <BetaLoadMoreSection
-              title="More news"
-              subtitle="Quick-hit headlines from around the league"
-              sectionKey="news"
-              initialItems={filteredLatest.slice(2, 10)}
-              pageSize={10}
-              initialDisplay={8}
-              variant="headlines"
-            />
-          </aside>
+            </aside>
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-3">
@@ -469,7 +471,7 @@ export default async function Page({
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
               sectionKey="news"
-              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(freeAgencyItems, tempHeroId), selectedTeam.id) as Article[] : removeHero(freeAgencyItems, tempHeroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(uniqueFreeAgency, tempHeroId), selectedTeam.id) as Article[] : removeHero(uniqueFreeAgency, tempHeroId)}
               pageSize={10}
               initialDisplay={4}
             />
@@ -478,7 +480,7 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(draftItems, tempHeroId), selectedTeam.id) as Article[] : removeHero(draftItems, tempHeroId)}
+              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(uniqueDraft, tempHeroId), selectedTeam.id) as Article[] : removeHero(uniqueDraft, tempHeroId)}
               pageSize={10}
               initialDisplay={4}
             />
