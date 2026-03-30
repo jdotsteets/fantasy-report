@@ -11,6 +11,7 @@ import FilterBanner from "@/components/beta/FilterBanner";
 import LatestTransactions from "@/components/beta/LatestTransactions";
 import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
 import { buildTrendingClusters, getCurrentSeasonMode } from "@/lib/trending";
+import { scoreAndSortArticles, balanceFeed } from "@/lib/feedScore";
 import { getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams-server";
 
 import type { Article } from "@/types/sources";
@@ -228,7 +229,13 @@ export default async function Page({
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
-  const hero = latest.find(hasRealImage) ?? latest[0] ?? rankings[0] ?? startSit[0];
+  // Select hero: top scored article with image OR first with image
+  const heroPool = [...latest.slice(0, 10), ...rankings.slice(0, 5), ...injuries.slice(0, 5)];
+  const scoredHeroPool = scoreAndSortArticles(heroPool, getCurrentSeasonMode());
+  const hero = scoredHeroPool.find(hasRealImage) ?? 
+               latest.find(hasRealImage) ?? 
+               latest[0] ?? 
+               rankings[0];
   const heroId = hero?.id ?? null;
 
   const latestNoHero = removeHero(latest, heroId);
@@ -239,7 +246,22 @@ export default async function Page({
   const waiversNoHero = removeHero(waivers, heroId);
   const injuriesNoHero = removeHero(injuries, heroId);
 
-  const feed = uniqueArticles(latestNoHero, rankingsNoHero, adviceNoHero, startSitNoHero).slice(0, 14);
+  // Build intelligent scored feed
+    // Get season mode for trending + feed scoring
+  const effectiveSeasonMode = getCurrentSeasonMode();
+
+  const allArticles = uniqueArticles(
+    latestNoHero,
+    rankingsNoHero,
+    adviceNoHero,
+    startSitNoHero,
+    waiversNoHero,
+    injuriesNoHero,
+    dfsNoHero
+  );
+  
+  const scoredArticles = scoreAndSortArticles(allArticles, effectiveSeasonMode);
+  const feed = balanceFeed(scoredArticles, effectiveSeasonMode, 14);
   // Build server-side trending clusters
   const trendingArticles = uniqueArticles(
     latestNoHero,
@@ -251,8 +273,6 @@ export default async function Page({
     injuriesNoHero
   ).slice(0, 100); // Process top 100 recent articles
   
-  // Season mode already computed below
-  const effectiveSeasonMode = getCurrentSeasonMode(); // For trending only
   const trendingClusters = buildTrendingClusters(trendingArticles, effectiveSeasonMode, 8);
 
   const seasonMode = getEffectiveSeasonMode(new Date());
