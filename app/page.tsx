@@ -243,7 +243,7 @@ export default async function Page({
     : dfs;
 
   // Further filter Fantasy Prep: exclude pure daily slate/optimizer content
-  const DAILY_SLATE_RX = /(slate|lineups?|optimizer|DFS picks|fantasys+picks|daily|showdown|captain|GPP|cashs+game)/i;
+  const DAILY_SLATE_RX = /(slate|lineups?|optimizer|DFS\\s+picks|fantasy\\s+picks|daily|showdown|captain|GPP|cash\\s+game|sportsbook|prop\\s+bet|betting|odds|spread|moneyline|parlay|fanduel|draftkings|pick[\\s-]?em|survivor|promo|bonus|entries?|offer)/i;
   const fantasyPrepItems = dfsFiltered.filter(a => {
     const title = a.title ?? "";
     // Keep: ADP, best ball, rankings, sleepers, role/workload analysis
