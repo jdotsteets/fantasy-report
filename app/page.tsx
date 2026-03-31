@@ -180,6 +180,8 @@ function getEffectiveSeasonMode(now: Date): SeasonMode {
   return getSeasonMode(now);
 }const FREE_AGENCY_RX =
   /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured|interest|visit(?:ed|ing)?|meeting|expected\s+to|agree(?:s|d|ment)?|terms|deal|joining|headed\s+to|finalizing)/i;
+  // Exclude draft/rookie content from Free Agency
+  const FREE_AGENCY_EXCLUDE_RX = /\b(draft\s+guide|rookie\s+profile|mock\s+draft|nfl\s+draft(?!.*(sign|agree|contract|trade|free\s+agent))|rookie(?!\s+free\s+agent)|prospect|scouting\s+report|big\s+board|combine|dynasty\s+rookie)\b/i;
 
 const DRAFT_RX =
   /\b(mock\s+draft|nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down)\b/i;
@@ -260,7 +262,7 @@ export default async function Page({
   console.log('[info] FA STEP 1.5: freeAgencyPool.length=', freeAgencyPool.length);
   const freeAgencyItems = freeAgencyPool.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-    return FREE_AGENCY_RX.test(hay);
+    return FREE_AGENCY_RX.test(hay) && !FREE_AGENCY_EXCLUDE_RX.test(hay);
   });
 
   // Fallback: if strict regex returns 0, use broader offseason criteria
@@ -270,7 +272,7 @@ export default async function Page({
     const FALLBACK_RX = /\b(free\s+agency|post-free\s+agency|landing\s+spot|team\s+fit|depth\s+chart|projection|ranking|contract|roster|starting|opportunity|offseason|moves?)\b/i;
     finalFreeAgencyItems = freeAgencyPool.filter((a) => {
       const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-      return FALLBACK_RX.test(hay);
+      return FALLBACK_RX.test(hay) && !FREE_AGENCY_EXCLUDE_RX.test(hay);
     }).sort((a, b) => {
       const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
       const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
