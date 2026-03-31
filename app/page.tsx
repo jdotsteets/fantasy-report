@@ -1,4 +1,4 @@
-// Build cache buster: 03/28/2026, 18:14:39 - FRESH CONTENT FIX
+﻿// Build cache buster: 03/28/2026, 18:14:39 - FRESH CONTENT FIX
 import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
@@ -259,9 +259,25 @@ export default async function Page({
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
   });
+
+  // Fallback: if strict regex returns 0, use broader offseason criteria
+  let finalFreeAgencyItems = freeAgencyItems;
+  if (freeAgencyItems.length === 0) {
+    console.log('[info] FA FALLBACK: strict regex returned 0, using broader criteria');
+    const FALLBACK_RX = /\b(free\s+agency|post-free\s+agency|landing\s+spot|team\s+fit|depth\s+chart|projection|ranking|contract|roster|starting|opportunity|offseason|moves?)\b/i;
+    finalFreeAgencyItems = latest.filter((a) => {
+      const hay = ` `;
+      return FALLBACK_RX.test(hay);
+    }).sort((a, b) => {
+      const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
+      const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
+      return bDate - aDate;
+    }).slice(0, 15);
+    console.log('[info] FA FALLBACK: found', finalFreeAgencyItems.length, 'items');
+  }
   
   // Reserve top Free Agency items before feed consumption
-  const freeAgencyReserved = freeAgencyItems
+  const freeAgencyReserved = finalFreeAgencyItems
     .sort((a, b) => {
       const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
       const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
@@ -270,7 +286,7 @@ export default async function Page({
     .slice(0, 10);
   const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
   console.log('[info] FA STEP 1: latest.length=', latest.length);
-  console.log('[info] FA STEP 2: freeAgencyItems.length=', freeAgencyItems.length);
+  console.log('[info] FA STEP 2: freeAgencyItems=', freeAgencyItems.length, 'final=', finalFreeAgencyItems.length);
   console.log('[info] FA STEP 3: freeAgencyReserved.length=', freeAgencyReserved.length);
 
   // Build intelligent scored feed
@@ -302,7 +318,7 @@ export default async function Page({
     waiversNoHero,
     injuriesNoHero,
   ).slice(0, 100);
-  console.log('📈 TRENDING INPUT:', {
+  console.log('ðŸ“ˆ TRENDING INPUT:', {
     latestCount: latestNoHero.length,
     rankingsCount: rankingsNoHero.length,
     totalTrendingArticles: trendingArticles.length,
@@ -331,7 +347,7 @@ export default async function Page({
 
   
   
-  console.log('🔍 FREE AGENCY DEBUG:', {
+  console.log('ðŸ” FREE AGENCY DEBUG:', {
     latestCount: latest.length,
     freeAgencyCount: freeAgencyItems.length,
     sampleTitles: freeAgencyItems.slice(0, 3).map(a => a.title?.substring(0, 50))
@@ -545,7 +561,7 @@ export default async function Page({
             />
           ) : (
             <BetaLoadMoreSection
-              title={`Waiver wire · Week ${week}`}
+              title={`Waiver wire Â· Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
               initialItems={uniqueWaivers}
