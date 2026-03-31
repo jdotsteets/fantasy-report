@@ -1,4 +1,4 @@
-// lib/contentFilter.ts
+﻿// lib/contentFilter.ts
 // Content filtering & lightweight classification for NFL fantasy ingestion
 // - Strong hard-blocks for junk (sitemaps, feeds, tags/categories, etc.)
 // - Other-sports deny
@@ -22,7 +22,7 @@ type HostAllow = {
   rx: RegExp;
   allowPaths?: RegExp[];   // whitelist sections
   blockAllElse?: boolean;  // if true, allow only allowPaths
-  blockPaths?: RegExp[];   // ⬅️ new: specific sections to block
+  blockPaths?: RegExp[];   // â¬…ï¸ new: specific sections to block
 };
 
 // evaluator (no any)
@@ -67,7 +67,7 @@ export type UrlClassification =
         | "analysis"
         | "other"
         | "fantasy"
-        | "team";   // ← add these two
+        | "team";   // â† add these two
       staticType?: "rankings" | "tools" | "depth-chart" | "other";
       sectionType?:
         | "rankings-index"
@@ -99,7 +99,7 @@ const PLAYER_PAGE_CANDIDATE: RegExp[] = [
   /\/player\/[a-z0-9-]+/i,              // generic /player/<slug>
   /\/nfl\/[a-z0-9-]+\/[0-9a-f-]{8,}\/?$/i, // nbcsports style .../<slug>/<uuid>
   /\/stats\/players?\b/i,               // player stat pages
-  /\/player-news\b/i                    // player news hubs (still keep; we’ll classify later)
+  /\/player-news\b/i                    // player news hubs (still keep; weâ€™ll classify later)
 ];
 
 export function looksLikePlayerPageUrl(url: string): boolean {
@@ -113,10 +113,11 @@ export function looksLikePlayerPageUrl(url: string): boolean {
 }
 
 
-// ───────────────────────────── Regex & helpers ─────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Regex & helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const NFL_WORD = /\bnfl\b/i;
 const FANTASY_FOOTBALL = /\bfantasy[- ]football\b/i;
+const NFL_CONTEXT = /(dynasty|rookie|draft|mock\s+draft|free\s+agency|landing\s+spot|depth\s+chart|qb|rb|wr|te|roster|contract|signing|re-?sign(?:ed|ing)?|trade(?:d|s)?|waiver|extension|starter|backup)/i;
 
 // Obvious non-NFL league markers (path or title)
 const NON_NFL_PATH_DENY: RegExp[] = [
@@ -143,7 +144,7 @@ const JUNK_PATH_DENY: RegExp[] = [
   /\.xml(?:$|\?)/i,
 ];
 
-// Non-HTML asset extensions we never want to ingest as “articles”
+// Non-HTML asset extensions we never want to ingest as â€œarticlesâ€
 const NON_HTML_EXT = /\.(pdf|csv|json|zip|webp|gif|mp4|mp3|m4a|mov|avi|wav)(?:$|\?)/i;
 
 // Date pattern in URL
@@ -220,7 +221,7 @@ const GAMBLING_HOST_RULES: HostAllow[] = [
   // DraftKings: allow only editorial at /playbook/
   { rx: /(^|\.)draftkings\.com$/i, allowPaths: [/^\/playbook\//], blockAllElse: true },
 
-  // ✅ Sharp Football (both domains): block /sportsbook/*
+  // âœ… Sharp Football (both domains): block /sportsbook/*
   { rx: /(^|\.)sharpfootballanalysis\.com$/i, blockPaths: [/^\/sportsbook\//i] },
   { rx: /(^|\.)sharpfootball\.com$/i,        blockPaths: [/^\/sportsbook\//i] },
 
@@ -238,7 +239,7 @@ function gamblingHostBlocked(host: string, path: string): boolean {
   return false;
 }
 
-/** Marketing/policy/house-rules/offer pages we don’t want */
+/** Marketing/policy/house-rules/offer pages we donâ€™t want */
 const MARKETING_RULES_DENY: RegExp[] = [
   /\/(policy|policies|privacy|terms|tos|help|support|faq)s?\/?/i,
   /\/(rules|house[-_]?rules|contest[-_]?rules)\/?/i,
@@ -246,7 +247,7 @@ const MARKETING_RULES_DENY: RegExp[] = [
   /\/(promotions?|offers?|bonus|bonuses|deposit|withdrawals?)\/?/i,
   /\/(refer|referral|affiliates?)\/?/i,
   /\/responsible[-_]?gaming\/?/i,
-  // very specific “reboot policy” type pages
+  // very specific â€œreboot policyâ€ type pages
   /reboot[-_]?policy/i,
 ];
 
@@ -304,7 +305,7 @@ function looksSectionHubPath(pathname: string): boolean {
   return SECTION_HUBS.test(pathname);
 }
 
-// ───────────────────────────── Primary allow-list ─────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Primary allow-list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Legacy/simple decision used by ingest to quickly filter URLs.
@@ -315,7 +316,7 @@ export function allowItem(item: FeedLike, url: string): boolean {
   const host = getHost(url) || "";
   const path = getPath(url);
 
-  // ⛔ Razzball: only keep the football subdomain
+  // â›” Razzball: only keep the football subdomain
   if (/(^|\.)razzball\.com$/i.test(host) && host !== "football.razzball.com") {
     return false;
   }
@@ -326,7 +327,7 @@ export function allowItem(item: FeedLike, url: string): boolean {
   // Block other sports
   if (NON_NFL_PATH_DENY.some((rx) => rx.test(path))) return false;
 
-    // ⛔ Other sports (title/description)
+    // â›” Other sports (title/description)
   const txt = `${item.title ?? ""} ${item.description ?? ""}`;
   if (NON_NFL_TEXT_DENY.test(txt)) return false;
 
@@ -349,14 +350,14 @@ export function allowItem(item: FeedLike, url: string): boolean {
   }
 
   // Positive boosts (post-blocks)
-  if (NFL_WORD.test(path) || FANTASY_FOOTBALL.test(path)) return true;
+  if (NFL_WORD.test(path) || FANTASY_FOOTBALL.test(path) || NFL_CONTEXT.test(path)) return true;
 
   // Domain-specific boost: FantasyPros /nfl/ path
   if (host.endsWith("fantasypros.com") && path.includes("/nfl/")) return true;
 
   // Fallback: use title/description text for NFL/fantasy hints
   const t = `${item.title ?? ""} ${item.description ?? ""}`;
-  if (NFL_WORD.test(t) || FANTASY_FOOTBALL.test(t)) return true;
+  if (NFL_WORD.test(t) || FANTASY_FOOTBALL.test(t) || NFL_CONTEXT.test(t)) return true;
 
 
 
@@ -365,7 +366,7 @@ export function allowItem(item: FeedLike, url: string): boolean {
   return false;
 }
 
-// ───────────────────────────── Category classifier ─────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Category classifier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Classifies league-ish category from title/url/domain.
@@ -421,7 +422,7 @@ export function classifyLeagueCategory(
   return "other";
 }
 
-// ───────────────────────────── Richer URL classifier (optional) ─────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Richer URL classifier (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * classifyUrl: richer decision tree for routing URLs into:
@@ -480,7 +481,7 @@ if (NON_NFL_PATH_DENY.some((rx) => rx.test(u.pathname)) || NON_NFL_TEXT_DENY.tes
 
 
 
-  // Section hubs → capture for UI, not articles feed
+  // Section hubs â†’ capture for UI, not articles feed
   if (looksHub) {
     return {
       decision: "capture_section",
@@ -501,7 +502,7 @@ if (NON_NFL_PATH_DENY.some((rx) => rx.test(u.pathname)) || NON_NFL_TEXT_DENY.tes
     };
   }
 
-  // Static rankings (evergreen/index) → keep, but mark static
+  // Static rankings (evergreen/index) â†’ keep, but mark static
   if (looksStaticRanking && league === "nfl") {
     return {
       decision: "include_static",
@@ -546,7 +547,7 @@ if (NON_NFL_PATH_DENY.some((rx) => rx.test(u.pathname)) || NON_NFL_TEXT_DENY.tes
     };
   }
 
-  // Shallow but NFL-ish → capture as a section landing
+  // Shallow but NFL-ish â†’ capture as a section landing
   if (league === "nfl" && depth <= 2) {
     return {
       decision: "capture_section",
