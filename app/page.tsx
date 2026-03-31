@@ -241,6 +241,15 @@ export default async function Page({
         return /\b(nfl|football|best\s+ball)\b/i.test(hay) && !/\b(nba|mlb|baseball|basketball)\b/i.test(hay);
       })
     : dfs;
+
+  // Further filter Fantasy Prep: exclude pure daily slate/optimizer content
+  const DAILY_SLATE_RX = /(slate|lineups?|optimizer|DFS picks|fantasys+picks|daily|showdown|captain|GPP|cashs+game)/i;
+  const fantasyPrepItems = dfsFiltered.filter(a => {
+    const title = a.title ?? "";
+    // Keep: ADP, best ball, rankings, sleepers, role/workload analysis
+    // Exclude: daily slate picks, optimizer tips, lineup construction
+    return !DAILY_SLATE_RX.test(title);
+  });
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
@@ -253,7 +262,7 @@ export default async function Page({
   const rankingsNoHero = removeHero(rankings, tempHeroId);
   const startSitNoHero = removeHero(startSit, tempHeroId);
   const adviceNoHero = removeHero(advice, tempHeroId);
-  const dfsNoHero = removeHero(dfsFiltered, tempHeroId);
+  const dfsNoHero = removeHero(fantasyPrepItems, tempHeroId);
   const waiversNoHero = removeHero(waivers, tempHeroId);
   const injuriesNoHero = removeHero(injuries, tempHeroId);
 
@@ -577,8 +586,8 @@ export default async function Page({
           )}
 
           <BetaLoadMoreSection
-            title="DFS"
-            subtitle="Slate breakdowns and optimizer tools"
+            title="Fantasy Prep"
+            subtitle="Best ball, ADP, sleepers, and early prep"
             sectionKey="dfs"
             initialItems={uniqueDfs}
             pageSize={10}
