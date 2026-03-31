@@ -255,7 +255,10 @@ export default async function Page({
   const waiversNoHero = removeHero(waivers, tempHeroId);
   const injuriesNoHero = removeHero(injuries, tempHeroId);
 
-  const freeAgencyItems = latest.filter((a) => {
+  // Build Free Agency from latest + rankings + advice (offseason FA coverage appears in all three)
+  const freeAgencyPool = uniqueArticles(latest, rankings, advice);
+  console.log('[info] FA STEP 1.5: freeAgencyPool.length=', freeAgencyPool.length);
+  const freeAgencyItems = freeAgencyPool.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
   });
@@ -265,7 +268,7 @@ export default async function Page({
   if (freeAgencyItems.length === 0) {
     console.log('[info] FA FALLBACK: strict regex returned 0, using broader criteria');
     const FALLBACK_RX = /\b(free\s+agency|post-free\s+agency|landing\s+spot|team\s+fit|depth\s+chart|projection|ranking|contract|roster|starting|opportunity|offseason|moves?)\b/i;
-    finalFreeAgencyItems = latest.filter((a) => {
+    finalFreeAgencyItems = freeAgencyPool.filter((a) => {
       const hay = ` `;
       return FALLBACK_RX.test(hay);
     }).sort((a, b) => {
