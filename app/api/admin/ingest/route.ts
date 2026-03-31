@@ -1,4 +1,4 @@
-// app/api/admin/ingest/route.ts
+﻿// app/api/admin/ingest/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createJob, appendEvent, setProgress, finishJobSuccess, failJob } from "@/lib/jobs";
 import { runIngestOnce } from "@/lib/ingestRunner";
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   const sport = typeof body.sport === "string" ? body.sport : null;
   const method = toMethod(body.method ?? undefined);
   // Prefer the external jobId from the commit route if provided; otherwise use our internal job id.
-  // We’ll compute the final value after createJob so we can fall back to job.id.
+  // Weâ€™ll compute the final value after createJob so we can fall back to job.id.
   const externalJobId = body.jobId ?? null;
 
   const job = await createJob(
@@ -93,6 +93,8 @@ export async function POST(req: NextRequest) {
 
     // Run ingest (streaming progress)
     let processed = 0;
+    let inserted = 0;
+    let updated = 0;
     for await (const step of runIngestOnce({
       sourceId,
       limit,
@@ -104,6 +106,13 @@ export async function POST(req: NextRequest) {
       if (step.delta) {
         processed += step.delta;
         await setProgress(job.id, processed);
+      }
+      // Capture counts from final summary yield
+      if (step.meta?.inserted !== undefined) {
+        inserted = Number(step.meta.inserted) || 0;
+      }
+      if (step.meta?.updated !== undefined) {
+        updated = Number(step.meta.updated) || 0;
       }
       await appendEvent(job.id, step.level ?? "info", step.message, {
         ...(step.meta ?? {}),
@@ -122,7 +131,7 @@ export async function POST(req: NextRequest) {
     });
 
     await finishJobSuccess(job.id, "Ingest finished");
-    return NextResponse.json({ ok: true, job_id: job.id, jobId: trackingJobId });
+    return NextResponse.json({ ok: true, job_id: job.id, jobId: trackingJobId, new: inserted, processed: inserted + updated });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
 
