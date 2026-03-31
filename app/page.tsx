@@ -269,9 +269,9 @@ export default async function Page({
     })
     .slice(0, 10);
   const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
-  console.log('🔍 FA STEP 1: latest.length=', latest.length);
-  console.log('🔍 FA STEP 2: freeAgencyItems.length=', freeAgencyItems.length);
-  console.log('🔍 FA STEP 3: freeAgencyReserved.length=', freeAgencyReserved.length);
+  console.log('[info] 🔍 FA STEP 1: latest.length=', latest.length);
+  console.log('[info] 🔍 FA STEP 2: freeAgencyItems.length=', freeAgencyItems.length);
+  console.log('[info] 🔍 FA STEP 3: freeAgencyReserved.length=', freeAgencyReserved.length);
 
   // Build intelligent scored feed
     // Get season mode for trending + feed scoring
@@ -360,7 +360,7 @@ export default async function Page({
 
   // Dedupe free agency and draft items against displayed feed
   const uniqueFreeAgency = freeAgencyReserved.filter(a => a.id !== heroId);
-  console.log('🔍 FA STEP 4: uniqueFreeAgency.length=', uniqueFreeAgency.length, 'heroId=', heroId, 'tempHeroId=', tempHeroId, 'equal=', heroId === tempHeroId);
+  console.log('[info] 🔍 FA STEP 4: uniqueFreeAgency.length=', uniqueFreeAgency.length, 'heroId=', heroId, 'tempHeroId=', tempHeroId, 'equal=', heroId === tempHeroId);
   const uniqueDraft = draftItems.filter(a => !actualUsedInFeed.has(a.id));
 
 
@@ -520,15 +520,15 @@ export default async function Page({
               sectionKey="news"
               initialItems={(() => {
               const afterRemoveHero = removeHero(uniqueFreeAgency, tempHeroId);
-              console.log('🔍 FA STEP 5: after removeHero(uniqueFreeAgency, tempHeroId).length=', afterRemoveHero.length);
+              console.log('[info] 🔍 FA STEP 5: after removeHero(uniqueFreeAgency, tempHeroId).length=', afterRemoveHero.length);
               if (selectedTeam) {
                 const afterTeamFilter = filterArticlesByTeam(afterRemoveHero, selectedTeam.id) as Article[];
-                console.log('🔍 FA STEP 6: after selectedTeam filter.length=', afterTeamFilter.length, 'team=', selectedTeam.id);
-                console.log('🔍 FA STEP 7: FINAL initialItems.length=', afterTeamFilter.length);
+                console.log('[info] 🔍 FA STEP 6: after selectedTeam filter.length=', afterTeamFilter.length, 'team=', selectedTeam.id);
+                console.log('[info] 🔍 FA STEP 7: FINAL initialItems.length=', afterTeamFilter.length);
                 return afterTeamFilter;
               }
-              console.log('🔍 FA STEP 6: no selectedTeam');
-              console.log('🔍 FA STEP 7: FINAL initialItems.length=', afterRemoveHero.length);
+              console.log('[info] 🔍 FA STEP 6: no selectedTeam');
+              console.log('[info] 🔍 FA STEP 7: FINAL initialItems.length=', afterRemoveHero.length);
               return afterRemoveHero;
             })()}
               pageSize={10}
