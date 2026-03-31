@@ -117,7 +117,11 @@ export function looksLikePlayerPageUrl(url: string): boolean {
 
 const NFL_WORD = /\bnfl\b/i;
 const FANTASY_FOOTBALL = /\bfantasy[- ]football\b/i;
-const NFL_CONTEXT = /(dynasty|rookie|draft|mock\s+draft|free\s+agency|landing\s+spot|depth\s+chart|qb|rb|wr|te|roster|contract|signing|re-?sign(?:ed|ing)?|trade(?:d|s)?|waiver|extension|starter|backup)/i;
+// Strong NFL/fantasy signals
+const NFL_STRONG = /(nfl|fantasy.?football|dynasty|rookie|draft|mock.?draft|free.?agency|landing.?spot|depth.?chart|roster|contract|signing|re-?sign(?:ed|ing)?|trade(?:d|s)?|waiver|extension)/i;
+
+// Weak signals (position/role keywords)
+const NFL_WEAK = /(qb|rb|wr|te|starter|backup)/i;
 
 // Obvious non-NFL league markers (path or title)
 const NON_NFL_PATH_DENY: RegExp[] = [
@@ -350,14 +354,29 @@ export function allowItem(item: FeedLike, url: string): boolean {
   }
 
   // Positive boosts (post-blocks)
-  if (NFL_WORD.test(path) || FANTASY_FOOTBALL.test(path) || NFL_CONTEXT.test(path)) return true;
+  // Check for strong signals in path
+  if (NFL_WORD.test(path) || FANTASY_FOOTBALL.test(path) || NFL_STRONG.test(path)) return true;
+  
+  // Check for weak signals in path (need 2+)
+  const pathWeakMatches = (path.match(NFL_WEAK) || []).length;
+  if (pathWeakMatches >= 2) return true;
 
   // Domain-specific boost: FantasyPros /nfl/ path
   if (host.endsWith("fantasypros.com") && path.includes("/nfl/")) return true;
 
   // Fallback: use title/description text for NFL/fantasy hints
   const t = `${item.title ?? ""} ${item.description ?? ""}`;
-  if (NFL_WORD.test(t) || FANTASY_FOOTBALL.test(t) || NFL_CONTEXT.test(t)) return true;
+  // Strong signal in title/description
+  if (NFL_WORD.test(t) || FANTASY_FOOTBALL.test(t) || NFL_STRONG.test(t)) return true;
+  
+  // Weak signals in title/description (need 2+)
+  const titleWeakMatches = (t.match(new RegExp(NFL_WEAK, 'gi')) || []).length;
+  if (titleWeakMatches >= 2) return true;
+  
+  // Trusted domain + 1 weak signal
+  const trustedDomains = ['fantasypros.com', 'rotoballer.com', 'thefantasyfootballers.com', 'playerprofiler.com'];
+  const isTrusted = trustedDomains.some(d => host.endsWith(d));
+  if (isTrusted && (pathWeakMatches >= 1 || titleWeakMatches >= 1)) return true;
 
 
 
