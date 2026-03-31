@@ -269,7 +269,7 @@ export default async function Page({
     console.log('[info] FA FALLBACK: strict regex returned 0, using broader criteria');
     const FALLBACK_RX = /\b(free\s+agency|post-free\s+agency|landing\s+spot|team\s+fit|depth\s+chart|projection|ranking|contract|roster|starting|opportunity|offseason|moves?)\b/i;
     finalFreeAgencyItems = freeAgencyPool.filter((a) => {
-      const hay = ` `;
+      const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
       return FALLBACK_RX.test(hay);
     }).sort((a, b) => {
       const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
