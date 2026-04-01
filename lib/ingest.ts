@@ -415,10 +415,11 @@ export async function upsertArticle(row: ArticleInput): Promise<UpsertResult> {
   };
   const publishedSource = normalizeSource(resolvedSrc);
 
-  // 3) Final published_at value
+  // 3) Final published_at value (NEVER null - fallback to NOW)
   const publishedAt =
     publishedFromInput ??
-    (resolvedIso ? toDateOrNull(resolvedIso) : null);
+    (resolvedIso ? toDateOrNull(resolvedIso) : null) ??
+    new Date(); // Guarantee non-null for consistent sorting
 
   // normalize arrays (empty -> null so NULLIF/text[] casts behave)
   const topicsArr  = Array.isArray(row.topics)  && row.topics.length  ? row.topics  : null;
@@ -939,13 +940,15 @@ if (await isUrlBlocked(earlyCanon)) {
   continue;
 }
 
-    // Normalize published_at
+    // Normalize published_at (fallback to NOW if missing)
     let publishedAt: Date | null = null;
     const p = it?.publishedAt;
     if (p) {
       const d = new Date(p as string);
       if (!Number.isNaN(d.valueOf())) publishedAt = d;
     }
+    // CRITICAL: Ensure published_at is never null - fallback to discovery time
+    if (!publishedAt) publishedAt = new Date();
 
     // 2) Optional scrape enrich
     // Ensure canonical is *always* a string
