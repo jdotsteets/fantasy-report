@@ -604,6 +604,46 @@ export default async function Page({
           />
         </div>
 
+        {/* Freshness status card */}
+        {latest.length > 0 && (() => {
+          const newestDate = new Date(latest[0].discovered_at ?? latest[0].published_at ?? 0);
+          const ageMinutes = Math.floor((Date.now() - newestDate.getTime()) / 60000);
+          const ageHours = Math.floor(ageMinutes / 60);
+          const ageDays = Math.floor(ageHours / 24);
+          
+          let ageText = '';
+          let statusLabel = '';
+          let statusColor = '';
+          
+          if (ageDays >= 1) {
+            ageText = `${ageDays}d ${ageHours % 24}h ago`;
+            statusLabel = ageDays >= 2 ? 'Stale' : 'Lagging';
+            statusColor = ageDays >= 2 ? 'text-red-600' : 'text-amber-600';
+          } else if (ageHours >= 1) {
+            ageText = `${ageHours}h ${ageMinutes % 60}m ago`;
+            statusLabel = ageHours >= 6 ? 'Lagging' : 'Fresh';
+            statusColor = ageHours >= 6 ? 'text-amber-600' : 'text-emerald-600';
+          } else {
+            ageText = `${ageMinutes}m ago`;
+            statusLabel = 'Fresh';
+            statusColor = 'text-emerald-600';
+          }
+          
+          return (
+            <div className="mt-8 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-600">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-zinc-700">Content freshness:</span>{' '}
+                  <span className={`font-semibold ${statusColor}`}>{statusLabel}</span>
+                </div>
+                <div className="text-zinc-500">
+                  Last updated {ageText}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="mt-10 rounded-2xl border border-zinc-200 bg-white px-5 py-4 text-sm text-zinc-600">
           <p className="font-semibold text-zinc-800">Source-forward by design.</p>
           <p>
