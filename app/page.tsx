@@ -228,20 +228,13 @@ export default async function Page({
       selectedSection === "waivers" ? "waiver-wire" : selectedSection === "injury" ? "injury" : selectedSection,
   });
 
-  // Fetch last successful ingest job timestamp
-  const { createClient } = await import('@supabase/supabase-js');
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-  const { data: lastJob } = await supabase
-    .from('jobs')
-    .select('finished_at')
-    .eq('status', 'completed')
-    .eq('type', 'ingest')
-    .order('finished_at', { ascending: false })
+  // Fetch most recent article as freshness indicator
+  const { data: newestArticle } = await supabase
+    .from('articles')
+    .select('discovered_at')
+    .order('discovered_at', { ascending: false })
     .limit(1);
-  const lastIngestTime = lastJob?.[0]?.finished_at ? new Date(lastJob[0].finished_at) : null;
+  const lastIngestTime = newestArticle?.[0]?.discovered_at ? new Date(newestArticle[0].discovered_at) : null;
 
   const latest = data.items.latest.map(mapRow);
   const rankings = data.items.rankings.map(mapRow);
