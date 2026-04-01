@@ -18,8 +18,8 @@ function getLinks(mode: SeasonMode = "regular") {
       ...base,
       { label: "Free Agency", href: "/?section=free-agency" },
       { label: "NFL Draft", href: "/?section=nfl-draft" },
-      { label: "Advice", href: "/?section=advice" },
-      { label: "DFS", href: "/?section=dfs" },
+      { label: "Fantasy Articles", href: "/?section=advice" },
+      { label: "Fantasy Prep", href: "/?section=dfs" },
       { label: "Injuries", href: "/?section=injury" },
     ];
   }
@@ -29,8 +29,8 @@ function getLinks(mode: SeasonMode = "regular") {
     return [
       ...base,
       { label: "Draft Prep", href: "/?section=rankings" },
-      { label: "Advice", href: "/?section=advice" },
-      { label: "DFS", href: "/?section=dfs" },
+      { label: "Fantasy Articles", href: "/?section=advice" },
+      { label: "Fantasy Prep", href: "/?section=dfs" },
       { label: "Injuries", href: "/?section=injury" },
     ];
   }
@@ -40,8 +40,8 @@ function getLinks(mode: SeasonMode = "regular") {
     ...base,
     { label: "Start/Sit", href: "/?section=start-sit" },
     { label: "Waiver Wire", href: "/?section=waivers" },
-    { label: "Advice", href: "/?section=advice" },
-    { label: "DFS", href: "/?section=dfs" },
+    { label: "Fantasy Articles", href: "/?section=advice" },
+    { label: "Fantasy Prep", href: "/?section=dfs" },
     { label: "Injuries", href: "/?section=injury" },
   ];
 }
