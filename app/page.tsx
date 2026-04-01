@@ -1,4 +1,4 @@
-﻿// Build cache buster: 03/28/2026, 18:14:39 - FRESH CONTENT FIX
+// Build cache buster: 03/28/2026, 18:14:39 - FRESH CONTENT FIX
 import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
@@ -236,10 +236,10 @@ export default async function Page({
   );
   const { data: lastJob } = await supabase
     .from('jobs')
-    .select('completed_at')
+    .select('finished_at')
     .eq('status', 'completed')
-    .eq('job_type', 'ingest')
-    .order('completed_at', { ascending: false })
+    .eq('type', 'ingest')
+    .order('finished_at', { ascending: false })
     .limit(1);
   const lastIngestTime = lastJob?.[0]?.completed_at ? new Date(lastJob[0].completed_at) : null;
 
@@ -347,7 +347,7 @@ export default async function Page({
     waiversNoHero,
     injuriesNoHero,
   ).slice(0, 100);
-  console.log('ðŸ“ˆ TRENDING INPUT:', {
+  console.log('📈 TRENDING INPUT:', {
     latestCount: latestNoHero.length,
     rankingsCount: rankingsNoHero.length,
     totalTrendingArticles: trendingArticles.length,
@@ -376,7 +376,7 @@ export default async function Page({
 
   
   
-  console.log('ðŸ” FREE AGENCY DEBUG:', {
+  console.log('🔍 FREE AGENCY DEBUG:', {
     latestCount: latest.length,
     freeAgencyCount: freeAgencyItems.length,
     sampleTitles: freeAgencyItems.slice(0, 3).map(a => a.title?.substring(0, 50))
@@ -590,7 +590,7 @@ export default async function Page({
             />
           ) : (
             <BetaLoadMoreSection
-              title={`Waiver wire Â· Week ${week}`}
+              title={`Waiver wire · Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
               initialItems={uniqueWaivers}
