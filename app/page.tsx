@@ -241,7 +241,7 @@ export default async function Page({
     .eq('type', 'ingest')
     .order('finished_at', { ascending: false })
     .limit(1);
-  const lastIngestTime = lastJob?.[0]?.completed_at ? new Date(lastJob[0].completed_at) : null;
+  const lastIngestTime = lastJob?.[0]?.finished_at ? new Date(lastJob[0].finished_at) : null;
 
   const latest = data.items.latest.map(mapRow);
   const rankings = data.items.rankings.map(mapRow);
