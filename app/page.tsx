@@ -228,6 +228,21 @@ export default async function Page({
       selectedSection === "waivers" ? "waiver-wire" : selectedSection === "injury" ? "injury" : selectedSection,
   });
 
+  // Fetch last successful ingest job timestamp
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { data: lastJob } = await supabase
+    .from('jobs')
+    .select('completed_at')
+    .eq('status', 'completed')
+    .eq('job_type', 'ingest')
+    .order('completed_at', { ascending: false })
+    .limit(1);
+  const lastIngestTime = lastJob?.[0]?.completed_at ? new Date(lastJob[0].completed_at) : null;
+
   const latest = data.items.latest.map(mapRow);
   const rankings = data.items.rankings.map(mapRow);
   const startSit = data.items.startSit.map(mapRow);
@@ -639,6 +654,21 @@ export default async function Page({
                 <div className="text-zinc-500">
                   Last updated {ageText}
                 </div>
+              </div>
+              <div className="mt-2 pt-2 border-t border-zinc-200 text-zinc-500">
+                <span className="font-medium text-zinc-600">Last refresh:</span>{' '}
+                {lastIngestTime ? (() => {
+                  const ingestAge = Math.floor((Date.now() - lastIngestTime.getTime()) / 60000);
+                  const ingestHours = Math.floor(ingestAge / 60);
+                  if (ingestHours >= 24) {
+                    const ingestDays = Math.floor(ingestHours / 24);
+                    return `${ingestDays}d ${ingestHours % 24}h ago`;
+                  }
+                  if (ingestHours >= 1) {
+                    return `${ingestHours}h ${ingestAge % 60}m ago`;
+                  }
+                  return `${ingestAge}m ago`;
+                })() : 'N/A'}
               </div>
             </div>
           );
