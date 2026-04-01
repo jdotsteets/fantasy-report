@@ -6,17 +6,17 @@ export const maxDuration = 300; // 5 minutes
 
 // List of source IDs to ingest (top priority sources)
 const SOURCES_TO_INGEST = [
-  3057, // PFF - NFL
-  3058, // PFF - Fantasy
-  3121, // FantasyPros Main
-  3122, // FantasyPros Rankings
-  3123, // FantasyPros Start/Sit
-  3124, // FantasyPros Waiver Wire
-  6,    // Yahoo Sports NFL
-  7,    // Rotoballer NFL
-  14,   // PFF NFL News
-  15,   // Fantasy Guys
-  2917, // Fantasy Footballers
+  // Active high-yield sources (based on Apr 2026 audit)
+  3136, // Yahoo Fantasy NFL (52 articles/week)
+  3137, // NBC ProFootballTalk (35 articles/week)
+  3057, // PFF - NFL (20 articles/week)
+  6,    // Yahoo Sports NFL (33 articles/week)
+  7,    // Rotoballer NFL (18 articles/week)
+  2918, // ESPN Fantasy (7 articles/week)
+  3133, // CBS Sports - NFL (11 articles/week)
+  15,   // FOOTBALL GUYS news (12 articles/week)
+  3121, // FantasyPros Main (12 articles/week)
+  9,    // Pro Football Rumors (16 articles/week)
 ];
 
 export async function GET(request: Request) {
