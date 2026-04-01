@@ -57,6 +57,16 @@ export async function GET(request: Request) {
   }
   
   const totalNew = results.reduce((sum, r) => sum + (r.new || 0), 0);
+  
+  // Fetch transactions from NFL.com
+  try {
+    const transactionUrl = new URL('/api/admin/ingest/transactions', request.url);
+    const txResponse = await fetch(transactionUrl, { method: 'POST' });
+    const txData = await txResponse.json();
+    console.log('[cron/ingest] Transactions:', txData.inserted || 0, 'new,', txData.total || 0, 'total');
+  } catch (error) {
+    console.error('[cron/ingest] Transaction fetch failed:', error);
+  }
   const totalProcessed = results.reduce((sum, r) => sum + (r.processed || 0), 0);
   
   return NextResponse.json({
