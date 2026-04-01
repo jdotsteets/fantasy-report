@@ -229,6 +229,11 @@ export default async function Page({
   });
 
   // Fetch most recent article as freshness indicator
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
   const { data: newestArticle } = await supabase
     .from('articles')
     .select('discovered_at')
