@@ -41,7 +41,7 @@ function getSeasonalItems(mode: "regular" | "off-season" | "preseason"): Readonl
   if (mode === "off-season") {
     return [
       ...base.slice(0, 1), // Rankings
-      { slug: "free-agency", label: "Agency", icon: Briefcase },
+      { slug: "free-agency", label: "FA", icon: Briefcase },
       { slug: "nfl-draft",   label: "Draft",   icon: FileText },
       { slug: "advice",      label: "Advice",      icon: Lightbulb },
       { slug: "injury",      label: "Injuries",    icon: Stethoscope },

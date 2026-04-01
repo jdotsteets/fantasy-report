@@ -12,11 +12,11 @@ function getLinks(mode: SeasonMode = "regular") {
     { label: "Rankings", href: "/?section=rankings" },
   ];
 
-  // Off-Season: Show both Free Agents and NFL Draft
+  // Off-Season: Show both Free Agency and NFL Draft
   if (mode === "off-season") {
     return [
       ...base,
-      { label: "Free Agents", href: "/?section=free-agency" },
+      { label: "Free Agency", href: "/?section=free-agency" },
       { label: "NFL Draft", href: "/?section=nfl-draft" },
       { label: "Fantasy Articles", href: "/?section=advice" },
       { label: "Fantasy Prep", href: "/?section=dfs" },
