@@ -183,8 +183,12 @@ function getEffectiveSeasonMode(now: Date): SeasonMode {
   // Exclude draft/rookie content from Free Agency
   const FREE_AGENCY_EXCLUDE_RX = /\b(draft\s+guide|rookie\s+profile|mock\s+draft|nfl\s+draft(?!.*(sign|agree|contract|trade|free\s+agent))|rookie(?!\s+free\s+agent)|prospect|scouting\s+report|big\s+board|combine|dynasty\s+rookie)\b/i;
 
-const DRAFT_RX =
-  /\b(mock\s+draft|nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down)\b/i;
+// Two-tier draft classification for better mock draft detection
+  const MOCK_DRAFT_RX =
+    /\b(mock\s+draft|7[-\s]?round\s+mock|3[-\s]?round\s+mock|rounds?\s+1[-\s]?7|round\s+1|pick\s+predictions?|team\s+predictions?|projected\s+picks?|full\s+first\s+round|mock\s+[1-9]\.0|mock\s+draft\s+simulator)\b/i;
+  
+  const DRAFT_BUZZ_RX =
+    /\b(nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft(?!\s+kings)|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down|riser|faller)\b/i;
 
 function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
@@ -382,7 +386,7 @@ export default async function Page({
 
   const draftItems = latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-    return DRAFT_RX.test(hay);
+    return MOCK_DRAFT_RX.test(hay) || DRAFT_BUZZ_RX.test(hay);
   });
 
   
@@ -549,7 +553,7 @@ export default async function Page({
             ) : null}
 
             {seasonMode === "off-season" ? (
-            <BetaDraftSection articles={draftItems.slice(0, 20)} />
+            <BetaDraftSection articles={draftItems.slice(0, 50)} />
             ) : null}
 
             </aside>
