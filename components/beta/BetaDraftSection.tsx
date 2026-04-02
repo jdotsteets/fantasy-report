@@ -9,12 +9,56 @@ import Link from "next/link";
 function isMockDraft(article: Article): boolean {
   const title = (article.title || '').toLowerCase();
   const url = (article.canonical_url || article.url || '').toLowerCase();
-  const text = `${title} ${url}`;
+  
+  // Normalize: remove HTML entities, normalize spaces/hyphens
+  const normalizeText = (str: string) => {
+    return str
+      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+  
+  const text = normalizeText(`${title} ${url}`);
 
-  // Exclusions (redrafts, DFS, etc.)
-  if (/re-?do|redraft|fantasy\s+football\s+mock|draftkings/i.test(text)) {
+  // EXCLUSIONS (very narrow - only clear false positives)
+  if (/\bre-?do\b|\bredrafts?\b|draftkings?/i.test(text)) {
     return false;
   }
+
+  // PRIMARY DETECTION (stronger patterns)
+  // 1. "mock draft" or "mock drafts" (with word boundaries)
+  if (/\bmock\s+drafts?\b/i.test(text)) {
+    return true;
+  }
+
+  // 2. "draft" and "mock" in same text (any order)
+  if (/\bmock\b/i.test(text) && /\bdraft\b/i.test(text)) {
+    return true;
+  }
+
+  // 3. Specific multi-round patterns
+  if (/[37]\s+round\s+mock|rounds?\s+1\s*[-?]\s*[37]|full\s+mock/i.test(text)) {
+    return true;
+  }
+
+  // 4. Round 1 / First round mocks
+  if (/(first|round\s+1)\s+(mock|predictions?|projections?)/i.test(text)) {
+    return true;
+  }
+
+  // 5. Projected picks / pick predictions
+  if (/projected\s+picks?|pick\s+predictions?/i.test(text)) {
+    return true;
+  }
+
+  // 6. Mock version numbers
+  if (/mock\s+[1-9]\.0|mock\s+draft\s+simulator/i.test(text)) {
+    return true;
+  }
+
+  return false;
+}
 
   // Primary: Contains BOTH "mock" AND "draft" (any order)
   const hasMock = /mock/i.test(text);
