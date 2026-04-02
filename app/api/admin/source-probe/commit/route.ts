@@ -16,10 +16,16 @@ async function triggerIngestForSource(
   jobId: string
 ): Promise<void> {
   try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
-    await fetch(`${base}/api/admin/ingest`, {
+    const base = getServerBaseUrl();
+
+    const cronSecret = process.env.CRON_SECRET;
+
+    await fetch(`${base.replace(/\/+$/, "")}/api/admin/ingest`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(cronSecret ? { authorization: `Bearer ${cronSecret}` } : {}),
+      },
       body: JSON.stringify({ sourceId, method, jobId }),
     });
   } catch {
@@ -27,14 +33,7 @@ async function triggerIngestForSource(
   }
 }
 
-function getBaseUrl(): string {
-  // Prefer explicit public base
-  if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
-  // Vercel provides the domain here (no protocol); add https
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  // Fallback for local dev
-  return "http://localhost:3000";
-}
+import { getServerBaseUrl } from "@/lib/baseUrl";
 
 /** Normalize & enforce per-method field rules */
 function normalizeUpdatesForMethod(

@@ -19,7 +19,7 @@ export async function POST(request: Request) {
       const ingestUrl = new URL('/api/admin/ingest', request.url);
       const response = await fetch(ingestUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {}) },
         body: JSON.stringify({
           sourceId,
           limit: 20,
