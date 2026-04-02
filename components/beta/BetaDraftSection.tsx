@@ -59,19 +59,6 @@ function isMockDraft(article: Article): boolean {
 
   return false;
 }
-
-  // Primary: Contains BOTH "mock" AND "draft" (any order)
-  const hasMock = /mock/i.test(text);
-  const hasDraft = /draft/i.test(text);
-  if (hasMock && hasDraft) return true;
-
-  // Specific patterns (backup)
-  if (/7[-\s]?round\s+mock|3[-\s]?round\s+mock|rounds?\s+1[-\s]?7|round\s+1(?!\d)|pick\s+predictions?|team\s+predictions?|projected\s+picks?|mock\s+[1-9]\.0|mock\s+draft\s+simulator/i.test(text)) {
-    return true;
-  }
-
-  return false;
-}
 // Paywall detection - exclude paywalled content
 const PAYWALL_DOMAINS = [
   'theathletic.com',
