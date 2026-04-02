@@ -14,12 +14,12 @@
   - Root cause: Classification logic or section filtering
   - File: `lib/classify.ts` or section query logic
   
-- [ ] **Fix "+10 more" expansion**
+- [x] **Fix "+10 more" expansion**
   - Issue: Expand behavior not working properly
   - Expected: Click to show more articles in section
   - File: Section components
   
-- [ ] **Improve desktop layout**
+- [x] **Improve desktop layout**
   - Issue: Layout issues on desktop view
   - Context: Whitespace / spacing problems
 
