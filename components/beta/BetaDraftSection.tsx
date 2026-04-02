@@ -4,6 +4,30 @@ import { useState } from "react";
 import type { Article } from "@/types/sources";
 import BetaSection from "@/components/beta/BetaSection";
 import Link from "next/link";
+
+// Strong mock draft detector (runs BEFORE general clustering)
+function isMockDraft(article: Article): boolean {
+  const title = (article.title || '').toLowerCase();
+  const url = (article.canonical_url || article.url || '').toLowerCase();
+  const text = `${title} ${url}`;
+
+  // Exclusions (redrafts, DFS, etc.)
+  if (/re-?do|redraft|fantasy\s+football\s+mock|draftkings/i.test(text)) {
+    return false;
+  }
+
+  // Primary: Contains BOTH "mock" AND "draft" (any order)
+  const hasMock = /mock/i.test(text);
+  const hasDraft = /draft/i.test(text);
+  if (hasMock && hasDraft) return true;
+
+  // Specific patterns (backup)
+  if (/7[-\s]?round\s+mock|3[-\s]?round\s+mock|rounds?\s+1[-\s]?7|round\s+1(?!\d)|pick\s+predictions?|team\s+predictions?|projected\s+picks?|mock\s+[1-9]\.0|mock\s+draft\s+simulator/i.test(text)) {
+    return true;
+  }
+
+  return false;
+}
 // Paywall detection - exclude paywalled content
 const PAYWALL_DOMAINS = [
   'theathletic.com',
@@ -55,12 +79,28 @@ function clusterDraftArticles(articles: Article[]): DraftCluster[] {
   }));
 
   const assigned = new Set<number>();
+  const mockCluster = clusters.find(c => c.title === "Mock Drafts");
 
-  // First pass: assign to best matching cluster
+  // PRIORITY PASS: Assign mock drafts FIRST using strong detector
+  if (mockCluster) {
+    for (const article of articles) {
+      if (isMockDraft(article) && !assigned.has(article.id)) {
+        mockCluster.articles.push(article);
+        assigned.add(article.id);
+      }
+    }
+  }
+
+  // Second pass: assign remaining articles to other clusters
   for (const article of articles) {
+    if (assigned.has(article.id)) continue;
+
     const text = `${article.title} ${article.canonical_url || article.url || ''} ${article.summary || ''}`;
     
     for (const cluster of clusters) {
+      // Skip Mock Drafts (already handled) and Team Fits (disabled)
+      if (cluster.title === "Mock Drafts" || cluster.title === "Team Fits") continue;
+
       if (cluster.keywords.test(text) && !assigned.has(article.id)) {
         cluster.articles.push(article);
         assigned.add(article.id);
@@ -79,8 +119,8 @@ function clusterDraftArticles(articles: Article[]): DraftCluster[] {
     }
   }
 
-  // Return only non-empty clusters
-  return clusters.filter(c => c.articles.length > 0);
+  // Return only non-empty clusters (exclude Team Fits even if it has articles)
+  return clusters.filter(c => c.articles.length > 0 && c.title !== "Team Fits");
 }
 
 export default function BetaDraftSection({ articles }: { articles: Article[] }) {
