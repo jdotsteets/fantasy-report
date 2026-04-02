@@ -183,9 +183,19 @@ function getEffectiveSeasonMode(now: Date): SeasonMode {
   // Exclude draft/rookie content from Free Agency
   const FREE_AGENCY_EXCLUDE_RX = /\b(draft\s+guide|rookie\s+profile|mock\s+draft|nfl\s+draft(?!.*(sign|agree|contract|trade|free\s+agent))|rookie(?!\s+free\s+agent)|prospect|scouting\s+report|big\s+board|combine|dynasty\s+rookie)\b/i;
 
-// Two-tier draft classification for better mock draft detection
+// Normalize text for draft matching (handles hyphens, HTML entities)
+  const normalizeForDraft = (text: string) => {
+    return text
+      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  };
+
+  // Two-tier draft classification for better mock draft detection
   const MOCK_DRAFT_RX =
-    /\b(mock\s+draft|7[-\s]?round\s+mock|3[-\s]?round\s+mock|rounds?\s+1[-\s]?7|round\s+1|pick\s+predictions?|team\s+predictions?|projected\s+picks?|full\s+first\s+round|mock\s+[1-9]\.0|mock\s+draft\s+simulator)\b/i;
+    /(mock\s+drafts?|[37]\s+round\s+mock|rounds?\s+1\s+7|round\s+1\s+(mock|predictions?|projections?)|pick\s+predictions?|team\s+predictions?|projected\s+picks?|mock\s+[1-9]\.0|mock\s+draft\s+simulator)/i;
   
   const DRAFT_BUZZ_RX =
     /\b(nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft(?!\s+kings)|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down|riser|faller)\b/i;
@@ -385,9 +395,9 @@ export default async function Page({
   });
 
   const draftItems = latest.filter((a) => {
-    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
+    const rawText = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
+    const hay = normalizeForDraft(rawText);
     return MOCK_DRAFT_RX.test(hay) || DRAFT_BUZZ_RX.test(hay);
-  });
 
   
   // Apply team filter if selected
