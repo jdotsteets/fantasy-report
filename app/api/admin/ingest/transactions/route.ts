@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+// app>api>admin>ingest>transactions>route.ts
+import { NextRequest, NextResponse } from "next/server";
 import { dbQuery } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,17 @@ type InsertRow = {
   id: number;
 };
 
+function isAuthorized(req: NextRequest): boolean {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!cronSecret || !authHeader) {
+    return false;
+  }
+
+  return authHeader === `Bearer ${cronSecret}`;
+}
+
 async function fetchTransactions(
   type: TransactionFeedType,
   year: number,
@@ -125,6 +137,7 @@ function normalizeType(type: string, source: TransactionFeedType): string {
   if (lower.includes("sign") || source === "signings") return "Signed";
   if (lower.includes("trad") || source === "trades") return "Traded";
   if (lower.includes("waiv") || source === "waivers") return "Waiver";
+
   if (
     lower.includes("rele") ||
     lower.includes("termin") ||
@@ -132,6 +145,7 @@ function normalizeType(type: string, source: TransactionFeedType): string {
   ) {
     return "Released";
   }
+
   if (lower.includes("reserv") || source === "reserve-list") return "Reserve";
 
   return "Other";
@@ -160,7 +174,14 @@ function parseTransactionDate(
   return new Date(fallbackYear, month - 1, day);
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
     const now = new Date();
     const year = now.getFullYear();
@@ -276,6 +297,7 @@ export async function POST() {
     });
   } catch (error) {
     console.error("Route error:", error);
+
     return NextResponse.json(
       {
         success: false,

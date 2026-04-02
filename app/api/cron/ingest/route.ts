@@ -2,19 +2,19 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 minutes
+export const maxDuration = 300;
 
 const SOURCES_TO_INGEST = [
   3136, // Yahoo Fantasy NFL
   3137, // NBC ProFootballTalk
   3057, // PFF - NFL
-  6,    // Yahoo Sports NFL
-  7,    // Rotoballer NFL
+  6, // Yahoo Sports NFL
+  7, // Rotoballer NFL
   2918, // ESPN Fantasy
   3133, // CBS Sports - NFL
-  15,   // FOOTBALL GUYS news
+  15, // FOOTBALL GUYS news
   3121, // FantasyPros Main
-  9,    // Pro Football Rumors
+  9, // Pro Football Rumors
 ] as const;
 
 type IngestRouteResponse = {
@@ -64,6 +64,45 @@ function getBearerToken(request: Request): string | null {
   return authHeader.slice("Bearer ".length);
 }
 
+async function parseJsonResponse<T>(
+  response: Response,
+  context: { label: string; extra?: Record<string, string | number | boolean> }
+): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const raw = await response.text();
+
+  if (!contentType.toLowerCase().includes("application/json")) {
+    console.error("[cron/ingest] non-json response", {
+      label: context.label,
+      status: response.status,
+      contentType,
+      bodyPreview: raw.slice(0, 300),
+      ...(context.extra ?? {}),
+    });
+
+    throw new Error(
+      `Non-JSON response (${response.status}, ${contentType || "unknown content-type"}): ${raw.slice(0, 200)}`
+    );
+  }
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    console.error("[cron/ingest] invalid json payload", {
+      label: context.label,
+      status: response.status,
+      contentType,
+      bodyPreview: raw.slice(0, 300),
+      ...(context.extra ?? {}),
+    });
+
+    const message =
+      error instanceof Error ? error.message : "Failed to parse JSON";
+
+    throw new Error(`Invalid JSON response: ${message}`);
+  }
+}
+
 async function ingestSingleSource(
   request: Request,
   sourceId: number,
@@ -86,7 +125,13 @@ async function ingestSingleSource(
       cache: "no-store",
     });
 
-    const data = (await response.json()) as IngestRouteResponse;
+    const data = await parseJsonResponse<IngestRouteResponse>(response, {
+      label: "source",
+      extra: {
+        sourceId,
+        url: ingestUrl.toString(),
+      },
+    });
 
     const result: SourceIngestResult = {
       sourceId,
@@ -149,7 +194,12 @@ async function ingestTransactions(
       cache: "no-store",
     });
 
-    const data = (await response.json()) as TransactionRouteResponse;
+    const data = await parseJsonResponse<TransactionRouteResponse>(response, {
+      label: "transactions",
+      extra: {
+        url: transactionUrl.toString(),
+      },
+    });
 
     const result: TransactionsResult = {
       ok: response.ok && data.success !== false,
@@ -213,11 +263,16 @@ export async function GET(request: Request) {
   });
 
   const sourceResults = await Promise.all(
-    SOURCES_TO_INGEST.map((sourceId) => ingestSingleSource(request, sourceId, cronSecret))
+    SOURCES_TO_INGEST.map((sourceId) =>
+      ingestSingleSource(request, sourceId, cronSecret)
+    )
   );
 
   const totalNew = sourceResults.reduce((sum, result) => sum + result.new, 0);
-  const totalProcessed = sourceResults.reduce((sum, result) => sum + result.processed, 0);
+  const totalProcessed = sourceResults.reduce(
+    (sum, result) => sum + result.processed,
+    0
+  );
   const failedSources = sourceResults.filter((result) => !result.ok).length;
 
   const transactions = await ingestTransactions(request, cronSecret);
