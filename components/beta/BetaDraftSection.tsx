@@ -20,6 +20,7 @@ function isPaywalled(article: Article): boolean {
 
 type DraftCluster = {
   title: string;
+  subtitle: string;
   articles: Article[];
   keywords: RegExp;
 };
@@ -27,18 +28,22 @@ type DraftCluster = {
 const CLUSTERS: Omit<DraftCluster, 'articles'>[] = [
   {
     title: "Mock Drafts",
+    subtitle: "Projected picks & scenarios",
     keywords: /mock\s+draft|first.?round|7.?round\s+mock|full\s+mock/i,
   },
   {
     title: "Prospect Rankings",
+    subtitle: "Big boards & positional ranks",
     keywords: /big\s+board|prospect\s+rank|top\s+prospects?|position\s+rank|top\s+\d+/i,
   },
   {
     title: "Draft Buzz",
+    subtitle: "News, risers, and rumors",
     keywords: /stock\s+up|stock\s+down|combine|pro\s+day|riser|faller|buzz|rumor|visit|meeting|medical/i,
   },
   {
     title: "Team Fits",
+    subtitle: "Landing spots & team needs",
     keywords: /landing\s+spot|team\s+fit|best\s+fit|draft\s+need|team\s+need/i,
   },
 ];
@@ -142,7 +147,7 @@ export default function BetaDraftSection({ articles }: { articles: Article[] }) 
       title="NFL Draft"
       subtitle="Mocks, rankings, rumors, and landing spot buzz"
     >
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="mt-6 grid gap-8 md:grid-cols-2">
         {clusters.map((cluster) => {
           const isExpanded = expandedClusters.has(cluster.title);
           const visibleArticles = isExpanded ? cluster.articles : cluster.articles.slice(0, 8);
@@ -151,17 +156,20 @@ export default function BetaDraftSection({ articles }: { articles: Article[] }) 
           return (
             <div
               key={cluster.title}
-              className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50 p-5"
+              className="h-full flex flex-col rounded-xl border border-zinc-300 bg-gradient-to-br from-white to-zinc-50 p-5"
             >
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-700">
-                  {cluster.title}
-                </h3>
-                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                  {cluster.articles.length}
-                </span>
+              <div className="mb-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-800">
+                    {cluster.title}
+                  </h3>
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                    {cluster.articles.length}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">{cluster.subtitle}</p>
               </div>
-              <div className="space-y-2">
+              <div className="flex-1 space-y-2">
                 {visibleArticles.map((article) => (
                   <Link
                     key={article.id}
@@ -183,7 +191,7 @@ export default function BetaDraftSection({ articles }: { articles: Article[] }) 
                 {hasMore && (
                   <button
                     onClick={() => toggleCluster(cluster.title)}
-                    className="w-full pt-1 text-left text-xs font-medium text-emerald-600 hover:text-emerald-700 transition-colors"
+                    className="w-full cursor-pointer pt-1 text-left text-xs font-medium text-emerald-600 transition-colors hover:text-emerald-700 hover:underline"
                   >
                     {isExpanded 
                       ? '? Show less' 
