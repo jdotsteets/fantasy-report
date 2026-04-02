@@ -29,7 +29,7 @@ const CLUSTERS: Omit<DraftCluster, 'articles'>[] = [
   {
     title: "Mock Drafts",
     subtitle: "Projected picks & scenarios",
-    keywords: /mock\s+draft|first.?round|7.?round\s+mock|full\s+mock/i,
+    keywords: /mock\s+draft|7[-\s]?round\s+mock|3[-\s]?round\s+mock|rounds?\s+1[-\s]?7|round\s+1(?!\d)|pick\s+predictions?|team\s+predictions?|projected\s+picks?|full\s+first\s+round|mock\s+[1-9]\.0|mock\s+draft\s+simulator/i,
   },
   {
     title: "Prospect Rankings",
@@ -58,7 +58,7 @@ function clusterDraftArticles(articles: Article[]): DraftCluster[] {
 
   // First pass: assign to best matching cluster
   for (const article of articles) {
-    const text = `${article.title} ${article.summary || ''}`;
+    const text = `${article.title} ${article.canonical_url || article.url || ''} ${article.summary || ''}`;
     
     for (const cluster of clusters) {
       if (cluster.keywords.test(text) && !assigned.has(article.id)) {
