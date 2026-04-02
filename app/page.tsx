@@ -398,6 +398,7 @@ export default async function Page({
     const rawText = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     const hay = normalizeForDraft(rawText);
     return MOCK_DRAFT_RX.test(hay) || DRAFT_BUZZ_RX.test(hay);
+  });
 
   
   // Apply team filter if selected
