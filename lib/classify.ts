@@ -267,7 +267,6 @@ const KW: Record<Topic, RegExp[]> = {
     /practice\s+squad\s+signing/i,
   ],
 };
-};
 
 // ---------------- Player-page classification ----------------
 
