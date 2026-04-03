@@ -109,7 +109,7 @@ async function ingestSingleSource(
   cronSecret: string
 ): Promise<SourceIngestResult> {
   try {
-    const ingestUrl = new URL("/api/admin/ingest", request.url);
+    const ingestUrl = `${getServerBaseUrl()}/api/admin/ingest`;
 
     const response = await fetch(ingestUrl, {
       method: "POST",
@@ -184,7 +184,7 @@ async function ingestTransactions(
   cronSecret: string
 ): Promise<TransactionsResult> {
   try {
-    const transactionUrl = new URL("/api/admin/ingest/transactions", request.url);
+    const transactionUrl = `${getServerBaseUrl()}/api/admin/ingest/transactions`;
 
     const response = await fetch(transactionUrl, {
       method: "POST",
