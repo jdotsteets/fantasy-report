@@ -222,6 +222,8 @@ export async function getHomeData(
 ): Promise<{
   items: {
     latest: SectionRow[];
+    mockDraft: SectionRow[];
+    draftBuzz: SectionRow[];
     rankings: SectionRow[];
     startSit: SectionRow[];
     advice: SectionRow[];
@@ -326,6 +328,8 @@ export async function getHomeData(
     return {
       items: {
         latest: dbKey === "news" ? ranked : empty,
+        mockDraft: empty,
+        draftBuzz: empty,
         rankings: dbKey === "rankings" ? ranked : empty,
         startSit: dbKey === "start-sit" ? ranked : empty,
         advice: dbKey === "advice" ? ranked : empty,
@@ -338,7 +342,7 @@ export async function getHomeData(
     };
   }
 
-  const [news, rankings, startSit, advice, dfs, waivers, injury] = await Promise.all([
+  const [news, rankings, startSit, advice, dfs, waivers, injury, mockDraft, draftBuzz] = await Promise.all([
     fetchSectionItems({ key: "news", limit: limits.news, maxAgeHours: opts.maxAgeHours, ...shared }),
     fetchSectionItems({ key: "rankings", limit: limits.rankings, ...shared }),
     fetchSectionItems({ key: "start-sit", limit: limits.startSit, ...shared }),
@@ -346,6 +350,22 @@ export async function getHomeData(
     fetchSectionItems({ key: "dfs", limit: limits.dfs, ...shared }),
     fetchSectionItems({ key: "waiver-wire", limit: limits.waivers, week, ...shared }),
     fetchSectionItems({ key: "injury", limit: limits.injuries, ...shared }),
+    fetchSectionItems({
+      key: "",
+      sport,
+      days: 45,
+      limit: 50,
+      where: "(primary_topic = 'mock-draft' OR 'mock-draft' = ANY(topics))",
+      staticMode: "exclude",
+    }),
+    fetchSectionItems({
+      key: "",
+      sport,
+      days: 21,
+      limit: 50,
+      where: "(primary_topic = 'draft-buzz' OR 'draft-buzz' = ANY(topics))",
+      staticMode: "exclude",
+    }),
   ]);
 
   logSectionSnapshot("raw:news", news);
@@ -431,6 +451,8 @@ export async function getHomeData(
   return {
     items: {
       latest: newsOut,
+        mockDraft,
+        draftBuzz,
       rankings: rankingsOut,
       startSit: startSitOut,
       advice: adviceOut,

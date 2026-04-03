@@ -184,21 +184,9 @@ function getEffectiveSeasonMode(now: Date): SeasonMode {
   const FREE_AGENCY_EXCLUDE_RX = /\b(draft\s+guide|rookie\s+profile|mock\s+draft|nfl\s+draft(?!.*(sign|agree|contract|trade|free\s+agent))|rookie(?!\s+free\s+agent)|prospect|scouting\s+report|big\s+board|combine|dynasty\s+rookie)\b/i;
 
 // Normalize text for draft matching (handles hyphens, HTML entities)
-  const normalizeForDraft = (text: string) => {
-    return text
-      .replace(/&[a-z0-9#]+;/gi, ' ')
-      .replace(/[-_]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
-  };
-
-  // Two-tier draft classification for better mock draft detection
-  const MOCK_DRAFT_RX =
-    /(mock\s+drafts?|[37]\s+round\s+mock|rounds?\s+1\s+7|round\s+1\s+(mock|predictions?|projections?)|pick\s+predictions?|team\s+predictions?|projected\s+picks?|mock\s+[1-9]\.0|mock\s+draft\s+simulator)/i;
   
-  const DRAFT_BUZZ_RX =
-    /\b(nfl\s+draft|prospect|prospects?|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft(?!\s+kings)|senior\s+bowl|pro\s+day|team\s+needs?|team\s+fits?|draft\s+buzz|draft\s+rumors?|stock\s+up|stock\s+down|riser|faller)\b/i;
+
+  // Draft content now classified at ingest via topics
 
 function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
@@ -394,11 +382,7 @@ export default async function Page({
     sampleTitles: freeAgencyItems.slice(0, 3).map(a => a.title?.substring(0, 50))
   });
 
-  const draftItems = latest.filter((a) => {
-    const rawText = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-    const hay = normalizeForDraft(rawText);
-    return MOCK_DRAFT_RX.test(hay) || DRAFT_BUZZ_RX.test(hay);
-  });
+  // Draft items now fetched directly by topic in getHomeData
 
   
   // Apply team filter if selected
@@ -419,7 +403,7 @@ export default async function Page({
   // Dedupe free agency and draft items against displayed feed
   const uniqueFreeAgency = freeAgencyReserved.filter(a => a.id !== heroId);
   console.log('[info] FA STEP 4: uniqueFreeAgency.length=', uniqueFreeAgency.length, 'heroId=', heroId, 'tempHeroId=', tempHeroId, 'equal=', heroId === tempHeroId);
-  const uniqueDraft = draftItems.filter(a => !actualUsedInFeed.has(a.id));
+  
 
 
   let totalFilteredCount = 0;
@@ -564,7 +548,7 @@ export default async function Page({
             ) : null}
 
             {seasonMode === "off-season" ? (
-            <BetaDraftSection articles={draftItems.slice(0, 50)} />
+            <BetaDraftSection mockDrafts={data.items.mockDraft} draftBuzz={data.items.draftBuzz} />
             ) : null}
 
             </aside>
