@@ -581,7 +581,7 @@ export default async function Page({
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={selectedTeam ? filterArticlesByTeam(removeHero(uniqueDraft, tempHeroId), selectedTeam.id) as Article[] : removeHero(uniqueDraft, tempHeroId)}
+              initialItems={[...data.items.mockDraft, ...data.items.draftBuzz].filter(a => selectedTeam ? a.teams?.includes(selectedTeam.id) : true).slice(0, 50)}
               pageSize={10}
               initialDisplay={4}
             />
