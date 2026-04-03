@@ -11,7 +11,11 @@ export type Topic =
   | "injury"
   | "dfs"
   | "advice"
-  | "news";
+  | "news"
+  | "mock-draft"
+  | "draft-buzz"
+  | "free-agency"
+  | "transactions";
 
 export type ClassifyResult = {
   primary: Topic | null;
@@ -89,6 +93,10 @@ const CANON: Topic[] = [
   "dfs",
   "advice",
   "news",
+  "mock-draft",
+  "draft-buzz",
+  "free-agency",
+  "transactions",
 ];
 
 // Keep regexes specific to avoid false positives.
@@ -199,6 +207,66 @@ const KW: Record<Topic, RegExp[]> = {
     /\bactivat(?:ed|es)\b/i,
     /\btransactions?\b/i,
   ],
+  "mock-draft": [
+    /mock\s+drafts?/i,
+    /[37][-\s]?round\s+mock/i,
+    /rounds?\s+1[-\s]?7/i,
+    /round\s+1\s+(mock|predictions?|projections?)/i,
+    /first\s+round\s+(mock|predictions?|projections?)/i,
+    /pick\s+predictions?/i,
+    /team\s+predictions?/i,
+    /projected\s+picks?/i,
+    /mock\s+[1-9]\.0/i,
+    /mock\s+draft\s+simulator/i,
+    /full\s+mock/i,
+  ],
+  "draft-buzz": [
+    /draft\s+buzz/i,
+    /nfl\s+draft(?!\s*(mock|simulator))/i,
+    /combine/i,
+    /pro\s+day/i,
+    /senior\s+bowl/i,
+    /stock\s+up|stock\s+down/i,
+    /risers?|fallers?/i,
+    /draft\s+visit/i,
+    /draft\s+meeting/i,
+    /prospect\s+(?:profile|rank|grade)/i,
+    /big\s+board(?!.*mock)/i,
+    /scouting\s+report/i,
+    /landing\s+spot/i,
+    /team\s+(?:fit|need)/i,
+    /draft\s+class/i,
+  ],
+  "free-agency": [
+    /free\s+agenc/i,
+    /sign(?:ed|ing|s)?\b/i,
+    /re[-\s]?sign(?:ed|ing|s)?/i,
+    /contract/i,
+    /extension/i,
+    /cap\s+hit/i,
+    /franchise\s+tag/i,
+    /tagged/i,
+    /agree(?:s|d|ment)?\s+to\s+(?:terms|deal)/i,
+    /joining/i,
+    /headed\s+to/i,
+    /expected\s+to\s+sign/i,
+    /visit(?:ing|ed)?/i,
+    /finalizing/i,
+  ],
+  "transactions": [
+    /transactions?/i,
+    /waived/i,
+    /claimed/i,
+    /released?/i,
+    /cut\b/i,
+    /activated\s+from/i,
+    /placed\s+on\s+(?:IR|reserve)/i,
+    /elevated/i,
+    /promoted\s+from\s+practice\s+squad/i,
+    /designated\s+to\s+return/i,
+    /practice\s+squad\s+signing/i,
+  ],
+};
 };
 
 // ---------------- Player-page classification ----------------
