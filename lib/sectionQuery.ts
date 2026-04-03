@@ -48,6 +48,7 @@ export type FetchSectionOpts = {
   sport?: string;
   maxAgeHours?: number;
   staticMode?: "exclude" | "only" | "any";
+  where?: string;
   staticType?: string | null;
 };
 
@@ -84,6 +85,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 168, 24 * 14));  // Default 168h (7 days) for better offseason coverage
 
   const staticMode: "exclude" | "only" | "any" = opts.staticMode ?? "exclude";
+  const customWhere = opts.where ?? null;
   const staticType = (opts.staticType ?? "").trim() || null;
 
   const hasProviderFilter = Boolean(provider) || typeof sourceId === "number";
@@ -134,17 +136,20 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
     where.push(`s.provider ILIKE $${push(provider)}`);
   }
 
-  if (isNews) {
+  if (customWhere) {
+    // Custom WHERE clause for topic-based queries
+    where.push(customWhere);
+  } else if (isNews) {
     where.push(newsPredicateSQL());
     where.push(
-      `COALESCE(a.published_at, a.discovered_at) >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval`,
+      `COALESCE(a.published_at, a.discovered_at) >= NOW() - (${push(newsMaxAgeHours)} || ' hours')::interval`,
     );
   } else {
     const idx = push(key);
     where.push(`(
-      a.primary_topic = $${idx}
-      OR a.secondary_topic = $${idx}
-      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[$${idx}]::text[])
+      a.primary_topic = ${idx}
+      OR a.secondary_topic = ${idx}
+      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[${idx}]::text[])
     )`);
   }
 
