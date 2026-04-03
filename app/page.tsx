@@ -186,7 +186,7 @@ function getEffectiveSeasonMode(now: Date): SeasonMode {
 // Normalize text for draft matching (handles hyphens, HTML entities)
   const normalizeForDraft = (text: string) => {
     return text
-      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/&[a-z0-9#]+;/gi, ' ')
       .replace(/[-_]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()

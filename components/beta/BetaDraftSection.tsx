@@ -13,7 +13,7 @@ function isMockDraft(article: Article): boolean {
   // Normalize: remove HTML entities, normalize spaces/hyphens
   const normalizeText = (str: string) => {
     return str
-      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/&[a-z0-9#]+;/gi, ' ')
       .replace(/[-_]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
