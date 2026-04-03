@@ -1,5 +1,6 @@
 // app/api/cron/ingest/route.ts
 import { NextResponse } from "next/server";
+import { getServerBaseUrl } from "@/lib/baseUrl";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
