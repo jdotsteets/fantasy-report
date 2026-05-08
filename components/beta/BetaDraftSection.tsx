@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import type { Article } from "@/types/sources";
@@ -78,7 +78,7 @@ export default function BetaDraftSection({ mockDrafts, draftBuzz }: { mockDrafts
               {article.summary && (
                 <p className="mt-1 text-xs text-zinc-600 line-clamp-2">{article.summary}</p>
               )}
-              <p className="mt-2 text-xs text-zinc-500">{article.provider_name || "Source"}</p>
+              <p className="mt-2 text-xs text-zinc-500">{article.source || "Source"}</p>
             </Link>
           ))}
         </div>
@@ -114,7 +114,7 @@ export default function BetaDraftSection({ mockDrafts, draftBuzz }: { mockDrafts
                     {article.summary && (
                       <p className="mt-1 text-xs text-zinc-600 line-clamp-2">{article.summary}</p>
                     )}
-                    <p className="mt-2 text-xs text-zinc-500">{article.provider_name || "Source"}</p>
+                    <p className="mt-2 text-xs text-zinc-500">{article.source || "Source"}</p>
                   </Link>
                 ))}
               </div>

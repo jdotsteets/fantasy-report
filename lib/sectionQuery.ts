@@ -53,9 +53,6 @@ export type FetchSectionOpts = {
 };
 
 function newsPredicateSQL(): string {
-  // Broadened definition: "Latest News" means any recent NFL content
-  // Include general news, plus articles that may have specific topics but are still newsworthy
-  // Only EXCLUDE pure rankings/advice sections (which have their own dedicated sections)
   return `(
     a.primary_topic IS NULL
     OR a.primary_topic = 'news'
@@ -82,7 +79,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
 
   const key = opts.key || "news";
   const isNews = key === "news";
-  const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 168, 24 * 14));  // Default 168h (7 days) for better offseason coverage
+  const newsMaxAgeHours = Math.max(1, Math.min(opts.maxAgeHours ?? 168, 24 * 14));
 
   const staticMode: "exclude" | "only" | "any" = opts.staticMode ?? "exclude";
   const customWhere = opts.where ?? null;
@@ -109,12 +106,9 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
 
   const where: string[] = [];
   where.push(`LOWER(a.sport) = $${push(sport)}`);
-
-  // Use freshest available timestamp for filtering
   where.push(
     `COALESCE(a.published_at, a.discovered_at) >= NOW() - ($${push(days)} || ' days')::interval`,
   );
-
   where.push(`COALESCE(a.is_player_page, false) = false`);
   where.push(`NOT EXISTS (SELECT 1 FROM blocked_urls b WHERE b.url = a.canonical_url)`);
 
@@ -137,19 +131,18 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   }
 
   if (customWhere) {
-    // Custom WHERE clause for topic-based queries
     where.push(customWhere);
   } else if (isNews) {
     where.push(newsPredicateSQL());
     where.push(
-      `COALESCE(a.published_at, a.discovered_at) >= NOW() - (${push(newsMaxAgeHours)} || ' hours')::interval`,
+      `COALESCE(a.published_at, a.discovered_at) >= NOW() - ($${push(newsMaxAgeHours)} || ' hours')::interval`,
     );
   } else {
     const idx = push(key);
     where.push(`(
-      a.primary_topic = ${idx}
-      OR a.secondary_topic = ${idx}
-      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[${idx}]::text[])
+      a.primary_topic = $${idx}
+      OR a.secondary_topic = $${idx}
+      OR (a.topics IS NOT NULL AND a.topics @> ARRAY[$${idx}]::text[])
     )`);
   }
 
@@ -282,7 +275,7 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
   const startSitTitleOk = (title: string): boolean =>
     /(start\/sit|start-?sit|who (to|should i) start|lineup decisions|sit\/start)/i.test(title);
 
-  let filtered = rows.filter((row) => {
+  const filtered = rows.filter((row) => {
     const title = (row.title ?? "").toLowerCase();
     if (badTitlePattern.test(title)) return false;
 
@@ -297,30 +290,9 @@ export async function fetchSectionItems(opts: FetchSectionOpts): Promise<Section
     return true;
   });
 
-  if (perProviderCap && filtered.length < limit) {
-    const uncapped = await fetchSectionItems({
-      ...opts,
-      perProviderCap: null,
-      offset: 0,
-      limit,
-    });
-
-    const seen = new Set(
-      filtered.map((row) => (row.canonical_url || row.url || String(row.id)).toLowerCase()),
-    );
-
-    for (const row of uncapped) {
-      const dedupeKey = (row.canonical_url || row.url || String(row.id)).toLowerCase();
-      if (seen.has(dedupeKey)) continue;
-
-      filtered.push(row);
-      seen.add(dedupeKey);
-
-      if (filtered.length >= limit) break;
-    }
-  }
+  // REMOVED: Recursive fetchSectionItems call that caused concurrent query warnings
+  // If perProviderCap results are insufficient, accept what we got rather than
+  // making additional concurrent queries during Promise.all in HomeData.ts
 
   return filtered;
 }
-
-

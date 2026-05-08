@@ -1,18 +1,10 @@
-// Build cache buster: 03/28/2026, 18:14:39 - FRESH CONTENT FIX
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import BetaHero from "@/components/beta/BetaHero";
 import BetaNav from "@/components/beta/BetaNav";
 import BetaSection from "@/components/beta/BetaSection";
 import BetaFeed from "@/components/beta/BetaFeed";
 import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
-import BetaDraftSection from "@/components/beta/BetaDraftSection";
-import FilterBanner from "@/components/beta/FilterBanner";
-import LatestTransactions from "@/components/beta/LatestTransactions";
-import { getTeamById, filterArticlesByTeam } from "@/lib/teams";
-import { buildTrendingClusters, getCurrentSeasonMode } from "@/lib/trending";
-import { scoreAndSortArticles, balanceFeed, selectClusterRepresentatives, globalDedupe } from "@/lib/feedScore";
-import { getTeamRoster, filterArticlesByTeamWithRoster } from "@/lib/teams-server";
 
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
@@ -27,27 +19,14 @@ const WAIVER_WEEK1_MONDAY = process.env.NEXT_PUBLIC_WAIVER_WEEK1_MONDAY ?? "2025
 
 export const metadata: Metadata = {
   title: "The Fantasy Report",
-  description: "Premium NFL news hub. Curated fantasy football news, rankings, and analysis from the best sources.",
+  description: "A premium hub for fantasy football news, rankings, and advice with direct links to the source.",
   alternates: { canonical: "/" },
   openGraph: {
     title: "The Fantasy Report",
-    description: "The best NFL news site. Latest NFL and fantasy football news, rankings, and analysis - organized, fast, easy to scan.",
+    description: "A premium hub for fantasy football news, rankings, and advice with direct links to the source.",
     url: "/",
   },
 };
-
-
-function cleanTitle(title: string): string {
-  if (!title) return '';
-  return title
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, '&')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&#8217;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .trim();
-}
 
 const mapRow = (a: DbRow): Article => {
   const str = (k: keyof DbRow): string | null =>
@@ -69,7 +48,7 @@ const mapRow = (a: DbRow): Article => {
 
   return {
     id: a.id,
-    title: cleanTitle(a.title || ""),
+    title: a.title,
     url: a.url,
     canonical_url: a.canonical_url,
     domain: a.domain,
@@ -96,11 +75,9 @@ function getYMDInZone(d: Date, tz: string): { y: number; m: number; d: number } 
   const [y, m, day] = s.split("-").map((n) => Number(n));
   return { y, m, d: day };
 }
-
 function dayCountUTC({ y, m, d }: { y: number; m: number; d: number }): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
-
 function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
   const [sy, sm, sd] = week1MondayYMD.split("-").map(Number);
   if (!sy || !sm || !sd) return 1;
@@ -141,13 +118,11 @@ const SECTION_KEYS = [
   "advice",
   "dfs",
   "injury",
-  "nfl-draft",
-  "free-agency",
 ] as const;
 
 type SectionKey = (typeof SECTION_KEYS)[number];
 
-type SeasonMode = "regular" | "off-season" | "preseason";
+type SeasonMode = "regular" | "free-agency" | "draft" | "fantasyDraftPrep";
 
 const inRange = (d: Date, start: { month: number; day: number }, end: { month: number; day: number }) => {
   const year = d.getFullYear();
@@ -157,36 +132,18 @@ const inRange = (d: Date, start: { month: number; day: number }, end: { month: n
 };
 
 function getSeasonMode(now: Date): SeasonMode {
-  // Off-Season: Feb 1 through end of NFL Draft (late April/early May)
-  if (inRange(now, { month: 2, day: 1 }, { month: 5, day: 10 })) return "off-season";
-  
-  // Preseason: Late July through Week 1 kickoff (early Sept)
-  if (inRange(now, { month: 7, day: 25 }, { month: 9, day: 10 })) return "preseason";
-  
-  // Regular Season: everything else (Sept-Jan + playoffs)
+  if (inRange(now, { month: 3, day: 1 }, { month: 4, day: 20 })) return "free-agency";
+  if (inRange(now, { month: 4, day: 21 }, { month: 5, day: 20 })) return "draft";
+  if (inRange(now, { month: 5, day: 21 }, { month: 8, day: 25 })) return "fantasyDraftPrep";
   return "regular";
 }
 
-
-
-// Local testing override - set environment variable to test different modes
-// Example: TEST_SEASON_MODE=draft npm run dev
-function getEffectiveSeasonMode(now: Date): SeasonMode {
-  const override = process.env.TEST_SEASON_MODE as SeasonMode | undefined;
-  if (override && ['regular', 'off-season', 'preseason'].includes(override)) {
-    console.log(`[Season Override] Using TEST_SEASON_MODE=${override}`);
-    return override;
-  }
-  return getSeasonMode(now);
-}const FREE_AGENCY_RX =
-  /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured|interest|visit(?:ed|ing)?|meeting|expected\s+to|agree(?:s|d|ment)?|terms|deal|joining|headed\s+to|finalizing)/i;
-  // Exclude draft/rookie content from Free Agency
-  const FREE_AGENCY_EXCLUDE_RX = /\b(draft\s+guide|rookie\s+profile|mock\s+draft|nfl\s+draft(?!.*(sign|agree|contract|trade|free\s+agent))|rookie(?!\s+free\s+agent)|prospect|scouting\s+report|big\s+board|combine|dynasty\s+rookie)\b/i;
-
-// Normalize text for draft matching (handles hyphens, HTML entities)
-  
-
-  // Draft content now classified at ingest via topics
+const FREE_AGENCY_RX =
+  /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured)\b/i;
+const DRAFT_RX =
+  /\b(mock\s+draft|prospect|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl)\b/i;
+const FANTASY_DRAFT_RX =
+  /\b(fantasy\s+(?:rankings?|draft|sleeper|bust|breakout|adp|strategy|mock)|sleeper|bust|breakout|adp|draft\s+(?:prep|strategy|guide)|best\s+ball|player\s+outlook|depth\s+chart|role\s+battle)\b/i;
 
 function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
@@ -195,288 +152,78 @@ function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   return (SECTION_KEYS as readonly string[]).includes(key) ? (key as SectionKey) : null;
 }
 
-
 export default async function Page({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-
-  // Team filtering
-  const teamId = typeof sp.team === "string" ? sp.team : null;
-  const selectedTeam = teamId ? getTeamById(teamId) : null;
   const selectedSection = toSectionKey(sp.section);
   const week = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
-  
-  // Determine season mode for time windows and limits
-  const seasonMode = getEffectiveSeasonMode(new Date());
-  const isOffseason = seasonMode === 'off-season';
 
   const data = await getHomeData({
     sport: "nfl",
-    days: isOffseason ? 90 : 60,              // 90 days offseason, 60 regular
+    days: 60,
     week,
-    limitNews: isOffseason ? 200 : 150,       // 200 offseason, 150 regular
-    limitRankings: 100,                        // Increased from 80
-    limitStartSit: 80,
-    limitAdvice: 100,                          // Increased from 80
-    limitDFS: 80,                              // Increased from 60
-    limitWaivers: 80,
-    limitInjuries: 80,                         // Increased from 60
-    limitHero: 50,
-    maxAgeHours: isOffseason ? 168 : 72,      // 7 days offseason, 3 days regular         // Increased from 12
+    limitNews: 18,
+    limitRankings: 16,
+    limitStartSit: 16,
+    limitAdvice: 16,
+    limitDFS: 12,
+    limitWaivers: 16,
+    limitInjuries: 12,
+    limitHero: 12,
     selectedSection:
       selectedSection === "waivers" ? "waiver-wire" : selectedSection === "injury" ? "injury" : selectedSection,
   });
-
-  // Fetch most recent article as freshness indicator
-  const { createClient } = await import('@supabase/supabase-js');
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-  const { data: newestArticle } = await supabase
-    .from('articles')
-    .select('discovered_at')
-    .order('discovered_at', { ascending: false })
-    .limit(1);
-  const lastIngestTime = newestArticle?.[0]?.discovered_at ? new Date(newestArticle[0].discovered_at) : null;
 
   const latest = data.items.latest.map(mapRow);
   const rankings = data.items.rankings.map(mapRow);
   const startSit = data.items.startSit.map(mapRow);
   const advice = data.items.advice.map(mapRow);
   const dfs = data.items.dfs.map(mapRow);
-  
-  // Filter DFS to NFL-only in offseason (prevent NBA/MLB content)
-  const dfsFiltered = isOffseason
-    ? dfs.filter(a => {
-        const hay = `${a.title ?? ""} ${a.url ?? ""}`;
-        return /\b(nfl|football|best\s+ball)\b/i.test(hay) && !/\b(nba|mlb|baseball|basketball)\b/i.test(hay);
-      })
-    : dfs;
-
-  // Further filter Fantasy Prep: exclude pure daily slate/optimizer content
-  const DAILY_SLATE_RX = /(slate|lineups?|optimizer|DFS\\s+picks|fantasy\\s+picks|daily|showdown|captain|GPP|cash\\s+game|sportsbook|prop\\s+bet|betting|odds|spread|moneyline|parlay|fanduel|draftkings|pick[\\s-]?em|survivor|promo|bonus|entries?|offer)/i;
-  const fantasyPrepItems = dfsFiltered.filter(a => {
-    const title = a.title ?? "";
-    // Keep: ADP, best ball, rankings, sleepers, role/workload analysis
-    // Exclude: daily slate picks, optimizer tips, lineup construction
-    return !DAILY_SLATE_RX.test(title);
-  });
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
-  // Hero will be selected after trending clusters are built
-
-  // Temporary: use first article as hero candidate for removal
-  const tempHeroId = (latest.find(hasRealImage) ?? latest[0])?.id ?? null;
-
-  const latestNoHero = removeHero(latest, tempHeroId);
-  const rankingsNoHero = removeHero(rankings, tempHeroId);
-  const startSitNoHero = removeHero(startSit, tempHeroId);
-  const adviceNoHero = removeHero(advice, tempHeroId);
-  const dfsNoHero = removeHero(fantasyPrepItems, tempHeroId);
-  const waiversNoHero = removeHero(waivers, tempHeroId);
-  const injuriesNoHero = removeHero(injuries, tempHeroId);
-
-  // Build Free Agency from latest + rankings + advice (offseason FA coverage appears in all three)
-  const freeAgencyPool = uniqueArticles(latest, rankings, advice);
-  console.log('[info] FA STEP 1.5: freeAgencyPool.length=', freeAgencyPool.length);
-  const freeAgencyItems = freeAgencyPool.filter((a) => {
-    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-    return FREE_AGENCY_RX.test(hay) && !FREE_AGENCY_EXCLUDE_RX.test(hay);
-  });
-
-  // Fallback: if strict regex returns 0, use broader offseason criteria
-  let finalFreeAgencyItems = freeAgencyItems;
-  if (freeAgencyItems.length === 0) {
-    console.log('[info] FA FALLBACK: strict regex returned 0, using broader criteria');
-    const FALLBACK_RX = /\b(free\s+agency|post-free\s+agency|landing\s+spot|team\s+fit|depth\s+chart|projection|ranking|contract|roster|starting|opportunity|offseason|moves?)\b/i;
-    finalFreeAgencyItems = freeAgencyPool.filter((a) => {
-      const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
-      return FALLBACK_RX.test(hay) && !FREE_AGENCY_EXCLUDE_RX.test(hay);
-    }).sort((a, b) => {
-      const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
-      const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
-      return bDate - aDate;
-    }).slice(0, 15);
-    console.log('[info] FA FALLBACK: found', finalFreeAgencyItems.length, 'items');
-  }
-  
-  // Reserve top Free Agency items before feed consumption
-  const freeAgencyReserved = finalFreeAgencyItems
-    .sort((a, b) => {
-      const aDate = new Date(a.published_at ?? a.discovered_at ?? 0).getTime();
-      const bDate = new Date(b.published_at ?? b.discovered_at ?? 0).getTime();
-      return bDate - aDate;
-    })
-    .slice(0, 10);
-  const freeAgencyReservedIds = new Set(freeAgencyReserved.map(a => a.id));
-  console.log('[info] FA STEP 1: latest.length=', latest.length);
-  console.log('[info] FA STEP 2: freeAgencyItems=', freeAgencyItems.length, 'final=', finalFreeAgencyItems.length);
-  console.log('[info] FA STEP 3: freeAgencyReserved.length=', freeAgencyReserved.length);
-
-  // Build intelligent scored feed
-    // Get season mode for trending + feed scoring
-  const effectiveSeasonMode = getCurrentSeasonMode();
-
-  const allArticles = uniqueArticles(
-    latestNoHero,
-    rankingsNoHero,
-    adviceNoHero,
-    startSitNoHero,
-    waiversNoHero,
-    injuriesNoHero,
-    dfsNoHero
-  );
-  
-  // Exclude reserved Free Agency items from feed pool
-  const allArticlesFiltered = allArticles.filter(a => !freeAgencyReservedIds.has(a.id));
-  
-  const scoredArticles = scoreAndSortArticles(allArticlesFiltered, effectiveSeasonMode);
-
-  // Build server-side trending clusters FIRST
-  const trendingArticles = uniqueArticles(
-    latestNoHero,
-    rankingsNoHero,
-    adviceNoHero,
-    startSitNoHero,
-    dfsNoHero,
-    waiversNoHero,
-    injuriesNoHero,
-  ).slice(0, 100);
-  console.log('📈 TRENDING INPUT:', {
-    latestCount: latestNoHero.length,
-    rankingsCount: rankingsNoHero.length,
-    totalTrendingArticles: trendingArticles.length,
-    sampleTitles: trendingArticles.slice(0, 3).map(a => a.title?.substring(0, 50))
-  });
-  
-  const trendingClusters = buildTrendingClusters(trendingArticles, effectiveSeasonMode, 8);
-  
-  const topClusterArticleIds = trendingClusters[0]?.articleIds || [];
-  const topClusterArticles = allArticlesFiltered.filter(a => topClusterArticleIds.includes(a.id)).filter(hasRealImage);
-  const heroPool = [...topClusterArticles, ...latest.slice(0, 10), ...rankings.slice(0, 5)];
-  const scoredHeroPool = scoreAndSortArticles(heroPool, effectiveSeasonMode);
-  const hero = scoredHeroPool.find(hasRealImage) ?? latest.find(hasRealImage) ?? latest[0] ?? rankings[0];
+  const hero = latest.find(hasRealImage) ?? latest[0] ?? rankings[0] ?? startSit[0];
   const heroId = hero?.id ?? null;
-  const clusterRepresentatives = selectClusterRepresentatives(trendingClusters, scoredArticles);
-  const clusterIds = new Set(clusterRepresentatives.map(a => a.id));
-  const nonClusterArticles = scoredArticles.filter(a => !clusterIds.has(a.id));
-  const feedPool = [...clusterRepresentatives, ...nonClusterArticles];
-  const feed = balanceFeed(feedPool, effectiveSeasonMode, 14);
-  
-  // CRITICAL FIX: Remove hero from feed since hero was selected AFTER allArticles were built
-  // The tempHeroId used earlier may differ from the final heroId
-  const feedWithoutHero = feed.filter(a => a.id !== heroId);
-  const usedInFeed = new Set<number>(feed.map(a => a.id));
-  usedInFeed.add(heroId || 0);
 
-  
-  
-  console.log('🔍 FREE AGENCY DEBUG:', {
-    latestCount: latest.length,
-    freeAgencyCount: freeAgencyItems.length,
-    sampleTitles: freeAgencyItems.slice(0, 3).map(a => a.title?.substring(0, 50))
+  const latestNoHero = removeHero(latest, heroId);
+  const rankingsNoHero = removeHero(rankings, heroId);
+  const startSitNoHero = removeHero(startSit, heroId);
+  const adviceNoHero = removeHero(advice, heroId);
+  const dfsNoHero = removeHero(dfs, heroId);
+  const waiversNoHero = removeHero(waivers, heroId);
+  const injuriesNoHero = removeHero(injuries, heroId);
+
+  const feed = uniqueArticles(latestNoHero, rankingsNoHero, adviceNoHero, startSitNoHero).slice(0, 14);
+  const trendingPool = uniqueArticles(
+    latestNoHero,
+    rankingsNoHero,
+    adviceNoHero,
+    startSitNoHero,
+    waiversNoHero,
+    dfsNoHero,
+    injuriesNoHero
+  );
+
+  const seasonMode = getSeasonMode(new Date());
+  const freeAgencyItems = latest.filter((a) => {
+    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
+    return FREE_AGENCY_RX.test(hay);
   });
-
-  // Draft items now fetched directly by topic in getHomeData
-
-  
-  // Apply team filter if selected
-  let filteredFeed: Article[] = feedWithoutHero;
-  let filteredLatest: Article[] = latestNoHero;
-  let filteredRankings: Article[] = rankingsNoHero;
-  let filteredStartSit: Article[] = startSitNoHero;
-  let filteredAdvice: Article[] = adviceNoHero;
-  let filteredDfs: Article[] = dfsNoHero;
-  let filteredWaivers: Article[] = waiversNoHero;
-  let filteredInjuries: Article[] = injuriesNoHero;
-
-  // RECALCULATE usedInFeed based on displayed feed items (not all 14)
-  const displayedFeed = filteredFeed.slice(0, 6);
-  const actualUsedInFeed = new Set<number>(displayedFeed.map(a => a.id));
-  if (heroId) actualUsedInFeed.add(heroId);
-
-  // Dedupe free agency and draft items against displayed feed
-  const uniqueFreeAgency = freeAgencyReserved.filter(a => a.id !== heroId);
-  console.log('[info] FA STEP 4: uniqueFreeAgency.length=', uniqueFreeAgency.length, 'heroId=', heroId, 'tempHeroId=', tempHeroId, 'equal=', heroId === tempHeroId);
-  
-
-
-  let totalFilteredCount = 0;
-
-  if (selectedTeam) {
-    filteredFeed = filterArticlesByTeam(feedWithoutHero, selectedTeam.id) as Article[];
-    filteredLatest = filterArticlesByTeam(latestNoHero, selectedTeam.id) as Article[];
-    filteredRankings = filterArticlesByTeam(rankingsNoHero, selectedTeam.id) as Article[];
-    filteredStartSit = filterArticlesByTeam(startSitNoHero, selectedTeam.id) as Article[];
-    filteredAdvice = filterArticlesByTeam(adviceNoHero, selectedTeam.id) as Article[];
-    filteredDfs = filterArticlesByTeam(dfsNoHero, selectedTeam.id) as Article[];
-    filteredWaivers = filterArticlesByTeam(waiversNoHero, selectedTeam.id) as Article[];
-    filteredInjuries = filterArticlesByTeam(injuriesNoHero, selectedTeam.id) as Article[];
-    
-    totalFilteredCount = filteredFeed.length + filteredLatest.length + filteredRankings.length + 
-                        filteredStartSit.length + filteredAdvice.length + filteredDfs.length ;
-  }
-
-  // Deduplicate articles across all sections
-  // Start with articles already used in hero + feed
-  const seenIds = new Set<number>(actualUsedInFeed);
-  
-  // Deduplicate each section in order
-  const uniqueLatest = filteredLatest.slice(0, 20).filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
+  const draftItems = latest.filter((a) => {
+    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
+    return DRAFT_RX.test(hay);
   });
-  
-  // Track feed for other sections
-
-  
-  const uniqueRankings = filteredRankings.filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
+  const fantasyDraftItems = latest.filter((a) => {
+    const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
+    return FANTASY_DRAFT_RX.test(hay);
   });
-  
-  const uniqueStartSit = filteredStartSit.filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
-  });
-  
-  const uniqueAdvice = filteredAdvice.filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
-  });
-  
-  const uniqueDfs = filteredDfs.filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
-  });
-  
-  const uniqueInjuries = filteredInjuries.filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
-  });
-  
-  const uniqueWaivers = filteredWaivers.filter(a => {
-    if (seenIds.has(a.id)) return false;
-    seenIds.add(a.id);
-    return true;
-  });
-
-
 
   return (
     <main className="min-h-screen bg-zinc-50 pb-12">
-      <div className="mx-auto max-w-[88rem] px-2 pt-6 sm:px-4 lg:px-8">
+      <div className="mx-auto max-w-6xl px-2 pt-6 sm:px-4 lg:px-8">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
             <p className="text-xs font-semibold uppercase tracking-[0.4em] text-emerald-700">
@@ -485,112 +232,97 @@ export default async function Page({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div className="space-y-2">
                 <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-                  Premium NFL news hub.
+                  Your premium hub for fantasy football headlines, rankings, and advice.
                 </h1>
                 <p className="max-w-2xl text-sm text-zinc-600">
-                  We curate the most important fantasy content across the web and send you straight to the source.</p>
+                  We curate the most important fantasy content across the web and send you straight to the source —
+                  fast, modern, and built for repeat visits.
+                </p>
               </div>
-              <BetaNav seasonMode={seasonMode} />
+              <BetaNav currentSection={selectedSection} />
             </div>
           </div>
 
           {hero ? <BetaHero article={hero} /> : null}
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
+        <div className="mt-8 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <section className="space-y-6">
             <BetaSection
               title="Curated feed"
               subtitle="The highest-value links right now"
               action={<span className="text-xs uppercase tracking-wide">Updated live</span>}
             >
-              <BetaFeed articles={filteredFeed.slice(0, 6)} />
+              <BetaFeed articles={feed} />
             </BetaSection>
 
             <BetaLoadMoreSection
               title="Latest news"
               subtitle="Breaking updates across the fantasy landscape"
               sectionKey="news"
-              initialItems={uniqueLatest}
+              initialItems={latestNoHero}
               pageSize={12}
-              initialDisplay={2}
+              initialDisplay={4}
             />
-
-            <div className="w-full">{/* Ensure Latest Transactions stays in left column */}
-
-              <LatestTransactions teamId={selectedTeam?.id} />
-
-            </div>
           </section>
 
-
           <aside className="space-y-6">
-            <BetaTrending clusters={trendingClusters} />
+            <BetaTrending articles={trendingPool} />
 
             <BetaLoadMoreSection
               title="Rankings & tiers"
               subtitle="Top recent rankings and rest-of-season insight"
               sectionKey="rankings"
-              initialItems={uniqueRankings}
+              initialItems={rankingsNoHero}
               pageSize={10}
               initialDisplay={4}
             />
 
-            {seasonMode === "regular" || seasonMode === "preseason" ? (
             <BetaLoadMoreSection
               title="Start/Sit & Advice"
               subtitle="Lineup answers, sleepers, and strategy"
               sectionKey="start-sit"
-              initialItems={uniqueArticles(uniqueStartSit, uniqueAdvice)}
+              initialItems={uniqueArticles(startSitNoHero, adviceNoHero)}
               pageSize={10}
               initialDisplay={4}
             />
-            ) : null}
-
-            {seasonMode === "off-season" ? (
-            <BetaDraftSection mockDrafts={data.items.mockDraft} draftBuzz={data.items.draftBuzz} />
-            ) : null}
-
-            </aside>
+          </aside>
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-3">
-          {seasonMode === "off-season" ? (
+          {seasonMode === "free-agency" ? (
             <BetaLoadMoreSection
               title="Free Agency Tracker"
               subtitle="Signings, trades, and roster moves with fantasy impact"
               sectionKey="news"
-              initialItems={(() => {
-              const afterRemoveHero = removeHero(uniqueFreeAgency, tempHeroId);
-              console.log('[info] FA STEP 5: after removeHero(uniqueFreeAgency, tempHeroId).length=', afterRemoveHero.length);
-              if (selectedTeam) {
-                const afterTeamFilter = filterArticlesByTeam(afterRemoveHero, selectedTeam.id) as Article[];
-                console.log('[info] FA STEP 6: after selectedTeam filter.length=', afterTeamFilter.length, 'team=', selectedTeam.id);
-                console.log('[info] FA STEP 7: FINAL initialItems.length=', afterTeamFilter.length);
-                return afterTeamFilter;
-              }
-              console.log('[info] FA STEP 6: no selectedTeam');
-              console.log('[info] FA STEP 7: FINAL initialItems.length=', afterRemoveHero.length);
-              return afterRemoveHero;
-            })()}
+              initialItems={removeHero(freeAgencyItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
-          ) : seasonMode === "preseason" ? (
+          ) : seasonMode === "draft" ? (
             <BetaLoadMoreSection
               title="Draft Center"
               subtitle="Mock drafts, prospects, and rookie outlooks"
               sectionKey="news"
-              initialItems={[...data.items.mockDraft, ...data.items.draftBuzz].slice(0, 50)}
+              initialItems={removeHero(draftItems, heroId)}
+              pageSize={10}
+              initialDisplay={4}
+            />
+          ) : seasonMode === "fantasyDraftPrep" ? (
+            <BetaLoadMoreSection
+              title="Fantasy Draft HQ"
+              subtitle="Rankings, sleepers, busts, and draft strategy"
+              sectionKey="news"
+              initialItems={removeHero(fantasyDraftItems, heroId)}
               pageSize={10}
               initialDisplay={4}
             />
           ) : (
             <BetaLoadMoreSection
-              title={`Waiver wire · Week ${week}`}
+              title={`Waiver wire — Week ${week}`}
               subtitle="Priority adds and stash targets"
               sectionKey="waiver-wire"
-              initialItems={uniqueWaivers}
+              initialItems={waiversNoHero}
               pageSize={10}
               initialDisplay={4}
               week={week}
@@ -598,10 +330,10 @@ export default async function Page({
           )}
 
           <BetaLoadMoreSection
-            title="Fantasy Prep"
-            subtitle="Best ball, ADP, sleepers, and early prep"
+            title="DFS"
+            subtitle="Slate breakdowns and optimizer tools"
             sectionKey="dfs"
-            initialItems={uniqueDfs}
+            initialItems={dfsNoHero}
             pageSize={10}
             initialDisplay={4}
           />
@@ -610,66 +342,11 @@ export default async function Page({
             title="Injuries"
             subtitle="Status reports and return timelines"
             sectionKey="injury"
-            initialItems={uniqueInjuries}
+            initialItems={injuriesNoHero}
             pageSize={10}
             initialDisplay={4}
           />
         </div>
-
-        {/* Freshness status card */}
-        {latest.length > 0 && (() => {
-          const newestDate = new Date(latest[0].discovered_at ?? latest[0].published_at ?? 0);
-          const ageMinutes = Math.floor((Date.now() - newestDate.getTime()) / 60000);
-          const ageHours = Math.floor(ageMinutes / 60);
-          const ageDays = Math.floor(ageHours / 24);
-          
-          let ageText = '';
-          let statusLabel = '';
-          let statusColor = '';
-          
-          if (ageDays >= 1) {
-            ageText = `${ageDays}d ${ageHours % 24}h ago`;
-            statusLabel = ageDays >= 2 ? 'Stale' : 'Lagging';
-            statusColor = ageDays >= 2 ? 'text-red-600' : 'text-amber-600';
-          } else if (ageHours >= 1) {
-            ageText = `${ageHours}h ${ageMinutes % 60}m ago`;
-            statusLabel = ageHours >= 6 ? 'Lagging' : 'Fresh';
-            statusColor = ageHours >= 6 ? 'text-amber-600' : 'text-emerald-600';
-          } else {
-            ageText = `${ageMinutes}m ago`;
-            statusLabel = 'Fresh';
-            statusColor = 'text-emerald-600';
-          }
-          
-          return (
-            <div className="mt-8 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-600">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="font-medium text-zinc-700">Content freshness:</span>{' '}
-                  <span className={`font-semibold ${statusColor}`}>{statusLabel}</span>
-                </div>
-                <div className="text-zinc-500">
-                  Last updated {ageText}
-                </div>
-              </div>
-              <div className="mt-2 pt-2 border-t border-zinc-200 text-zinc-500">
-                <span className="font-medium text-zinc-600">Last refresh:</span>{' '}
-                {lastIngestTime ? (() => {
-                  const ingestAge = Math.floor((Date.now() - lastIngestTime.getTime()) / 60000);
-                  const ingestHours = Math.floor(ingestAge / 60);
-                  if (ingestHours >= 24) {
-                    const ingestDays = Math.floor(ingestHours / 24);
-                    return `${ingestDays}d ${ingestHours % 24}h ago`;
-                  }
-                  if (ingestHours >= 1) {
-                    return `${ingestHours}h ${ingestAge % 60}m ago`;
-                  }
-                  return `${ingestAge}m ago`;
-                })() : 'N/A'}
-              </div>
-            </div>
-          );
-        })()}
 
         <div className="mt-10 rounded-2xl border border-zinc-200 bg-white px-5 py-4 text-sm text-zinc-600">
           <p className="font-semibold text-zinc-800">Source-forward by design.</p>
