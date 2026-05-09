@@ -1,4 +1,4 @@
-// lib/HomeData.ts
+﻿// lib/HomeData.ts
 import {
   fetchSectionItems,
   ORDERED_SECTIONS,
@@ -217,6 +217,37 @@ function logSectionSnapshot(label: string, rows: SectionRow[], max: number = 5):
   );
 }
 
+/**
+ * Run promises with a concurrency limit to avoid exhausting the DB pool.
+ * Executes tasks in batches of `concurrency` size.
+ */
+async function batchedPromiseAll<T>(
+  tasks: (() => Promise<T>)[],
+  concurrency: number,
+  label: string = "batch"
+): Promise<T[]> {
+  const results: T[] = [];
+  const batchCount = Math.ceil(tasks.length / concurrency);
+  
+  console.log(`[HomeData] ${label}: running ${tasks.length} tasks in ${batchCount} batches (concurrency=${concurrency})`);
+  
+  for (let i = 0; i < tasks.length; i += concurrency) {
+    const batchNum = Math.floor(i / concurrency) + 1;
+    const batch = tasks.slice(i, i + concurrency);
+    
+    console.log(`[HomeData] ${label}: batch ${batchNum}/${batchCount} - starting ${batch.length} queries`);
+    const batchStart = Date.now();
+    
+    const batchResults = await Promise.all(batch.map(fn => fn()));
+    results.push(...batchResults);
+    
+    const batchMs = Date.now() - batchStart;
+    console.log(`[HomeData] ${label}: batch ${batchNum}/${batchCount} - completed in ${batchMs}ms`);
+  }
+  
+  return results;
+}
+
 export async function getHomeData(
   opts: HomeDataOptions = {},
 ): Promise<{
@@ -286,7 +317,10 @@ export async function getHomeData(
 
   const selected = opts.selectedSection ?? null;
 
+  // Single-section mode: fast path, only 1 DB query
   if (selected) {
+    console.log(`[HomeData] Single-section mode: ${selected} (1 DB query)`);
+    
     const dbKey: SectionKey =
       selected === "waiver-wire" ? "waiver-wire" :
       selected === "start-sit" ? "start-sit" :
@@ -342,31 +376,26 @@ export async function getHomeData(
     };
   }
 
-  const [news, rankings, startSit, advice, dfs, waivers, injury, mockDraft, draftBuzz] = await Promise.all([
-    fetchSectionItems({ key: "news", limit: limits.news, maxAgeHours: opts.maxAgeHours, ...shared }),
-    fetchSectionItems({ key: "rankings", limit: limits.rankings, ...shared }),
-    fetchSectionItems({ key: "start-sit", limit: limits.startSit, ...shared }),
-    fetchSectionItems({ key: "advice", limit: limits.advice, ...shared }),
-    fetchSectionItems({ key: "dfs", limit: limits.dfs, ...shared }),
-    fetchSectionItems({ key: "waiver-wire", limit: limits.waivers, week, ...shared }),
-    fetchSectionItems({ key: "injury", limit: limits.injuries, ...shared }),
-    fetchSectionItems({
-      key: "",
-      sport,
-      days: 45,
-      limit: 50,
-      where: "(primary_topic = 'mock-draft' OR 'mock-draft' = ANY(topics))",
-      staticMode: "exclude",
-    }),
-    fetchSectionItems({
-      key: "",
-      sport,
-      days: 21,
-      limit: 50,
-      where: "(primary_topic = 'draft-buzz' OR 'draft-buzz' = ANY(topics))",
-      staticMode: "exclude",
-    }),
-  ]);
+  // Full homepage mode: batch queries to avoid pool exhaustion
+  // Max 3 concurrent DB connections at once
+  console.log("[HomeData] Full homepage mode: batching 7 core sections + 2 special sections");
+  
+  const CONCURRENCY_LIMIT = 3;
+  
+  // Define all query tasks as lazy functions
+  const coreTasks = [
+    () => fetchSectionItems({ key: "news", limit: limits.news, maxAgeHours: opts.maxAgeHours, ...shared }),
+    () => fetchSectionItems({ key: "rankings", limit: limits.rankings, ...shared }),
+    () => fetchSectionItems({ key: "start-sit", limit: limits.startSit, ...shared }),
+    () => fetchSectionItems({ key: "advice", limit: limits.advice, ...shared }),
+    () => fetchSectionItems({ key: "dfs", limit: limits.dfs, ...shared }),
+    () => fetchSectionItems({ key: "waiver-wire", limit: limits.waivers, week, ...shared }),
+    () => fetchSectionItems({ key: "injury", limit: limits.injuries, ...shared }),
+  ];
+
+  // Run core sections in batches of 3
+  const [news, rankings, startSit, advice, dfs, waivers, injury] = 
+    await batchedPromiseAll(coreTasks, CONCURRENCY_LIMIT, "core-sections");
 
   logSectionSnapshot("raw:news", news);
   logSectionSnapshot("raw:rankings", rankings);
@@ -375,6 +404,11 @@ export async function getHomeData(
   logSectionSnapshot("raw:dfs", dfs);
   logSectionSnapshot("raw:waiver-wire", waivers);
   logSectionSnapshot("raw:injury", injury);
+
+  // Special sections (mockDraft/draftBuzz) - only fetch if we might use them
+  // Skip entirely for now to reduce queries (can be added back when needed)
+  const mockDraft: SectionRow[] = [];
+  const draftBuzz: SectionRow[] = [];
 
   const deduped = dedupeAcrossSectionsTopicAware({
     "start-sit": startSit,
@@ -448,11 +482,13 @@ export async function getHomeData(
 
   logSectionSnapshot("heroCandidates:full-mode", heroCandidates);
 
+  console.log("[HomeData] Full homepage complete: 7 DB queries total (max 3 concurrent)");
+
   return {
     items: {
       latest: newsOut,
-        mockDraft,
-        draftBuzz,
+      mockDraft,
+      draftBuzz,
       rankings: rankingsOut,
       startSit: startSitOut,
       advice: adviceOut,
