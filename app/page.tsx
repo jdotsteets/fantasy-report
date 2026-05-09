@@ -5,6 +5,7 @@ import BetaSection from "@/components/beta/BetaSection";
 import BetaFeed from "@/components/beta/BetaFeed";
 import BetaTrending from "@/components/beta/BetaTrending";
 import BetaLoadMoreSection from "@/components/beta/BetaLoadMoreSection";
+import ContextualFilters, { articleMatchesFilter } from "@/components/beta/ContextualFilters";
 
 import type { Article } from "@/types/sources";
 import { getSafeImageUrl, FALLBACK, isLikelyFavicon } from "@/lib/images";
@@ -75,9 +76,11 @@ function getYMDInZone(d: Date, tz: string): { y: number; m: number; d: number } 
   const [y, m, day] = s.split("-").map((n) => Number(n));
   return { y, m, d: day };
 }
+
 function dayCountUTC({ y, m, d }: { y: number; m: number; d: number }): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
+
 function computeWaiverWeek(week1MondayYMD: string, now = new Date()): number {
   const [sy, sm, sd] = week1MondayYMD.split("-").map(Number);
   if (!sy || !sm || !sd) return 1;
@@ -121,7 +124,6 @@ const SECTION_KEYS = [
 ] as const;
 
 type SectionKey = (typeof SECTION_KEYS)[number];
-
 type SeasonMode = "regular" | "free-agency" | "draft" | "fantasyDraftPrep";
 
 const inRange = (d: Date, start: { month: number; day: number }, end: { month: number; day: number }) => {
@@ -138,18 +140,20 @@ function getSeasonMode(now: Date): SeasonMode {
   return "regular";
 }
 
-const FREE_AGENCY_RX =
-  /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured)\b/i;
-const DRAFT_RX =
-  /\b(mock\s+draft|prospect|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl)\b/i;
-const FANTASY_DRAFT_RX =
-  /\b(fantasy\s+(?:rankings?|draft|sleeper|bust|breakout|adp|strategy|mock)|sleeper|bust|breakout|adp|draft\s+(?:prep|strategy|guide)|best\s+ball|player\s+outlook|depth\s+chart|role\s+battle)\b/i;
+const FREE_AGENCY_RX = /\b(free\s+agency|sign(?:ed|ing)?|re-?sign(?:ed|ing)?|trade(?:d|s)?|cut|release(?:d)?|cap\s+hit|contract|extension|tagged|franchise\s+tag|waived|claimed|restructure|restructured)\b/i;
+const DRAFT_RX = /\b(mock\s+draft|prospect|combine|big\s+board|draft\s+class|rookie|landing\s+spot|scouting|draft|senior\s+bowl)\b/i;
+const FANTASY_DRAFT_RX = /\b(fantasy\s+(?:rankings?|draft|sleeper|bust|breakout|adp|strategy|mock)|sleeper|bust|breakout|adp|draft\s+(?:prep|strategy|guide)|best\s+ball|player\s+outlook|depth\s+chart|role\s+battle)\b/i;
 
 function toSectionKey(raw: string | string[] | undefined): SectionKey | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
   if (!v) return null;
   const key = v.toLowerCase().trim();
   return (SECTION_KEYS as readonly string[]).includes(key) ? (key as SectionKey) : null;
+}
+
+function toFilterValue(raw: string | string[] | undefined): string {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return v?.toLowerCase().trim() || "all";
 }
 
 export default async function Page({
@@ -159,6 +163,7 @@ export default async function Page({
 }) {
   const sp = await searchParams;
   const selectedSection = toSectionKey(sp.section);
+  const filterValue = toFilterValue(sp.filter);
   const week = computeWaiverWeek(WAIVER_WEEK1_MONDAY);
 
   const data = await getHomeData({
@@ -185,16 +190,30 @@ export default async function Page({
   const waivers = data.items.waivers.map(mapRow);
   const injuries = data.items.injuries.map(mapRow);
 
-  const hero = latest.find(hasRealImage) ?? latest[0] ?? rankings[0] ?? startSit[0];
+  // Apply filter if section is selected and filter is not "all"
+  const applyFilter = (articles: Article[]) =>
+    selectedSection && filterValue !== "all"
+      ? articles.filter((a) => articleMatchesFilter(a, filterValue))
+      : articles;
+
+  const filteredLatest = applyFilter(latest);
+  const filteredRankings = applyFilter(rankings);
+  const filteredStartSit = applyFilter(startSit);
+  const filteredAdvice = applyFilter(advice);
+  const filteredDfs = applyFilter(dfs);
+  const filteredWaivers = applyFilter(waivers);
+  const filteredInjuries = applyFilter(injuries);
+
+  const hero = filteredLatest.find(hasRealImage) ?? filteredLatest[0] ?? filteredRankings[0] ?? filteredStartSit[0];
   const heroId = hero?.id ?? null;
 
-  const latestNoHero = removeHero(latest, heroId);
-  const rankingsNoHero = removeHero(rankings, heroId);
-  const startSitNoHero = removeHero(startSit, heroId);
-  const adviceNoHero = removeHero(advice, heroId);
-  const dfsNoHero = removeHero(dfs, heroId);
-  const waiversNoHero = removeHero(waivers, heroId);
-  const injuriesNoHero = removeHero(injuries, heroId);
+  const latestNoHero = removeHero(filteredLatest, heroId);
+  const rankingsNoHero = removeHero(filteredRankings, heroId);
+  const startSitNoHero = removeHero(filteredStartSit, heroId);
+  const adviceNoHero = removeHero(filteredAdvice, heroId);
+  const dfsNoHero = removeHero(filteredDfs, heroId);
+  const waiversNoHero = removeHero(filteredWaivers, heroId);
+  const injuriesNoHero = removeHero(filteredInjuries, heroId);
 
   const feed = uniqueArticles(latestNoHero, rankingsNoHero, adviceNoHero, startSitNoHero).slice(0, 14);
   const trendingPool = uniqueArticles(
@@ -208,18 +227,18 @@ export default async function Page({
   );
 
   const seasonMode = getSeasonMode(new Date());
-  const freeAgencyItems = latest.filter((a) => {
+  const freeAgencyItems = applyFilter(latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FREE_AGENCY_RX.test(hay);
-  });
-  const draftItems = latest.filter((a) => {
+  }));
+  const draftItems = applyFilter(latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return DRAFT_RX.test(hay);
-  });
-  const fantasyDraftItems = latest.filter((a) => {
+  }));
+  const fantasyDraftItems = applyFilter(latest.filter((a) => {
     const hay = `${a.title ?? ""} ${a.canonical_url ?? a.url ?? ""}`;
     return FANTASY_DRAFT_RX.test(hay);
-  });
+  }));
 
   return (
     <main className="min-h-screen bg-zinc-50 pb-12">
@@ -244,6 +263,10 @@ export default async function Page({
           </div>
 
           {hero ? <BetaHero article={hero} /> : null}
+          
+          {selectedSection && (
+            <ContextualFilters sectionName={selectedSection} activeFilter={filterValue} />
+          )}
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
